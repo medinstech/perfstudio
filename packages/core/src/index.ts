@@ -8,6 +8,8 @@ export * from './geometry.js';
 
 // What the board actually connects, and how that compares to the schematic.
 export * from './connectivity.js';
+export * from './occupancy.js';
+export * from './router.js';
 export * from './lvs.js';
 export * from './drc.js';
 
