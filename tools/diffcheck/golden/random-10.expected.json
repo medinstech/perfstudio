@@ -1,4 +1,1080 @@
 {
+  "occupancy": [
+    {
+      "hole": {
+        "col": 1,
+        "row": 14
+      },
+      "pin": null,
+      "bottom": [
+        "cond-3"
+      ],
+      "top": [],
+      "blockedBottom": true,
+      "blockedTop": false,
+      "bodyCovers": null
+    },
+    {
+      "hole": {
+        "col": 1,
+        "row": 17
+      },
+      "pin": null,
+      "bottom": [
+        "cond-5"
+      ],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": null
+    },
+    {
+      "hole": {
+        "col": 2,
+        "row": 3
+      },
+      "pin": {
+        "componentRef": "X7",
+        "pin": "8"
+      },
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-7"
+    },
+    {
+      "hole": {
+        "col": 2,
+        "row": 4
+      },
+      "pin": {
+        "componentRef": "X7",
+        "pin": "7"
+      },
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-7"
+    },
+    {
+      "hole": {
+        "col": 2,
+        "row": 5
+      },
+      "pin": {
+        "componentRef": "X7",
+        "pin": "6"
+      },
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-7"
+    },
+    {
+      "hole": {
+        "col": 2,
+        "row": 6
+      },
+      "pin": {
+        "componentRef": "X7",
+        "pin": "5"
+      },
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-7"
+    },
+    {
+      "hole": {
+        "col": 2,
+        "row": 14
+      },
+      "pin": null,
+      "bottom": [
+        "cond-3"
+      ],
+      "top": [],
+      "blockedBottom": true,
+      "blockedTop": false,
+      "bodyCovers": null
+    },
+    {
+      "hole": {
+        "col": 3,
+        "row": -3
+      },
+      "pin": {
+        "componentRef": "X2",
+        "pin": "2"
+      },
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": null
+    },
+    {
+      "hole": {
+        "col": 3,
+        "row": 0
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-2"
+    },
+    {
+      "hole": {
+        "col": 3,
+        "row": 1
+      },
+      "pin": {
+        "componentRef": "X2",
+        "pin": "1"
+      },
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-2"
+    },
+    {
+      "hole": {
+        "col": 3,
+        "row": 3
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-7"
+    },
+    {
+      "hole": {
+        "col": 3,
+        "row": 4
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-7"
+    },
+    {
+      "hole": {
+        "col": 3,
+        "row": 5
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-7"
+    },
+    {
+      "hole": {
+        "col": 3,
+        "row": 6
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-7"
+    },
+    {
+      "hole": {
+        "col": 3,
+        "row": 14
+      },
+      "pin": null,
+      "bottom": [
+        "cond-3"
+      ],
+      "top": [],
+      "blockedBottom": true,
+      "blockedTop": false,
+      "bodyCovers": null
+    },
+    {
+      "hole": {
+        "col": 4,
+        "row": 3
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-7"
+    },
+    {
+      "hole": {
+        "col": 4,
+        "row": 4
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-7"
+    },
+    {
+      "hole": {
+        "col": 4,
+        "row": 5
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-7"
+    },
+    {
+      "hole": {
+        "col": 4,
+        "row": 6
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-7"
+    },
+    {
+      "hole": {
+        "col": 4,
+        "row": 9
+      },
+      "pin": null,
+      "bottom": [
+        "cond-1"
+      ],
+      "top": [],
+      "blockedBottom": true,
+      "blockedTop": false,
+      "bodyCovers": null
+    },
+    {
+      "hole": {
+        "col": 4,
+        "row": 14
+      },
+      "pin": null,
+      "bottom": [
+        "cond-3"
+      ],
+      "top": [],
+      "blockedBottom": true,
+      "blockedTop": false,
+      "bodyCovers": null
+    },
+    {
+      "hole": {
+        "col": 5,
+        "row": 3
+      },
+      "pin": {
+        "componentRef": "X7",
+        "pin": "1"
+      },
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-7"
+    },
+    {
+      "hole": {
+        "col": 5,
+        "row": 4
+      },
+      "pin": {
+        "componentRef": "X7",
+        "pin": "2"
+      },
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-7"
+    },
+    {
+      "hole": {
+        "col": 5,
+        "row": 5
+      },
+      "pin": {
+        "componentRef": "X7",
+        "pin": "3"
+      },
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-7"
+    },
+    {
+      "hole": {
+        "col": 5,
+        "row": 6
+      },
+      "pin": {
+        "componentRef": "X7",
+        "pin": "4"
+      },
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-7"
+    },
+    {
+      "hole": {
+        "col": 5,
+        "row": 9
+      },
+      "pin": null,
+      "bottom": [
+        "cond-1"
+      ],
+      "top": [],
+      "blockedBottom": true,
+      "blockedTop": false,
+      "bodyCovers": null
+    },
+    {
+      "hole": {
+        "col": 5,
+        "row": 14
+      },
+      "pin": null,
+      "bottom": [
+        "cond-3"
+      ],
+      "top": [],
+      "blockedBottom": true,
+      "blockedTop": false,
+      "bodyCovers": null
+    },
+    {
+      "hole": {
+        "col": 6,
+        "row": 6
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [
+        "cond-7"
+      ],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": null
+    },
+    {
+      "hole": {
+        "col": 6,
+        "row": 9
+      },
+      "pin": null,
+      "bottom": [
+        "cond-1"
+      ],
+      "top": [],
+      "blockedBottom": true,
+      "blockedTop": false,
+      "bodyCovers": null
+    },
+    {
+      "hole": {
+        "col": 6,
+        "row": 14
+      },
+      "pin": null,
+      "bottom": [
+        "cond-3"
+      ],
+      "top": [],
+      "blockedBottom": true,
+      "blockedTop": false,
+      "bodyCovers": null
+    },
+    {
+      "hole": {
+        "col": 7,
+        "row": 9
+      },
+      "pin": null,
+      "bottom": [
+        "cond-1"
+      ],
+      "top": [],
+      "blockedBottom": true,
+      "blockedTop": false,
+      "bodyCovers": null
+    },
+    {
+      "hole": {
+        "col": 8,
+        "row": 9
+      },
+      "pin": null,
+      "bottom": [
+        "cond-1"
+      ],
+      "top": [],
+      "blockedBottom": true,
+      "blockedTop": false,
+      "bodyCovers": null
+    },
+    {
+      "hole": {
+        "col": 9,
+        "row": 9
+      },
+      "pin": null,
+      "bottom": [
+        "cond-1"
+      ],
+      "top": [],
+      "blockedBottom": true,
+      "blockedTop": false,
+      "bodyCovers": null
+    },
+    {
+      "hole": {
+        "col": 10,
+        "row": 5
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-8"
+    },
+    {
+      "hole": {
+        "col": 10,
+        "row": 6
+      },
+      "pin": {
+        "componentRef": "X8",
+        "pin": "3"
+      },
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-8"
+    },
+    {
+      "hole": {
+        "col": 10,
+        "row": 7
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-8"
+    },
+    {
+      "hole": {
+        "col": 10,
+        "row": 8
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-3"
+    },
+    {
+      "hole": {
+        "col": 10,
+        "row": 9
+      },
+      "pin": null,
+      "bottom": [
+        "cond-1"
+      ],
+      "top": [],
+      "blockedBottom": true,
+      "blockedTop": false,
+      "bodyCovers": "cmp-3"
+    },
+    {
+      "hole": {
+        "col": 10,
+        "row": 10
+      },
+      "pin": {
+        "componentRef": "X3",
+        "pin": "2"
+      },
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-3"
+    },
+    {
+      "hole": {
+        "col": 11,
+        "row": 4
+      },
+      "pin": null,
+      "bottom": [
+        "cond-5"
+      ],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": null
+    },
+    {
+      "hole": {
+        "col": 11,
+        "row": 5
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-8"
+    },
+    {
+      "hole": {
+        "col": 11,
+        "row": 6
+      },
+      "pin": {
+        "componentRef": "X8",
+        "pin": "2"
+      },
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-8"
+    },
+    {
+      "hole": {
+        "col": 11,
+        "row": 7
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-8"
+    },
+    {
+      "hole": {
+        "col": 12,
+        "row": 5
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-8"
+    },
+    {
+      "hole": {
+        "col": 12,
+        "row": 6
+      },
+      "pin": {
+        "componentRef": "X8",
+        "pin": "1"
+      },
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-8"
+    },
+    {
+      "hole": {
+        "col": 12,
+        "row": 7
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-8"
+    },
+    {
+      "hole": {
+        "col": 12,
+        "row": 8
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-5"
+    },
+    {
+      "hole": {
+        "col": 12,
+        "row": 17
+      },
+      "pin": null,
+      "bottom": [
+        "cond-6"
+      ],
+      "top": [],
+      "blockedBottom": true,
+      "blockedTop": false,
+      "bodyCovers": null
+    },
+    {
+      "hole": {
+        "col": 13,
+        "row": 0
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-6"
+    },
+    {
+      "hole": {
+        "col": 13,
+        "row": 1
+      },
+      "pin": {
+        "componentRef": "X6",
+        "pin": "1"
+      },
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-6"
+    },
+    {
+      "hole": {
+        "col": 13,
+        "row": 2
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-6"
+    },
+    {
+      "hole": {
+        "col": 13,
+        "row": 7
+      },
+      "pin": {
+        "componentRef": "X5",
+        "pin": "1"
+      },
+      "bottom": [
+        "cond-4"
+      ],
+      "top": [],
+      "blockedBottom": true,
+      "blockedTop": false,
+      "bodyCovers": "cmp-5"
+    },
+    {
+      "hole": {
+        "col": 13,
+        "row": 8
+      },
+      "pin": {
+        "componentRef": "X5",
+        "pin": "2"
+      },
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-5"
+    },
+    {
+      "hole": {
+        "col": 14,
+        "row": 0
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-6"
+    },
+    {
+      "hole": {
+        "col": 14,
+        "row": 1
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-6"
+    },
+    {
+      "hole": {
+        "col": 14,
+        "row": 2
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-6"
+    },
+    {
+      "hole": {
+        "col": 14,
+        "row": 7
+      },
+      "pin": null,
+      "bottom": [
+        "cond-4"
+      ],
+      "top": [],
+      "blockedBottom": true,
+      "blockedTop": false,
+      "bodyCovers": "cmp-5"
+    },
+    {
+      "hole": {
+        "col": 14,
+        "row": 8
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-5"
+    },
+    {
+      "hole": {
+        "col": 15,
+        "row": 0
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-6"
+    },
+    {
+      "hole": {
+        "col": 15,
+        "row": 1
+      },
+      "pin": {
+        "componentRef": "X6",
+        "pin": "2"
+      },
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-6"
+    },
+    {
+      "hole": {
+        "col": 15,
+        "row": 2
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-6"
+    },
+    {
+      "hole": {
+        "col": 15,
+        "row": 7
+      },
+      "pin": null,
+      "bottom": [
+        "cond-4"
+      ],
+      "top": [],
+      "blockedBottom": true,
+      "blockedTop": false,
+      "bodyCovers": null
+    },
+    {
+      "hole": {
+        "col": 16,
+        "row": 0
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [
+        "cond-7"
+      ],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": null
+    },
+    {
+      "hole": {
+        "col": 16,
+        "row": 3
+      },
+      "pin": null,
+      "bottom": [
+        "cond-2"
+      ],
+      "top": [],
+      "blockedBottom": true,
+      "blockedTop": false,
+      "bodyCovers": null
+    },
+    {
+      "hole": {
+        "col": 17,
+        "row": 3
+      },
+      "pin": null,
+      "bottom": [
+        "cond-2"
+      ],
+      "top": [],
+      "blockedBottom": true,
+      "blockedTop": false,
+      "bodyCovers": null
+    },
+    {
+      "hole": {
+        "col": 17,
+        "row": 12
+      },
+      "pin": {
+        "componentRef": "X1",
+        "pin": "1"
+      },
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-1"
+    },
+    {
+      "hole": {
+        "col": 17,
+        "row": 13
+      },
+      "pin": {
+        "componentRef": "X1",
+        "pin": "2"
+      },
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-1"
+    },
+    {
+      "hole": {
+        "col": 17,
+        "row": 14
+      },
+      "pin": {
+        "componentRef": "X1",
+        "pin": "3"
+      },
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-1"
+    },
+    {
+      "hole": {
+        "col": 17,
+        "row": 15
+      },
+      "pin": {
+        "componentRef": "X1",
+        "pin": "4"
+      },
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-1"
+    },
+    {
+      "hole": {
+        "col": 18,
+        "row": 3
+      },
+      "pin": null,
+      "bottom": [
+        "cond-2"
+      ],
+      "top": [],
+      "blockedBottom": true,
+      "blockedTop": false,
+      "bodyCovers": null
+    },
+    {
+      "hole": {
+        "col": 19,
+        "row": 3
+      },
+      "pin": null,
+      "bottom": [
+        "cond-2"
+      ],
+      "top": [],
+      "blockedBottom": true,
+      "blockedTop": false,
+      "bodyCovers": null
+    },
+    {
+      "hole": {
+        "col": 20,
+        "row": 3
+      },
+      "pin": null,
+      "bottom": [
+        "cond-2"
+      ],
+      "top": [],
+      "blockedBottom": true,
+      "blockedTop": false,
+      "bodyCovers": null
+    },
+    {
+      "hole": {
+        "col": 20,
+        "row": 14
+      },
+      "pin": {
+        "componentRef": "X4",
+        "pin": "1"
+      },
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-4"
+    },
+    {
+      "hole": {
+        "col": 21,
+        "row": 14
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-4"
+    },
+    {
+      "hole": {
+        "col": 22,
+        "row": 14
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-4"
+    },
+    {
+      "hole": {
+        "col": 23,
+        "row": 14
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-4"
+    },
+    {
+      "hole": {
+        "col": 24,
+        "row": 14
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-4"
+    },
+    {
+      "hole": {
+        "col": 25,
+        "row": 14
+      },
+      "pin": {
+        "componentRef": "X4",
+        "pin": "2"
+      },
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-4"
+    },
+    {
+      "hole": {
+        "col": 27,
+        "row": 1
+      },
+      "pin": null,
+      "bottom": [
+        "cond-6"
+      ],
+      "top": [],
+      "blockedBottom": true,
+      "blockedTop": false,
+      "bodyCovers": null
+    }
+  ],
   "physicalNets": [
     {
       "id": "net:1:14:bottom",

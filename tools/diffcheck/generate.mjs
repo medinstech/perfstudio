@@ -143,7 +143,26 @@ function describe(doc) {
     });
   }
 
+  // Occupancy is the counterpart to connectivity — what is physically in the way rather
+  // than what is electrically joined — and the router depends on it. Without a fixture
+  // its port would rest on hand-written tests alone, and once the TypeScript source is
+  // deleted that proof can never be produced again.
+  const occ = core.buildOccupancy(doc, lookup);
+  const occupancy = occ.occupiedHoles().map((hole) => {
+    const pin = occ.pinAt(hole);
+    return {
+      hole,
+      pin: pin ? { componentRef: pin.componentRef, pin: pin.pin } : null,
+      bottom: occ.conductorsAt(hole, 'bottom'),
+      top: occ.conductorsAt(hole, 'top'),
+      blockedBottom: occ.isCopperBlocked(hole, 'bottom'),
+      blockedTop: occ.isCopperBlocked(hole, 'top'),
+      bodyCovers: occ.bodyCovers(hole) ?? null,
+    };
+  });
+
   return {
+    occupancy,
     physicalNets: physical.map((n) => ({
       id: n.id,
       nodes: n.nodes,
@@ -203,9 +222,41 @@ cases.push({ name: 'sparse', doc: makeCase(7, { cols: 16, rows: 12, parts: 3, tr
   cases.push({ name: 'ne555', doc: bus.document });
 }
 
-for (const { name, doc } of cases) {
-  writeFileSync(join(OUT, `${name}.perf`), core.serializeDocument(doc), 'utf8');
-  writeFileSync(join(OUT, `${name}.expected.json`), JSON.stringify(describe(doc), null, 2) + '\n', 'utf8');
+/**
+ * Describe the document AS IT COMES BACK OFF DISK, not as it sits in memory.
+ *
+ * serializeDocument sorts components, conductors and nets by id for diff stability, so
+ * a freshly built document and its reloaded self can differ in array ORDER. Most of the
+ * engine does not care, but DRC's component-body-overlap reports the pair it found in
+ * iteration order, so the two orderings give different — both correct — output.
+ *
+ * Describing the in-memory document would therefore have paired every .perf file with
+ * expected output computed from an ordering nobody ever actually has: real documents
+ * arrive by being loaded. The fixture would be self-inconsistent, and the port would be
+ * verified against a situation that cannot occur.
+ */
+function roundTrip(doc) {
+  const json = core.serializeDocument(doc);
+  const reloaded = core.deserializeDocument(json);
+  if (!reloaded.ok) {
+    throw new Error(`fixture failed to round-trip: ${reloaded.code} ${reloaded.message}`);
+  }
+  const again = core.serializeDocument(reloaded.document);
+  if (again !== json) {
+    throw new Error('fixture round-trip is not byte-stable; the fixture would be a moving target');
+  }
+  return { doc: reloaded.document, json };
+}
+
+for (const entry of cases) {
+  const { doc, json } = roundTrip(entry.doc);
+  entry.doc = doc; // so the summary below reports on what was actually described
+  writeFileSync(join(OUT, `${entry.name}.perf`), json, 'utf8');
+  writeFileSync(
+    join(OUT, `${entry.name}.expected.json`),
+    JSON.stringify(describe(doc), null, 2) + '\n',
+    'utf8',
+  );
 }
 
 // The whole footprint registry, so the Python generators can be proved identical.

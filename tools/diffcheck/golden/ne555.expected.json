@@ -1,4 +1,774 @@
 {
+  "occupancy": [
+    {
+      "hole": {
+        "col": 1,
+        "row": 2
+      },
+      "pin": {
+        "componentRef": "U1",
+        "pin": "1"
+      },
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-1"
+    },
+    {
+      "hole": {
+        "col": 1,
+        "row": 3
+      },
+      "pin": {
+        "componentRef": "U1",
+        "pin": "2"
+      },
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-1"
+    },
+    {
+      "hole": {
+        "col": 1,
+        "row": 4
+      },
+      "pin": {
+        "componentRef": "U1",
+        "pin": "3"
+      },
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-1"
+    },
+    {
+      "hole": {
+        "col": 1,
+        "row": 5
+      },
+      "pin": {
+        "componentRef": "U1",
+        "pin": "4"
+      },
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-1"
+    },
+    {
+      "hole": {
+        "col": 1,
+        "row": 9
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-5"
+    },
+    {
+      "hole": {
+        "col": 1,
+        "row": 10
+      },
+      "pin": {
+        "componentRef": "C2",
+        "pin": "1"
+      },
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-5"
+    },
+    {
+      "hole": {
+        "col": 1,
+        "row": 11
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-5"
+    },
+    {
+      "hole": {
+        "col": 2,
+        "row": 2
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-1"
+    },
+    {
+      "hole": {
+        "col": 2,
+        "row": 3
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-1"
+    },
+    {
+      "hole": {
+        "col": 2,
+        "row": 4
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-1"
+    },
+    {
+      "hole": {
+        "col": 2,
+        "row": 5
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-1"
+    },
+    {
+      "hole": {
+        "col": 2,
+        "row": 9
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-5"
+    },
+    {
+      "hole": {
+        "col": 2,
+        "row": 10
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-5"
+    },
+    {
+      "hole": {
+        "col": 2,
+        "row": 11
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-5"
+    },
+    {
+      "hole": {
+        "col": 3,
+        "row": 2
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-1"
+    },
+    {
+      "hole": {
+        "col": 3,
+        "row": 3
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-1"
+    },
+    {
+      "hole": {
+        "col": 3,
+        "row": 4
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-1"
+    },
+    {
+      "hole": {
+        "col": 3,
+        "row": 5
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-1"
+    },
+    {
+      "hole": {
+        "col": 3,
+        "row": 9
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-5"
+    },
+    {
+      "hole": {
+        "col": 3,
+        "row": 10
+      },
+      "pin": {
+        "componentRef": "C2",
+        "pin": "2"
+      },
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-5"
+    },
+    {
+      "hole": {
+        "col": 3,
+        "row": 11
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-5"
+    },
+    {
+      "hole": {
+        "col": 4,
+        "row": 2
+      },
+      "pin": {
+        "componentRef": "U1",
+        "pin": "8"
+      },
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-1"
+    },
+    {
+      "hole": {
+        "col": 4,
+        "row": 3
+      },
+      "pin": {
+        "componentRef": "U1",
+        "pin": "7"
+      },
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-1"
+    },
+    {
+      "hole": {
+        "col": 4,
+        "row": 4
+      },
+      "pin": {
+        "componentRef": "U1",
+        "pin": "6"
+      },
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-1"
+    },
+    {
+      "hole": {
+        "col": 4,
+        "row": 5
+      },
+      "pin": {
+        "componentRef": "U1",
+        "pin": "5"
+      },
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-1"
+    },
+    {
+      "hole": {
+        "col": 8,
+        "row": 2
+      },
+      "pin": {
+        "componentRef": "R1",
+        "pin": "1"
+      },
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-2"
+    },
+    {
+      "hole": {
+        "col": 8,
+        "row": 10
+      },
+      "pin": {
+        "componentRef": "R3",
+        "pin": "1"
+      },
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-6"
+    },
+    {
+      "hole": {
+        "col": 9,
+        "row": 2
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-2"
+    },
+    {
+      "hole": {
+        "col": 9,
+        "row": 10
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-6"
+    },
+    {
+      "hole": {
+        "col": 10,
+        "row": 2
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-2"
+    },
+    {
+      "hole": {
+        "col": 10,
+        "row": 10
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-6"
+    },
+    {
+      "hole": {
+        "col": 11,
+        "row": 2
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-2"
+    },
+    {
+      "hole": {
+        "col": 11,
+        "row": 10
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-6"
+    },
+    {
+      "hole": {
+        "col": 12,
+        "row": 2
+      },
+      "pin": {
+        "componentRef": "R1",
+        "pin": "2"
+      },
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-2"
+    },
+    {
+      "hole": {
+        "col": 12,
+        "row": 10
+      },
+      "pin": {
+        "componentRef": "R3",
+        "pin": "2"
+      },
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-6"
+    },
+    {
+      "hole": {
+        "col": 15,
+        "row": 2
+      },
+      "pin": {
+        "componentRef": "R2",
+        "pin": "1"
+      },
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-3"
+    },
+    {
+      "hole": {
+        "col": 15,
+        "row": 10
+      },
+      "pin": {
+        "componentRef": "LED1",
+        "pin": "1"
+      },
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-7"
+    },
+    {
+      "hole": {
+        "col": 16,
+        "row": 2
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-3"
+    },
+    {
+      "hole": {
+        "col": 16,
+        "row": 10
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-7"
+    },
+    {
+      "hole": {
+        "col": 17,
+        "row": 2
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-3"
+    },
+    {
+      "hole": {
+        "col": 17,
+        "row": 10
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-7"
+    },
+    {
+      "hole": {
+        "col": 18,
+        "row": 2
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-3"
+    },
+    {
+      "hole": {
+        "col": 18,
+        "row": 10
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-7"
+    },
+    {
+      "hole": {
+        "col": 19,
+        "row": 2
+      },
+      "pin": {
+        "componentRef": "R2",
+        "pin": "2"
+      },
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-3"
+    },
+    {
+      "hole": {
+        "col": 19,
+        "row": 10
+      },
+      "pin": {
+        "componentRef": "LED1",
+        "pin": "2"
+      },
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-7"
+    },
+    {
+      "hole": {
+        "col": 22,
+        "row": 1
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-4"
+    },
+    {
+      "hole": {
+        "col": 22,
+        "row": 2
+      },
+      "pin": {
+        "componentRef": "C1",
+        "pin": "1"
+      },
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-4"
+    },
+    {
+      "hole": {
+        "col": 22,
+        "row": 3
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-4"
+    },
+    {
+      "hole": {
+        "col": 22,
+        "row": 10
+      },
+      "pin": {
+        "componentRef": "J1",
+        "pin": "1"
+      },
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-8"
+    },
+    {
+      "hole": {
+        "col": 23,
+        "row": 1
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-4"
+    },
+    {
+      "hole": {
+        "col": 23,
+        "row": 2
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-4"
+    },
+    {
+      "hole": {
+        "col": 23,
+        "row": 3
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-4"
+    },
+    {
+      "hole": {
+        "col": 23,
+        "row": 10
+      },
+      "pin": {
+        "componentRef": "J1",
+        "pin": "2"
+      },
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-8"
+    },
+    {
+      "hole": {
+        "col": 24,
+        "row": 1
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-4"
+    },
+    {
+      "hole": {
+        "col": 24,
+        "row": 2
+      },
+      "pin": {
+        "componentRef": "C1",
+        "pin": "2"
+      },
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-4"
+    },
+    {
+      "hole": {
+        "col": 24,
+        "row": 3
+      },
+      "pin": null,
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-4"
+    },
+    {
+      "hole": {
+        "col": 24,
+        "row": 10
+      },
+      "pin": {
+        "componentRef": "J1",
+        "pin": "3"
+      },
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-8"
+    },
+    {
+      "hole": {
+        "col": 25,
+        "row": 10
+      },
+      "pin": {
+        "componentRef": "J1",
+        "pin": "4"
+      },
+      "bottom": [],
+      "top": [],
+      "blockedBottom": false,
+      "blockedTop": false,
+      "bodyCovers": "cmp-8"
+    }
+  ],
   "physicalNets": [
     {
       "id": "net:1:2:bottom",
