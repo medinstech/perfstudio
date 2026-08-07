@@ -6,6 +6,7 @@ import {
   boardSizeMm,
   chebyshev,
   coordToHoleRef,
+  formatHole,
   holeKey,
   holeRefToCoord,
   holeSpanMm,
@@ -440,6 +441,27 @@ describe('allPinHoles', () => {
     for (const { pin, hole } of all) {
       expect(hole).toEqual(pinHole(component, dip8Footprint, pin.number));
     }
+  });
+});
+
+describe('formatHole', () => {
+  it('matches coordToHoleRef for valid coordinates', () => {
+    for (const c of [
+      { col: 0, row: 0 },
+      { col: 25, row: 11 },
+      { col: 28, row: 6 },
+    ]) {
+      expect(formatHole(c)).toBe(coordToHoleRef(c));
+    }
+  });
+
+  it('degrades instead of throwing on the off-board coordinates DRC must report', () => {
+    // coordToHoleRef rightly refuses these; formatHole exists so a checker can still
+    // name the hole it is complaining about instead of crashing on it.
+    expect(() => coordToHoleRef({ col: -1, row: 0 })).toThrow();
+    expect(formatHole({ col: -1, row: 0 })).toBe('(col -1, row 0)');
+    expect(formatHole({ col: 3, row: -2 })).toBe('(col 3, row -2)');
+    expect(formatHole({ col: 1.5, row: 0 })).toBe('(col 1.5, row 0)');
   });
 });
 

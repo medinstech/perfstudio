@@ -103,6 +103,27 @@ export function holeRefToCoord(ref: HoleRef): HoleCoord {
   return { col: columnIndexFromLetters(letters), row };
 }
 
+/**
+ * Renders a hole the way the soldering guide speaks ("C7"), but never throws.
+ *
+ * {@link coordToHoleRef} is strict on purpose — it is the canonical encoder and its
+ * round-trip with {@link holeRefToCoord} is a guarantee — so it rejects negative or
+ * non-integer coordinates. But the code that most needs to NAME a hole is the code
+ * reporting that something is in the wrong place, and an off-board component sits at
+ * a negative column by definition. A strict encoder there means the checker crashes on
+ * exactly the violation it exists to report.
+ *
+ * So: use coordToHoleRef when the value must round-trip, and formatHole whenever the
+ * result is going into a message for a human.
+ */
+export function formatHole(c: HoleCoord): string {
+  try {
+    return coordToHoleRef(c);
+  } catch {
+    return `(col ${c.col}, row ${c.row})`;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Keys
 // ---------------------------------------------------------------------------

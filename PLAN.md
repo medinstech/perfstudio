@@ -164,7 +164,11 @@ Lehim özdirenci ≈ 15 µΩ·cm (Sn63Pb37) / ≈ 13 µΩ·cm (SAC305) — bakı
 | Örnek: 10 pad (25.4 mm) | Direnç | 3 A'de düşüm / kayıp |
 |---|---|---|
 | Saf lehim, ~0.3 mm² kesit | ≈ 13 mΩ | 38 mV / 114 mW |
-| 0.6 mm kalaylı bakır omurgalı | ≈ 1.5 mΩ | 4.5 mV / 14 mW |
+| 0.6 mm kalaylı bakır omurgalı | ≈ 1.35 mΩ | 4.0 mV / 12 mW |
+
+Omurgalı satır **paralel direnç** olarak hesaplanır: bakır omurga ve çevresindeki lehim
+aynı boy üzerinde birbirine yapışıktır, ikisi de akım taşır. Yalnız bakırı saymak
+1.51 mΩ verirdi; lehim dalı bunu 1.35 mΩ'a çeker. `drc.ts` bu modeli kullanıyor.
 
 → **Omurga, direnci yaklaşık bir mertebe düşürüyor.** Araç bunu hesaplayıp söylemeli:
 *"Bu net 3 A taşıyor, saf lehim yolu sınırda — omurga ekle."*
