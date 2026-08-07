@@ -1,0 +1,1342 @@
+{
+  "physicalNets": [
+    {
+      "id": "net:2:8:bottom",
+      "nodes": [
+        {
+          "hole": {
+            "col": 2,
+            "row": 8
+          },
+          "side": "bottom"
+        },
+        {
+          "hole": {
+            "col": 3,
+            "row": 8
+          },
+          "side": "bottom"
+        },
+        {
+          "hole": {
+            "col": 4,
+            "row": 8
+          },
+          "side": "bottom"
+        },
+        {
+          "hole": {
+            "col": 5,
+            "row": 8
+          },
+          "side": "bottom"
+        },
+        {
+          "hole": {
+            "col": 6,
+            "row": 8
+          },
+          "side": "bottom"
+        },
+        {
+          "hole": {
+            "col": 6,
+            "row": 8
+          },
+          "side": "top"
+        },
+        {
+          "hole": {
+            "col": 7,
+            "row": 8
+          },
+          "side": "bottom"
+        },
+        {
+          "hole": {
+            "col": 7,
+            "row": 8
+          },
+          "side": "top"
+        }
+      ],
+      "pins": [
+        {
+          "componentRef": "X2",
+          "pin": "1"
+        },
+        {
+          "componentRef": "X2",
+          "pin": "2"
+        }
+      ],
+      "conductorIds": [
+        "cond-2"
+      ]
+    },
+    {
+      "id": "net:3:2:bottom",
+      "nodes": [
+        {
+          "hole": {
+            "col": 3,
+            "row": 2
+          },
+          "side": "bottom"
+        },
+        {
+          "hole": {
+            "col": 3,
+            "row": 2
+          },
+          "side": "top"
+        }
+      ],
+      "pins": [
+        {
+          "componentRef": "X4",
+          "pin": "1"
+        }
+      ],
+      "conductorIds": []
+    },
+    {
+      "id": "net:3:6:bottom",
+      "nodes": [
+        {
+          "hole": {
+            "col": 3,
+            "row": 6
+          },
+          "side": "bottom"
+        },
+        {
+          "hole": {
+            "col": 4,
+            "row": 6
+          },
+          "side": "bottom"
+        },
+        {
+          "hole": {
+            "col": 5,
+            "row": 6
+          },
+          "side": "bottom"
+        },
+        {
+          "hole": {
+            "col": 6,
+            "row": 6
+          },
+          "side": "bottom"
+        },
+        {
+          "hole": {
+            "col": 7,
+            "row": 6
+          },
+          "side": "bottom"
+        },
+        {
+          "hole": {
+            "col": 8,
+            "row": 6
+          },
+          "side": "bottom"
+        },
+        {
+          "hole": {
+            "col": 9,
+            "row": 6
+          },
+          "side": "bottom"
+        }
+      ],
+      "pins": [],
+      "conductorIds": [
+        "cond-1"
+      ]
+    },
+    {
+      "id": "net:4:2:bottom",
+      "nodes": [
+        {
+          "hole": {
+            "col": 4,
+            "row": 2
+          },
+          "side": "bottom"
+        },
+        {
+          "hole": {
+            "col": 4,
+            "row": 2
+          },
+          "side": "top"
+        }
+      ],
+      "pins": [
+        {
+          "componentRef": "X4",
+          "pin": "2"
+        }
+      ],
+      "conductorIds": []
+    },
+    {
+      "id": "net:5:0:bottom",
+      "nodes": [
+        {
+          "hole": {
+            "col": 5,
+            "row": 0
+          },
+          "side": "bottom"
+        },
+        {
+          "hole": {
+            "col": 28,
+            "row": 12
+          },
+          "side": "bottom"
+        }
+      ],
+      "pins": [],
+      "conductorIds": [
+        "cond-5"
+      ]
+    },
+    {
+      "id": "net:7:10:bottom",
+      "nodes": [
+        {
+          "hole": {
+            "col": 7,
+            "row": 10
+          },
+          "side": "bottom"
+        },
+        {
+          "hole": {
+            "col": 7,
+            "row": 10
+          },
+          "side": "top"
+        }
+      ],
+      "pins": [
+        {
+          "componentRef": "X1",
+          "pin": "2"
+        }
+      ],
+      "conductorIds": []
+    },
+    {
+      "id": "net:8:8:bottom",
+      "nodes": [
+        {
+          "hole": {
+            "col": 8,
+            "row": 8
+          },
+          "side": "bottom"
+        },
+        {
+          "hole": {
+            "col": 8,
+            "row": 8
+          },
+          "side": "top"
+        }
+      ],
+      "pins": [
+        {
+          "componentRef": "X2",
+          "pin": "3"
+        }
+      ],
+      "conductorIds": []
+    },
+    {
+      "id": "net:8:9:bottom",
+      "nodes": [
+        {
+          "hole": {
+            "col": 8,
+            "row": 9
+          },
+          "side": "bottom"
+        },
+        {
+          "hole": {
+            "col": 8,
+            "row": 9
+          },
+          "side": "top"
+        }
+      ],
+      "pins": [
+        {
+          "componentRef": "X7",
+          "pin": "3"
+        }
+      ],
+      "conductorIds": []
+    },
+    {
+      "id": "net:8:10:bottom",
+      "nodes": [
+        {
+          "hole": {
+            "col": 8,
+            "row": 10
+          },
+          "side": "bottom"
+        },
+        {
+          "hole": {
+            "col": 8,
+            "row": 10
+          },
+          "side": "top"
+        }
+      ],
+      "pins": [
+        {
+          "componentRef": "X1",
+          "pin": "1"
+        },
+        {
+          "componentRef": "X7",
+          "pin": "2"
+        }
+      ],
+      "conductorIds": []
+    },
+    {
+      "id": "net:8:11:bottom",
+      "nodes": [
+        {
+          "hole": {
+            "col": 8,
+            "row": 11
+          },
+          "side": "bottom"
+        },
+        {
+          "hole": {
+            "col": 8,
+            "row": 11
+          },
+          "side": "top"
+        }
+      ],
+      "pins": [
+        {
+          "componentRef": "X7",
+          "pin": "1"
+        }
+      ],
+      "conductorIds": []
+    },
+    {
+      "id": "net:9:3:bottom",
+      "nodes": [
+        {
+          "hole": {
+            "col": 9,
+            "row": 3
+          },
+          "side": "bottom"
+        },
+        {
+          "hole": {
+            "col": 10,
+            "row": 3
+          },
+          "side": "bottom"
+        }
+      ],
+      "pins": [],
+      "conductorIds": [
+        "cond-4"
+      ]
+    },
+    {
+      "id": "net:12:6:bottom",
+      "nodes": [
+        {
+          "hole": {
+            "col": 12,
+            "row": 6
+          },
+          "side": "bottom"
+        },
+        {
+          "hole": {
+            "col": 21,
+            "row": 0
+          },
+          "side": "bottom"
+        }
+      ],
+      "pins": [],
+      "conductorIds": [
+        "cond-6"
+      ]
+    },
+    {
+      "id": "net:13:5:bottom",
+      "nodes": [
+        {
+          "hole": {
+            "col": 13,
+            "row": 5
+          },
+          "side": "bottom"
+        },
+        {
+          "hole": {
+            "col": 13,
+            "row": 5
+          },
+          "side": "top"
+        }
+      ],
+      "pins": [
+        {
+          "componentRef": "X6",
+          "pin": "1"
+        }
+      ],
+      "conductorIds": []
+    },
+    {
+      "id": "net:14:4:bottom",
+      "nodes": [
+        {
+          "hole": {
+            "col": 14,
+            "row": 4
+          },
+          "side": "bottom"
+        },
+        {
+          "hole": {
+            "col": 14,
+            "row": 4
+          },
+          "side": "top"
+        }
+      ],
+      "pins": [
+        {
+          "componentRef": "X3",
+          "pin": "1"
+        }
+      ],
+      "conductorIds": []
+    },
+    {
+      "id": "net:14:5:bottom",
+      "nodes": [
+        {
+          "hole": {
+            "col": 14,
+            "row": 5
+          },
+          "side": "bottom"
+        },
+        {
+          "hole": {
+            "col": 14,
+            "row": 5
+          },
+          "side": "top"
+        }
+      ],
+      "pins": [
+        {
+          "componentRef": "X3",
+          "pin": "2"
+        }
+      ],
+      "conductorIds": []
+    },
+    {
+      "id": "net:14:6:bottom",
+      "nodes": [
+        {
+          "hole": {
+            "col": 14,
+            "row": 6
+          },
+          "side": "bottom"
+        },
+        {
+          "hole": {
+            "col": 14,
+            "row": 6
+          },
+          "side": "top"
+        }
+      ],
+      "pins": [
+        {
+          "componentRef": "X3",
+          "pin": "3"
+        }
+      ],
+      "conductorIds": []
+    },
+    {
+      "id": "net:14:7:bottom",
+      "nodes": [
+        {
+          "hole": {
+            "col": 14,
+            "row": 7
+          },
+          "side": "bottom"
+        },
+        {
+          "hole": {
+            "col": 14,
+            "row": 7
+          },
+          "side": "top"
+        }
+      ],
+      "pins": [
+        {
+          "componentRef": "X3",
+          "pin": "4"
+        }
+      ],
+      "conductorIds": []
+    },
+    {
+      "id": "net:17:4:bottom",
+      "nodes": [
+        {
+          "hole": {
+            "col": 17,
+            "row": 4
+          },
+          "side": "bottom"
+        },
+        {
+          "hole": {
+            "col": 17,
+            "row": 4
+          },
+          "side": "top"
+        }
+      ],
+      "pins": [
+        {
+          "componentRef": "X3",
+          "pin": "8"
+        }
+      ],
+      "conductorIds": []
+    },
+    {
+      "id": "net:17:5:bottom",
+      "nodes": [
+        {
+          "hole": {
+            "col": 17,
+            "row": 5
+          },
+          "side": "bottom"
+        },
+        {
+          "hole": {
+            "col": 17,
+            "row": 5
+          },
+          "side": "top"
+        }
+      ],
+      "pins": [
+        {
+          "componentRef": "X3",
+          "pin": "7"
+        }
+      ],
+      "conductorIds": []
+    },
+    {
+      "id": "net:17:6:bottom",
+      "nodes": [
+        {
+          "hole": {
+            "col": 17,
+            "row": 6
+          },
+          "side": "bottom"
+        },
+        {
+          "hole": {
+            "col": 17,
+            "row": 6
+          },
+          "side": "top"
+        }
+      ],
+      "pins": [
+        {
+          "componentRef": "X3",
+          "pin": "6"
+        }
+      ],
+      "conductorIds": []
+    },
+    {
+      "id": "net:17:7:bottom",
+      "nodes": [
+        {
+          "hole": {
+            "col": 17,
+            "row": 7
+          },
+          "side": "bottom"
+        },
+        {
+          "hole": {
+            "col": 17,
+            "row": 7
+          },
+          "side": "top"
+        }
+      ],
+      "pins": [
+        {
+          "componentRef": "X3",
+          "pin": "5"
+        }
+      ],
+      "conductorIds": []
+    },
+    {
+      "id": "net:17:13:bottom",
+      "nodes": [
+        {
+          "hole": {
+            "col": 17,
+            "row": 13
+          },
+          "side": "bottom"
+        },
+        {
+          "hole": {
+            "col": 26,
+            "row": 16
+          },
+          "side": "bottom"
+        }
+      ],
+      "pins": [],
+      "conductorIds": [
+        "cond-7"
+      ]
+    },
+    {
+      "id": "net:18:5:bottom",
+      "nodes": [
+        {
+          "hole": {
+            "col": 18,
+            "row": 5
+          },
+          "side": "bottom"
+        },
+        {
+          "hole": {
+            "col": 18,
+            "row": 5
+          },
+          "side": "top"
+        }
+      ],
+      "pins": [
+        {
+          "componentRef": "X6",
+          "pin": "2"
+        }
+      ],
+      "conductorIds": []
+    },
+    {
+      "id": "net:19:2:bottom",
+      "nodes": [
+        {
+          "hole": {
+            "col": 19,
+            "row": 2
+          },
+          "side": "bottom"
+        },
+        {
+          "hole": {
+            "col": 20,
+            "row": 2
+          },
+          "side": "bottom"
+        },
+        {
+          "hole": {
+            "col": 21,
+            "row": 2
+          },
+          "side": "bottom"
+        },
+        {
+          "hole": {
+            "col": 22,
+            "row": 2
+          },
+          "side": "bottom"
+        },
+        {
+          "hole": {
+            "col": 23,
+            "row": 2
+          },
+          "side": "bottom"
+        }
+      ],
+      "pins": [],
+      "conductorIds": [
+        "cond-3"
+      ]
+    },
+    {
+      "id": "net:19:10:bottom",
+      "nodes": [
+        {
+          "hole": {
+            "col": 19,
+            "row": 10
+          },
+          "side": "bottom"
+        },
+        {
+          "hole": {
+            "col": 19,
+            "row": 10
+          },
+          "side": "top"
+        }
+      ],
+      "pins": [
+        {
+          "componentRef": "X8",
+          "pin": "1"
+        }
+      ],
+      "conductorIds": []
+    },
+    {
+      "id": "net:19:11:bottom",
+      "nodes": [
+        {
+          "hole": {
+            "col": 19,
+            "row": 11
+          },
+          "side": "bottom"
+        },
+        {
+          "hole": {
+            "col": 19,
+            "row": 11
+          },
+          "side": "top"
+        }
+      ],
+      "pins": [
+        {
+          "componentRef": "X5",
+          "pin": "1"
+        },
+        {
+          "componentRef": "X8",
+          "pin": "2"
+        }
+      ],
+      "conductorIds": []
+    },
+    {
+      "id": "net:21:11:bottom",
+      "nodes": [
+        {
+          "hole": {
+            "col": 21,
+            "row": 11
+          },
+          "side": "bottom"
+        },
+        {
+          "hole": {
+            "col": 21,
+            "row": 11
+          },
+          "side": "top"
+        }
+      ],
+      "pins": [
+        {
+          "componentRef": "X5",
+          "pin": "2"
+        }
+      ],
+      "conductorIds": []
+    }
+  ],
+  "drc": [
+    {
+      "rule": "component-body-overlap",
+      "severity": "error",
+      "holes": [
+        {
+          "col": 6,
+          "row": 8
+        },
+        {
+          "col": 8,
+          "row": 11
+        }
+      ],
+      "componentIds": [
+        "cmp-2",
+        "cmp-7"
+      ],
+      "conductorIds": []
+    },
+    {
+      "rule": "component-body-overlap",
+      "severity": "error",
+      "holes": [
+        {
+          "col": 8,
+          "row": 10
+        },
+        {
+          "col": 6,
+          "row": 8
+        }
+      ],
+      "componentIds": [
+        "cmp-1",
+        "cmp-2"
+      ],
+      "conductorIds": []
+    },
+    {
+      "rule": "component-body-overlap",
+      "severity": "error",
+      "holes": [
+        {
+          "col": 8,
+          "row": 10
+        },
+        {
+          "col": 8,
+          "row": 11
+        }
+      ],
+      "componentIds": [
+        "cmp-1",
+        "cmp-7"
+      ],
+      "conductorIds": []
+    },
+    {
+      "rule": "component-body-overlap",
+      "severity": "error",
+      "holes": [
+        {
+          "col": 14,
+          "row": 4
+        },
+        {
+          "col": 13,
+          "row": 5
+        }
+      ],
+      "componentIds": [
+        "cmp-3",
+        "cmp-6"
+      ],
+      "conductorIds": []
+    },
+    {
+      "rule": "component-body-overlap",
+      "severity": "error",
+      "holes": [
+        {
+          "col": 19,
+          "row": 11
+        },
+        {
+          "col": 19,
+          "row": 10
+        }
+      ],
+      "componentIds": [
+        "cmp-5",
+        "cmp-8"
+      ],
+      "conductorIds": []
+    },
+    {
+      "rule": "duplicate-pin-hole",
+      "severity": "error",
+      "holes": [
+        {
+          "col": 8,
+          "row": 10
+        }
+      ],
+      "componentIds": [
+        "cmp-1",
+        "cmp-7"
+      ],
+      "conductorIds": []
+    },
+    {
+      "rule": "duplicate-pin-hole",
+      "severity": "error",
+      "holes": [
+        {
+          "col": 19,
+          "row": 11
+        }
+      ],
+      "componentIds": [
+        "cmp-5",
+        "cmp-8"
+      ],
+      "conductorIds": []
+    },
+    {
+      "rule": "pin-not-connected",
+      "severity": "warning",
+      "holes": [
+        {
+          "col": 3,
+          "row": 2
+        }
+      ],
+      "componentIds": [
+        "cmp-4"
+      ],
+      "conductorIds": []
+    },
+    {
+      "rule": "pin-not-connected",
+      "severity": "warning",
+      "holes": [
+        {
+          "col": 8,
+          "row": 11
+        }
+      ],
+      "componentIds": [
+        "cmp-7"
+      ],
+      "conductorIds": []
+    },
+    {
+      "rule": "pin-not-connected",
+      "severity": "warning",
+      "holes": [
+        {
+          "col": 14,
+          "row": 4
+        }
+      ],
+      "componentIds": [
+        "cmp-3"
+      ],
+      "conductorIds": []
+    },
+    {
+      "rule": "pin-not-connected",
+      "severity": "warning",
+      "holes": [
+        {
+          "col": 19,
+          "row": 10
+        }
+      ],
+      "componentIds": [
+        "cmp-8"
+      ],
+      "conductorIds": []
+    },
+    {
+      "rule": "solder-trace-proximity",
+      "severity": "warning",
+      "holes": [
+        {
+          "col": 7,
+          "row": 8
+        },
+        {
+          "col": 8,
+          "row": 8
+        }
+      ],
+      "componentIds": [],
+      "conductorIds": [
+        "cond-2"
+      ]
+    },
+    {
+      "rule": "solder-trace-too-long",
+      "severity": "warning",
+      "holes": [
+        {
+          "col": 3,
+          "row": 6
+        },
+        {
+          "col": 4,
+          "row": 6
+        },
+        {
+          "col": 5,
+          "row": 6
+        },
+        {
+          "col": 6,
+          "row": 6
+        },
+        {
+          "col": 7,
+          "row": 6
+        },
+        {
+          "col": 8,
+          "row": 6
+        },
+        {
+          "col": 9,
+          "row": 6
+        }
+      ],
+      "componentIds": [],
+      "conductorIds": [
+        "cond-1"
+      ]
+    }
+  ],
+  "lvs": {
+    "ok": false,
+    "summary": {
+      "schematicNets": 3,
+      "physicalNets": 27,
+      "matchedNets": 1,
+      "opens": 2,
+      "shorts": 0
+    },
+    "issues": [
+      {
+        "kind": "floating-conductor",
+        "netNames": [],
+        "pins": [],
+        "physicalNetIds": [
+          "net:3:6:bottom"
+        ]
+      },
+      {
+        "kind": "floating-conductor",
+        "netNames": [],
+        "pins": [],
+        "physicalNetIds": [
+          "net:5:0:bottom"
+        ]
+      },
+      {
+        "kind": "floating-conductor",
+        "netNames": [],
+        "pins": [],
+        "physicalNetIds": [
+          "net:9:3:bottom"
+        ]
+      },
+      {
+        "kind": "floating-conductor",
+        "netNames": [],
+        "pins": [],
+        "physicalNetIds": [
+          "net:12:6:bottom"
+        ]
+      },
+      {
+        "kind": "floating-conductor",
+        "netNames": [],
+        "pins": [],
+        "physicalNetIds": [
+          "net:17:13:bottom"
+        ]
+      },
+      {
+        "kind": "floating-conductor",
+        "netNames": [],
+        "pins": [],
+        "physicalNetIds": [
+          "net:19:2:bottom"
+        ]
+      },
+      {
+        "kind": "unrouted-net",
+        "netNames": [
+          "SIG"
+        ],
+        "pins": [
+          {
+            "componentRef": "X1",
+            "pin": "1"
+          },
+          {
+            "componentRef": "X3",
+            "pin": "1"
+          },
+          {
+            "componentRef": "X8",
+            "pin": "1"
+          }
+        ],
+        "physicalNetIds": [
+          "net:14:4:bottom",
+          "net:19:10:bottom",
+          "net:8:10:bottom"
+        ]
+      },
+      {
+        "kind": "unrouted-net",
+        "netNames": [
+          "VCC"
+        ],
+        "pins": [
+          {
+            "componentRef": "X4",
+            "pin": "1"
+          },
+          {
+            "componentRef": "X5",
+            "pin": "1"
+          },
+          {
+            "componentRef": "X7",
+            "pin": "1"
+          }
+        ],
+        "physicalNetIds": [
+          "net:19:11:bottom",
+          "net:3:2:bottom",
+          "net:8:11:bottom"
+        ]
+      }
+    ]
+  },
+  "continuity": [
+    {
+      "a": {
+        "componentRef": "X3",
+        "pin": "1"
+      },
+      "b": {
+        "componentRef": "X3",
+        "pin": "1"
+      },
+      "netName": "GND"
+    },
+    {
+      "a": {
+        "componentRef": "X3",
+        "pin": "1"
+      },
+      "b": {
+        "componentRef": "X3",
+        "pin": "1"
+      },
+      "netName": "GND"
+    },
+    {
+      "a": {
+        "componentRef": "X4",
+        "pin": "1"
+      },
+      "b": {
+        "componentRef": "X5",
+        "pin": "1"
+      },
+      "netName": "VCC"
+    },
+    {
+      "a": {
+        "componentRef": "X5",
+        "pin": "1"
+      },
+      "b": {
+        "componentRef": "X7",
+        "pin": "1"
+      },
+      "netName": "VCC"
+    },
+    {
+      "a": {
+        "componentRef": "X1",
+        "pin": "1"
+      },
+      "b": {
+        "componentRef": "X3",
+        "pin": "1"
+      },
+      "netName": "SIG"
+    },
+    {
+      "a": {
+        "componentRef": "X3",
+        "pin": "1"
+      },
+      "b": {
+        "componentRef": "X8",
+        "pin": "1"
+      },
+      "netName": "SIG"
+    }
+  ],
+  "isolation": [
+    {
+      "a": {
+        "componentRef": "X3",
+        "pin": "1"
+      },
+      "b": {
+        "componentRef": "X4",
+        "pin": "1"
+      },
+      "netA": "GND",
+      "netB": "VCC"
+    },
+    {
+      "a": {
+        "componentRef": "X4",
+        "pin": "1"
+      },
+      "b": {
+        "componentRef": "X1",
+        "pin": "1"
+      },
+      "netA": "VCC",
+      "netB": "SIG"
+    },
+    {
+      "a": {
+        "componentRef": "X3",
+        "pin": "1"
+      },
+      "b": {
+        "componentRef": "X1",
+        "pin": "1"
+      },
+      "netA": "GND",
+      "netB": "SIG"
+    }
+  ],
+  "routes": [
+    {
+      "from": {
+        "col": 1,
+        "row": 1
+      },
+      "to": {
+        "col": 5,
+        "row": 1
+      },
+      "ok": true,
+      "strategy": "bare-wire",
+      "cost": 9.524,
+      "path": [
+        {
+          "col": 1,
+          "row": 1
+        },
+        {
+          "col": 5,
+          "row": 1
+        }
+      ],
+      "riskHoles": [],
+      "alternatives": [
+        "bare-wire",
+        "insulated-wire",
+        "solder-trace-wired"
+      ]
+    },
+    {
+      "from": {
+        "col": 2,
+        "row": 4
+      },
+      "to": {
+        "col": 9,
+        "row": 8
+      },
+      "ok": true,
+      "strategy": "insulated-wire",
+      "cost": 22.095627,
+      "path": [
+        {
+          "col": 2,
+          "row": 4
+        },
+        {
+          "col": 9,
+          "row": 8
+        }
+      ],
+      "riskHoles": [],
+      "alternatives": [
+        "insulated-wire",
+        "solder-trace-wired"
+      ]
+    },
+    {
+      "from": {
+        "col": 0,
+        "row": 0
+      },
+      "to": {
+        "col": 29,
+        "row": 19
+      },
+      "ok": true,
+      "strategy": "insulated-wire",
+      "cost": 35.612295,
+      "path": [
+        {
+          "col": 0,
+          "row": 0
+        },
+        {
+          "col": 29,
+          "row": 19
+        }
+      ],
+      "riskHoles": [],
+      "alternatives": [
+        "insulated-wire",
+        "solder-trace-wired"
+      ]
+    }
+  ]
+}

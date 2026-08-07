@@ -1,0 +1,353 @@
+{
+  "formatVersion": 1,
+  "meta": {
+    "name": "diffcheck",
+    "created": "2026-01-01T00:00:00.000Z",
+    "modified": "2026-01-01T00:00:00.000Z"
+  },
+  "board": {
+    "type": "pad-per-hole",
+    "cols": 30,
+    "rows": 20,
+    "pitch": 2.54,
+    "thickness": 1.6,
+    "material": "FR4",
+    "padDiameter": 1.9,
+    "drillDiameter": 1
+  },
+  "components": [
+    {
+      "id": "cmp-1",
+      "ref": "X1",
+      "value": "v0",
+      "footprintId": "led-5mm",
+      "anchor": {
+        "col": 8,
+        "row": 10
+      },
+      "rotation": 180,
+      "mirrored": false,
+      "locked": false
+    },
+    {
+      "id": "cmp-2",
+      "ref": "X2",
+      "value": "v1",
+      "footprintId": "to92",
+      "anchor": {
+        "col": 6,
+        "row": 8
+      },
+      "rotation": 0,
+      "mirrored": false,
+      "locked": false
+    },
+    {
+      "id": "cmp-3",
+      "ref": "X3",
+      "value": "v2",
+      "footprintId": "dip-8",
+      "anchor": {
+        "col": 14,
+        "row": 4
+      },
+      "rotation": 0,
+      "mirrored": false,
+      "locked": false
+    },
+    {
+      "id": "cmp-4",
+      "ref": "X4",
+      "value": "v3",
+      "footprintId": "led-5mm",
+      "anchor": {
+        "col": 3,
+        "row": 2
+      },
+      "rotation": 0,
+      "mirrored": false,
+      "locked": false
+    },
+    {
+      "id": "cmp-5",
+      "ref": "X5",
+      "value": "v4",
+      "footprintId": "c-elec-d5-p2",
+      "anchor": {
+        "col": 19,
+        "row": 11
+      },
+      "rotation": 0,
+      "mirrored": false,
+      "locked": false
+    },
+    {
+      "id": "cmp-6",
+      "ref": "X6",
+      "value": "v5",
+      "footprintId": "r-axial-5",
+      "anchor": {
+        "col": 13,
+        "row": 5
+      },
+      "rotation": 180,
+      "mirrored": true,
+      "locked": false
+    },
+    {
+      "id": "cmp-7",
+      "ref": "X7",
+      "value": "v6",
+      "footprintId": "to92",
+      "anchor": {
+        "col": 8,
+        "row": 11
+      },
+      "rotation": 270,
+      "mirrored": false,
+      "locked": false
+    },
+    {
+      "id": "cmp-8",
+      "ref": "X8",
+      "value": "v7",
+      "footprintId": "led-5mm",
+      "anchor": {
+        "col": 19,
+        "row": 10
+      },
+      "rotation": 90,
+      "mirrored": false,
+      "locked": false
+    }
+  ],
+  "conductors": [
+    {
+      "id": "cond-1",
+      "kind": "solder-trace",
+      "path": [
+        {
+          "col": 3,
+          "row": 6
+        },
+        {
+          "col": 4,
+          "row": 6
+        },
+        {
+          "col": 5,
+          "row": 6
+        },
+        {
+          "col": 6,
+          "row": 6
+        },
+        {
+          "col": 7,
+          "row": 6
+        },
+        {
+          "col": 8,
+          "row": 6
+        },
+        {
+          "col": 9,
+          "row": 6
+        }
+      ],
+      "side": "bottom",
+      "layerZ": 0,
+      "buildup": "normal"
+    },
+    {
+      "id": "cond-2",
+      "kind": "solder-trace",
+      "path": [
+        {
+          "col": 2,
+          "row": 8
+        },
+        {
+          "col": 3,
+          "row": 8
+        },
+        {
+          "col": 4,
+          "row": 8
+        },
+        {
+          "col": 5,
+          "row": 8
+        },
+        {
+          "col": 6,
+          "row": 8
+        },
+        {
+          "col": 7,
+          "row": 8
+        }
+      ],
+      "side": "bottom",
+      "layerZ": 0,
+      "buildup": "light"
+    },
+    {
+      "id": "cond-3",
+      "kind": "solder-trace",
+      "path": [
+        {
+          "col": 19,
+          "row": 2
+        },
+        {
+          "col": 20,
+          "row": 2
+        },
+        {
+          "col": 21,
+          "row": 2
+        },
+        {
+          "col": 22,
+          "row": 2
+        },
+        {
+          "col": 23,
+          "row": 2
+        }
+      ],
+      "side": "bottom",
+      "layerZ": 0,
+      "buildup": "light"
+    },
+    {
+      "id": "cond-4",
+      "kind": "solder-trace",
+      "path": [
+        {
+          "col": 9,
+          "row": 3
+        },
+        {
+          "col": 10,
+          "row": 3
+        }
+      ],
+      "side": "bottom",
+      "layerZ": 0,
+      "buildup": "heavy"
+    },
+    {
+      "id": "cond-5",
+      "kind": "top-jumper",
+      "path": [
+        {
+          "col": 5,
+          "row": 0
+        },
+        {
+          "col": 28,
+          "row": 12
+        }
+      ],
+      "side": "bottom",
+      "layerZ": 0,
+      "gaugeAwg": 22
+    },
+    {
+      "id": "cond-6",
+      "kind": "top-jumper",
+      "path": [
+        {
+          "col": 12,
+          "row": 6
+        },
+        {
+          "col": 21,
+          "row": 0
+        }
+      ],
+      "side": "bottom",
+      "layerZ": 0,
+      "gaugeAwg": 26
+    },
+    {
+      "id": "cond-7",
+      "kind": "top-jumper",
+      "path": [
+        {
+          "col": 26,
+          "row": 16
+        },
+        {
+          "col": 17,
+          "row": 13
+        }
+      ],
+      "side": "bottom",
+      "layerZ": 0,
+      "gaugeAwg": 24
+    }
+  ],
+  "cuts": [],
+  "nets": [
+    {
+      "id": "net-1",
+      "name": "GND",
+      "nodes": [
+        {
+          "componentRef": "X3",
+          "pin": "1"
+        },
+        {
+          "componentRef": "X3",
+          "pin": "1"
+        },
+        {
+          "componentRef": "X3",
+          "pin": "1"
+        }
+      ],
+      "class": "ground"
+    },
+    {
+      "id": "net-2",
+      "name": "VCC",
+      "nodes": [
+        {
+          "componentRef": "X4",
+          "pin": "1"
+        },
+        {
+          "componentRef": "X5",
+          "pin": "1"
+        },
+        {
+          "componentRef": "X7",
+          "pin": "1"
+        }
+      ],
+      "class": "power"
+    },
+    {
+      "id": "net-3",
+      "name": "SIG",
+      "nodes": [
+        {
+          "componentRef": "X8",
+          "pin": "1"
+        },
+        {
+          "componentRef": "X1",
+          "pin": "1"
+        },
+        {
+          "componentRef": "X3",
+          "pin": "1"
+        }
+      ],
+      "class": "signal"
+    }
+  ]
+}

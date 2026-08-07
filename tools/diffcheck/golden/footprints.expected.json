@@ -1,0 +1,5739 @@
+{
+  "r-axial-3": {
+    "id": "r-axial-3",
+    "name": "Resistor (axial, 3-hole span)",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0
+      },
+      {
+        "number": "2",
+        "dCol": 3,
+        "dRow": 0
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": -1.27,
+        "y": -2.27
+      },
+      {
+        "x": 8.89,
+        "y": -2.27
+      },
+      {
+        "x": 8.89,
+        "y": 2.27
+      },
+      {
+        "x": -1.27,
+        "y": 2.27
+      }
+    ],
+    "bodyHeight": 2,
+    "body": {
+      "archetype": "axial-cylinder",
+      "dims": {
+        "length": 5,
+        "diameter": 2
+      }
+    },
+    "leadDiameter": 0.5,
+    "polarized": false
+  },
+  "r-axial-4": {
+    "id": "r-axial-4",
+    "name": "Resistor (axial, 4-hole span)",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0
+      },
+      {
+        "number": "2",
+        "dCol": 4,
+        "dRow": 0
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": -1.2699999999999996,
+        "y": -2.42
+      },
+      {
+        "x": 11.43,
+        "y": -2.42
+      },
+      {
+        "x": 11.43,
+        "y": 2.42
+      },
+      {
+        "x": -1.2699999999999996,
+        "y": 2.42
+      }
+    ],
+    "bodyHeight": 2.3,
+    "body": {
+      "archetype": "axial-cylinder",
+      "dims": {
+        "length": 6.3,
+        "diameter": 2.3
+      }
+    },
+    "leadDiameter": 0.5,
+    "polarized": false
+  },
+  "r-axial-5": {
+    "id": "r-axial-5",
+    "name": "Resistor (axial, 5-hole span)",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0
+      },
+      {
+        "number": "2",
+        "dCol": 5,
+        "dRow": 0
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": -1.2699999999999996,
+        "y": -2.52
+      },
+      {
+        "x": 13.969999999999999,
+        "y": -2.52
+      },
+      {
+        "x": 13.969999999999999,
+        "y": 2.52
+      },
+      {
+        "x": -1.2699999999999996,
+        "y": 2.52
+      }
+    ],
+    "bodyHeight": 2.5,
+    "body": {
+      "archetype": "axial-cylinder",
+      "dims": {
+        "length": 6.3,
+        "diameter": 2.5
+      }
+    },
+    "leadDiameter": 0.5,
+    "polarized": false
+  },
+  "r-axial-6": {
+    "id": "r-axial-6",
+    "name": "Resistor (axial, 6-hole span)",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0
+      },
+      {
+        "number": "2",
+        "dCol": 6,
+        "dRow": 0
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": -1.2700000000000005,
+        "y": -3.0700000000000003
+      },
+      {
+        "x": 16.51,
+        "y": -3.0700000000000003
+      },
+      {
+        "x": 16.51,
+        "y": 3.0700000000000003
+      },
+      {
+        "x": -1.2700000000000005,
+        "y": 3.0700000000000003
+      }
+    ],
+    "bodyHeight": 3.6,
+    "body": {
+      "archetype": "axial-cylinder",
+      "dims": {
+        "length": 9,
+        "diameter": 3.6
+      }
+    },
+    "leadDiameter": 0.5,
+    "polarized": false
+  },
+  "d-do41": {
+    "id": "d-do41",
+    "name": "Diode, DO-41",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0
+      },
+      {
+        "number": "2",
+        "dCol": 4,
+        "dRow": 0
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": -1.2699999999999996,
+        "y": -2.62
+      },
+      {
+        "x": 11.43,
+        "y": -2.62
+      },
+      {
+        "x": 11.43,
+        "y": 2.62
+      },
+      {
+        "x": -1.2699999999999996,
+        "y": 2.62
+      }
+    ],
+    "bodyHeight": 2.7,
+    "body": {
+      "archetype": "axial-cylinder",
+      "dims": {
+        "length": 5.2,
+        "diameter": 2.7
+      }
+    },
+    "leadDiameter": 0.5,
+    "polarized": true
+  },
+  "d-do35": {
+    "id": "d-do35",
+    "name": "Diode, DO-35",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0
+      },
+      {
+        "number": "2",
+        "dCol": 3,
+        "dRow": 0
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": -1.27,
+        "y": -2.27
+      },
+      {
+        "x": 8.89,
+        "y": -2.27
+      },
+      {
+        "x": 8.89,
+        "y": 2.27
+      },
+      {
+        "x": -1.27,
+        "y": 2.27
+      }
+    ],
+    "bodyHeight": 2,
+    "body": {
+      "archetype": "axial-cylinder",
+      "dims": {
+        "length": 3.5,
+        "diameter": 2
+      }
+    },
+    "leadDiameter": 0.5,
+    "polarized": true
+  },
+  "c-elec-d5-p2": {
+    "id": "c-elec-d5-p2",
+    "name": "Electrolytic capacitor, 5 mm dia, 2-hole pitch",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0,
+        "name": "+"
+      },
+      {
+        "number": "2",
+        "dCol": 2,
+        "dRow": 0,
+        "name": "-"
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": 6.35,
+        "y": 0
+      },
+      {
+        "x": 6.220177398161351,
+        "y": 0.986100561840604
+      },
+      {
+        "x": 5.839556788418712,
+        "y": 1.9049999999999998
+      },
+      {
+        "x": 5.234076836320746,
+        "y": 2.694076836320746
+      },
+      {
+        "x": 4.445,
+        "y": 3.299556788418711
+      },
+      {
+        "x": 3.526100561840604,
+        "y": 3.68017739816135
+      },
+      {
+        "x": 2.5400000000000005,
+        "y": 3.81
+      },
+      {
+        "x": 1.5538994381593965,
+        "y": 3.68017739816135
+      },
+      {
+        "x": 0.6350000000000009,
+        "y": 3.2995567884187116
+      },
+      {
+        "x": -0.15407683632074587,
+        "y": 2.6940768363207463
+      },
+      {
+        "x": -0.7595567884187115,
+        "y": 1.9049999999999998
+      },
+      {
+        "x": -1.1401773981613497,
+        "y": 0.9861005618406051
+      },
+      {
+        "x": -1.27,
+        "y": 4.6659043047514155e-16
+      },
+      {
+        "x": -1.14017739816135,
+        "y": -0.9861005618406042
+      },
+      {
+        "x": -0.759556788418712,
+        "y": -1.904999999999999
+      },
+      {
+        "x": -0.15407683632074765,
+        "y": -2.6940768363207446
+      },
+      {
+        "x": 0.6349999999999982,
+        "y": -3.2995567884187107
+      },
+      {
+        "x": 1.5538994381593965,
+        "y": -3.68017739816135
+      },
+      {
+        "x": 2.539999999999999,
+        "y": -3.81
+      },
+      {
+        "x": 3.5261005618406025,
+        "y": -3.6801773981613506
+      },
+      {
+        "x": 4.445,
+        "y": -3.299556788418711
+      },
+      {
+        "x": 5.234076836320746,
+        "y": -2.694076836320747
+      },
+      {
+        "x": 5.83955678841871,
+        "y": -1.9050000000000018
+      },
+      {
+        "x": 6.220177398161349,
+        "y": -0.9861005618406072
+      }
+    ],
+    "bodyHeight": 7,
+    "body": {
+      "archetype": "radial-electrolytic",
+      "dims": {
+        "diameter": 5,
+        "height": 7
+      }
+    },
+    "leadDiameter": 0.5,
+    "polarized": true
+  },
+  "c-elec-d6.3-p2": {
+    "id": "c-elec-d6.3-p2",
+    "name": "Electrolytic capacitor, 6.3 mm dia, 2-hole pitch",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0,
+        "name": "+"
+      },
+      {
+        "number": "2",
+        "dCol": 2,
+        "dRow": 0,
+        "name": "-"
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": 6.96,
+        "y": 0
+      },
+      {
+        "x": 6.809392152197682,
+        "y": 1.1439801793531417
+      },
+      {
+        "x": 6.3678322847272195,
+        "y": 2.2099999999999995
+      },
+      {
+        "x": 5.66541197284454,
+        "y": 3.1254119728445398
+      },
+      {
+        "x": 4.75,
+        "y": 3.8278322847272186
+      },
+      {
+        "x": 3.6839801793531417,
+        "y": 4.269392152197682
+      },
+      {
+        "x": 2.5400000000000005,
+        "y": 4.42
+      },
+      {
+        "x": 1.3960198206468588,
+        "y": 4.269392152197682
+      },
+      {
+        "x": 0.33000000000000096,
+        "y": 3.827832284727219
+      },
+      {
+        "x": -0.5854119728445397,
+        "y": 3.12541197284454
+      },
+      {
+        "x": -1.287832284727219,
+        "y": 2.2099999999999995
+      },
+      {
+        "x": -1.729392152197681,
+        "y": 1.1439801793531428
+      },
+      {
+        "x": -1.88,
+        "y": 5.412938852231302e-16
+      },
+      {
+        "x": -1.7293921521976818,
+        "y": -1.143980179353142
+      },
+      {
+        "x": -1.2878322847272194,
+        "y": -2.2099999999999986
+      },
+      {
+        "x": -0.5854119728445415,
+        "y": -3.1254119728445384
+      },
+      {
+        "x": 0.3299999999999983,
+        "y": -3.827832284727218
+      },
+      {
+        "x": 1.3960198206468588,
+        "y": -4.269392152197682
+      },
+      {
+        "x": 2.539999999999999,
+        "y": -4.42
+      },
+      {
+        "x": 3.6839801793531395,
+        "y": -4.269392152197683
+      },
+      {
+        "x": 4.75,
+        "y": -3.8278322847272186
+      },
+      {
+        "x": 5.66541197284454,
+        "y": -3.1254119728445406
+      },
+      {
+        "x": 6.367832284727218,
+        "y": -2.2100000000000017
+      },
+      {
+        "x": 6.809392152197681,
+        "y": -1.1439801793531452
+      }
+    ],
+    "bodyHeight": 11,
+    "body": {
+      "archetype": "radial-electrolytic",
+      "dims": {
+        "diameter": 6.3,
+        "height": 11
+      }
+    },
+    "leadDiameter": 0.5,
+    "polarized": true
+  },
+  "c-elec-d8-p3": {
+    "id": "c-elec-d8-p3",
+    "name": "Electrolytic capacitor, 8 mm dia, 3-hole pitch",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0,
+        "name": "+"
+      },
+      {
+        "number": "2",
+        "dCol": 3,
+        "dRow": 0,
+        "name": "-"
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": 9.08,
+        "y": 0
+      },
+      {
+        "x": 8.90042910454339,
+        "y": 1.3639763676902843
+      },
+      {
+        "x": 8.373953877943991,
+        "y": 2.6349999999999993
+      },
+      {
+        "x": 7.536452736853105,
+        "y": 3.726452736853105
+      },
+      {
+        "x": 6.445,
+        "y": 4.563953877943991
+      },
+      {
+        "x": 5.173976367690284,
+        "y": 5.090429104543389
+      },
+      {
+        "x": 3.8100000000000005,
+        "y": 5.27
+      },
+      {
+        "x": 2.4460236323097164,
+        "y": 5.090429104543389
+      },
+      {
+        "x": 1.1750000000000016,
+        "y": 4.563953877943992
+      },
+      {
+        "x": 0.0835472631468952,
+        "y": 3.7264527368531053
+      },
+      {
+        "x": -0.7539538779439918,
+        "y": 2.6349999999999993
+      },
+      {
+        "x": -1.2804291045433893,
+        "y": 1.3639763676902856
+      },
+      {
+        "x": -1.4599999999999995,
+        "y": 6.453888631506551e-16
+      },
+      {
+        "x": -1.2804291045433893,
+        "y": -1.3639763676902845
+      },
+      {
+        "x": -0.7539538779439918,
+        "y": -2.6349999999999985
+      },
+      {
+        "x": 0.08354726314689298,
+        "y": -3.726452736853103
+      },
+      {
+        "x": 1.174999999999998,
+        "y": -4.56395387794399
+      },
+      {
+        "x": 2.4460236323097164,
+        "y": -5.090429104543389
+      },
+      {
+        "x": 3.809999999999999,
+        "y": -5.27
+      },
+      {
+        "x": 5.1739763676902815,
+        "y": -5.09042910454339
+      },
+      {
+        "x": 6.445,
+        "y": -4.563953877943991
+      },
+      {
+        "x": 7.5364527368531045,
+        "y": -3.726452736853106
+      },
+      {
+        "x": 8.37395387794399,
+        "y": -2.635000000000002
+      },
+      {
+        "x": 8.900429104543388,
+        "y": -1.3639763676902885
+      }
+    ],
+    "bodyHeight": 11.5,
+    "body": {
+      "archetype": "radial-electrolytic",
+      "dims": {
+        "diameter": 8,
+        "height": 11.5
+      }
+    },
+    "leadDiameter": 0.5,
+    "polarized": true
+  },
+  "c-elec-d10-p3": {
+    "id": "c-elec-d10-p3",
+    "name": "Electrolytic capacitor, 10 mm dia, 3-hole pitch",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0,
+        "name": "+"
+      },
+      {
+        "number": "2",
+        "dCol": 3,
+        "dRow": 0,
+        "name": "-"
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": 10.08,
+        "y": 0
+      },
+      {
+        "x": 9.866354930832458,
+        "y": 1.622795412792805
+      },
+      {
+        "x": 9.23997928172843,
+        "y": 3.1349999999999993
+      },
+      {
+        "x": 8.243559518039653,
+        "y": 4.433559518039652
+      },
+      {
+        "x": 6.945,
+        "y": 5.429979281728429
+      },
+      {
+        "x": 5.432795412792805,
+        "y": 6.056354930832458
+      },
+      {
+        "x": 3.8100000000000005,
+        "y": 6.27
+      },
+      {
+        "x": 2.187204587207196,
+        "y": 6.056354930832458
+      },
+      {
+        "x": 0.6750000000000016,
+        "y": 5.42997928172843
+      },
+      {
+        "x": -0.6235595180396518,
+        "y": 4.433559518039653
+      },
+      {
+        "x": -1.6199792817284302,
+        "y": 3.1349999999999993
+      },
+      {
+        "x": -2.246354930832457,
+        "y": 1.6227954127928066
+      },
+      {
+        "x": -2.4599999999999995,
+        "y": 7.678535430653904e-16
+      },
+      {
+        "x": -2.246354930832458,
+        "y": -1.6227954127928053
+      },
+      {
+        "x": -1.619979281728431,
+        "y": -3.134999999999998
+      },
+      {
+        "x": -0.6235595180396554,
+        "y": -4.43355951803965
+      },
+      {
+        "x": 0.6749999999999976,
+        "y": -5.429979281728429
+      },
+      {
+        "x": 2.187204587207196,
+        "y": -6.056354930832458
+      },
+      {
+        "x": 3.8099999999999987,
+        "y": -6.27
+      },
+      {
+        "x": 5.432795412792802,
+        "y": -6.056354930832459
+      },
+      {
+        "x": 6.945,
+        "y": -5.429979281728429
+      },
+      {
+        "x": 8.243559518039651,
+        "y": -4.433559518039654
+      },
+      {
+        "x": 9.239979281728429,
+        "y": -3.1350000000000025
+      },
+      {
+        "x": 9.866354930832456,
+        "y": -1.6227954127928101
+      }
+    ],
+    "bodyHeight": 12.5,
+    "body": {
+      "archetype": "radial-electrolytic",
+      "dims": {
+        "diameter": 10,
+        "height": 12.5
+      }
+    },
+    "leadDiameter": 0.5,
+    "polarized": true
+  },
+  "c-disc-p2": {
+    "id": "c-disc-p2",
+    "name": "Disc ceramic capacitor, 2-hole pitch",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0
+      },
+      {
+        "number": "2",
+        "dCol": 2,
+        "dRow": 0
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": -1.27,
+        "y": -2.52
+      },
+      {
+        "x": 6.35,
+        "y": -2.52
+      },
+      {
+        "x": 6.35,
+        "y": 2.52
+      },
+      {
+        "x": -1.27,
+        "y": 2.52
+      }
+    ],
+    "bodyHeight": 5,
+    "body": {
+      "archetype": "disc-ceramic",
+      "dims": {
+        "diameter": 5,
+        "thickness": 2.5
+      }
+    },
+    "leadDiameter": 0.5,
+    "polarized": false
+  },
+  "c-disc-p3": {
+    "id": "c-disc-p3",
+    "name": "Disc ceramic capacitor, 3-hole pitch",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0
+      },
+      {
+        "number": "2",
+        "dCol": 3,
+        "dRow": 0
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": -1.27,
+        "y": -2.52
+      },
+      {
+        "x": 8.89,
+        "y": -2.52
+      },
+      {
+        "x": 8.89,
+        "y": 2.52
+      },
+      {
+        "x": -1.27,
+        "y": 2.52
+      }
+    ],
+    "bodyHeight": 7.5,
+    "body": {
+      "archetype": "disc-ceramic",
+      "dims": {
+        "diameter": 7.5,
+        "thickness": 2.5
+      }
+    },
+    "leadDiameter": 0.5,
+    "polarized": false
+  },
+  "c-film-p2": {
+    "id": "c-film-p2",
+    "name": "Film capacitor, 2-hole pitch",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0
+      },
+      {
+        "number": "2",
+        "dCol": 2,
+        "dRow": 0
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": -2.2299999999999995,
+        "y": -3.27
+      },
+      {
+        "x": 7.31,
+        "y": -3.27
+      },
+      {
+        "x": 7.31,
+        "y": 3.27
+      },
+      {
+        "x": -2.2299999999999995,
+        "y": 3.27
+      }
+    ],
+    "bodyHeight": 6,
+    "body": {
+      "archetype": "box-film",
+      "dims": {
+        "length": 7,
+        "width": 4,
+        "height": 6
+      }
+    },
+    "leadDiameter": 0.5,
+    "polarized": false
+  },
+  "c-film-p3": {
+    "id": "c-film-p3",
+    "name": "Film capacitor, 3-hole pitch",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0
+      },
+      {
+        "number": "2",
+        "dCol": 3,
+        "dRow": 0
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": -2.4599999999999995,
+        "y": -3.77
+      },
+      {
+        "x": 10.08,
+        "y": -3.77
+      },
+      {
+        "x": 10.08,
+        "y": 3.77
+      },
+      {
+        "x": -2.4599999999999995,
+        "y": 3.77
+      }
+    ],
+    "bodyHeight": 8,
+    "body": {
+      "archetype": "box-film",
+      "dims": {
+        "length": 10,
+        "width": 5,
+        "height": 8
+      }
+    },
+    "leadDiameter": 0.5,
+    "polarized": false
+  },
+  "dip-8": {
+    "id": "dip-8",
+    "name": "DIP-8",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0
+      },
+      {
+        "number": "2",
+        "dCol": 0,
+        "dRow": 1
+      },
+      {
+        "number": "3",
+        "dCol": 0,
+        "dRow": 2
+      },
+      {
+        "number": "4",
+        "dCol": 0,
+        "dRow": 3
+      },
+      {
+        "number": "5",
+        "dCol": 3,
+        "dRow": 3
+      },
+      {
+        "number": "6",
+        "dCol": 3,
+        "dRow": 2
+      },
+      {
+        "number": "7",
+        "dCol": 3,
+        "dRow": 1
+      },
+      {
+        "number": "8",
+        "dCol": 3,
+        "dRow": 0
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": -1.27,
+        "y": -1.27
+      },
+      {
+        "x": 8.89,
+        "y": -1.27
+      },
+      {
+        "x": 8.89,
+        "y": 8.89
+      },
+      {
+        "x": -1.27,
+        "y": 8.89
+      }
+    ],
+    "bodyHeight": 5,
+    "body": {
+      "archetype": "dip",
+      "dims": {
+        "length": 9.82,
+        "width": 7.42,
+        "rowSpacing": 7.62
+      }
+    },
+    "leadDiameter": 0.46,
+    "polarized": false
+  },
+  "dip-14": {
+    "id": "dip-14",
+    "name": "DIP-14",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0
+      },
+      {
+        "number": "2",
+        "dCol": 0,
+        "dRow": 1
+      },
+      {
+        "number": "3",
+        "dCol": 0,
+        "dRow": 2
+      },
+      {
+        "number": "4",
+        "dCol": 0,
+        "dRow": 3
+      },
+      {
+        "number": "5",
+        "dCol": 0,
+        "dRow": 4
+      },
+      {
+        "number": "6",
+        "dCol": 0,
+        "dRow": 5
+      },
+      {
+        "number": "7",
+        "dCol": 0,
+        "dRow": 6
+      },
+      {
+        "number": "8",
+        "dCol": 3,
+        "dRow": 6
+      },
+      {
+        "number": "9",
+        "dCol": 3,
+        "dRow": 5
+      },
+      {
+        "number": "10",
+        "dCol": 3,
+        "dRow": 4
+      },
+      {
+        "number": "11",
+        "dCol": 3,
+        "dRow": 3
+      },
+      {
+        "number": "12",
+        "dCol": 3,
+        "dRow": 2
+      },
+      {
+        "number": "13",
+        "dCol": 3,
+        "dRow": 1
+      },
+      {
+        "number": "14",
+        "dCol": 3,
+        "dRow": 0
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": -1.27,
+        "y": -1.2700000000000005
+      },
+      {
+        "x": 8.89,
+        "y": -1.2700000000000005
+      },
+      {
+        "x": 8.89,
+        "y": 16.51
+      },
+      {
+        "x": -1.27,
+        "y": 16.51
+      }
+    ],
+    "bodyHeight": 5,
+    "body": {
+      "archetype": "dip",
+      "dims": {
+        "length": 17.44,
+        "width": 7.42,
+        "rowSpacing": 7.62
+      }
+    },
+    "leadDiameter": 0.46,
+    "polarized": false
+  },
+  "dip-16": {
+    "id": "dip-16",
+    "name": "DIP-16",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0
+      },
+      {
+        "number": "2",
+        "dCol": 0,
+        "dRow": 1
+      },
+      {
+        "number": "3",
+        "dCol": 0,
+        "dRow": 2
+      },
+      {
+        "number": "4",
+        "dCol": 0,
+        "dRow": 3
+      },
+      {
+        "number": "5",
+        "dCol": 0,
+        "dRow": 4
+      },
+      {
+        "number": "6",
+        "dCol": 0,
+        "dRow": 5
+      },
+      {
+        "number": "7",
+        "dCol": 0,
+        "dRow": 6
+      },
+      {
+        "number": "8",
+        "dCol": 0,
+        "dRow": 7
+      },
+      {
+        "number": "9",
+        "dCol": 3,
+        "dRow": 7
+      },
+      {
+        "number": "10",
+        "dCol": 3,
+        "dRow": 6
+      },
+      {
+        "number": "11",
+        "dCol": 3,
+        "dRow": 5
+      },
+      {
+        "number": "12",
+        "dCol": 3,
+        "dRow": 4
+      },
+      {
+        "number": "13",
+        "dCol": 3,
+        "dRow": 3
+      },
+      {
+        "number": "14",
+        "dCol": 3,
+        "dRow": 2
+      },
+      {
+        "number": "15",
+        "dCol": 3,
+        "dRow": 1
+      },
+      {
+        "number": "16",
+        "dCol": 3,
+        "dRow": 0
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": -1.27,
+        "y": -1.2699999999999996
+      },
+      {
+        "x": 8.89,
+        "y": -1.2699999999999996
+      },
+      {
+        "x": 8.89,
+        "y": 19.05
+      },
+      {
+        "x": -1.27,
+        "y": 19.05
+      }
+    ],
+    "bodyHeight": 5,
+    "body": {
+      "archetype": "dip",
+      "dims": {
+        "length": 19.98,
+        "width": 7.42,
+        "rowSpacing": 7.62
+      }
+    },
+    "leadDiameter": 0.46,
+    "polarized": false
+  },
+  "dip-18": {
+    "id": "dip-18",
+    "name": "DIP-18",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0
+      },
+      {
+        "number": "2",
+        "dCol": 0,
+        "dRow": 1
+      },
+      {
+        "number": "3",
+        "dCol": 0,
+        "dRow": 2
+      },
+      {
+        "number": "4",
+        "dCol": 0,
+        "dRow": 3
+      },
+      {
+        "number": "5",
+        "dCol": 0,
+        "dRow": 4
+      },
+      {
+        "number": "6",
+        "dCol": 0,
+        "dRow": 5
+      },
+      {
+        "number": "7",
+        "dCol": 0,
+        "dRow": 6
+      },
+      {
+        "number": "8",
+        "dCol": 0,
+        "dRow": 7
+      },
+      {
+        "number": "9",
+        "dCol": 0,
+        "dRow": 8
+      },
+      {
+        "number": "10",
+        "dCol": 3,
+        "dRow": 8
+      },
+      {
+        "number": "11",
+        "dCol": 3,
+        "dRow": 7
+      },
+      {
+        "number": "12",
+        "dCol": 3,
+        "dRow": 6
+      },
+      {
+        "number": "13",
+        "dCol": 3,
+        "dRow": 5
+      },
+      {
+        "number": "14",
+        "dCol": 3,
+        "dRow": 4
+      },
+      {
+        "number": "15",
+        "dCol": 3,
+        "dRow": 3
+      },
+      {
+        "number": "16",
+        "dCol": 3,
+        "dRow": 2
+      },
+      {
+        "number": "17",
+        "dCol": 3,
+        "dRow": 1
+      },
+      {
+        "number": "18",
+        "dCol": 3,
+        "dRow": 0
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": -1.27,
+        "y": -1.2699999999999996
+      },
+      {
+        "x": 8.89,
+        "y": -1.2699999999999996
+      },
+      {
+        "x": 8.89,
+        "y": 21.59
+      },
+      {
+        "x": -1.27,
+        "y": 21.59
+      }
+    ],
+    "bodyHeight": 5,
+    "body": {
+      "archetype": "dip",
+      "dims": {
+        "length": 22.52,
+        "width": 7.42,
+        "rowSpacing": 7.62
+      }
+    },
+    "leadDiameter": 0.46,
+    "polarized": false
+  },
+  "dip-20": {
+    "id": "dip-20",
+    "name": "DIP-20",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0
+      },
+      {
+        "number": "2",
+        "dCol": 0,
+        "dRow": 1
+      },
+      {
+        "number": "3",
+        "dCol": 0,
+        "dRow": 2
+      },
+      {
+        "number": "4",
+        "dCol": 0,
+        "dRow": 3
+      },
+      {
+        "number": "5",
+        "dCol": 0,
+        "dRow": 4
+      },
+      {
+        "number": "6",
+        "dCol": 0,
+        "dRow": 5
+      },
+      {
+        "number": "7",
+        "dCol": 0,
+        "dRow": 6
+      },
+      {
+        "number": "8",
+        "dCol": 0,
+        "dRow": 7
+      },
+      {
+        "number": "9",
+        "dCol": 0,
+        "dRow": 8
+      },
+      {
+        "number": "10",
+        "dCol": 0,
+        "dRow": 9
+      },
+      {
+        "number": "11",
+        "dCol": 3,
+        "dRow": 9
+      },
+      {
+        "number": "12",
+        "dCol": 3,
+        "dRow": 8
+      },
+      {
+        "number": "13",
+        "dCol": 3,
+        "dRow": 7
+      },
+      {
+        "number": "14",
+        "dCol": 3,
+        "dRow": 6
+      },
+      {
+        "number": "15",
+        "dCol": 3,
+        "dRow": 5
+      },
+      {
+        "number": "16",
+        "dCol": 3,
+        "dRow": 4
+      },
+      {
+        "number": "17",
+        "dCol": 3,
+        "dRow": 3
+      },
+      {
+        "number": "18",
+        "dCol": 3,
+        "dRow": 2
+      },
+      {
+        "number": "19",
+        "dCol": 3,
+        "dRow": 1
+      },
+      {
+        "number": "20",
+        "dCol": 3,
+        "dRow": 0
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": -1.27,
+        "y": -1.2699999999999996
+      },
+      {
+        "x": 8.89,
+        "y": -1.2699999999999996
+      },
+      {
+        "x": 8.89,
+        "y": 24.13
+      },
+      {
+        "x": -1.27,
+        "y": 24.13
+      }
+    ],
+    "bodyHeight": 5,
+    "body": {
+      "archetype": "dip",
+      "dims": {
+        "length": 25.06,
+        "width": 7.42,
+        "rowSpacing": 7.62
+      }
+    },
+    "leadDiameter": 0.46,
+    "polarized": false
+  },
+  "dip-28": {
+    "id": "dip-28",
+    "name": "DIP-28",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0
+      },
+      {
+        "number": "2",
+        "dCol": 0,
+        "dRow": 1
+      },
+      {
+        "number": "3",
+        "dCol": 0,
+        "dRow": 2
+      },
+      {
+        "number": "4",
+        "dCol": 0,
+        "dRow": 3
+      },
+      {
+        "number": "5",
+        "dCol": 0,
+        "dRow": 4
+      },
+      {
+        "number": "6",
+        "dCol": 0,
+        "dRow": 5
+      },
+      {
+        "number": "7",
+        "dCol": 0,
+        "dRow": 6
+      },
+      {
+        "number": "8",
+        "dCol": 0,
+        "dRow": 7
+      },
+      {
+        "number": "9",
+        "dCol": 0,
+        "dRow": 8
+      },
+      {
+        "number": "10",
+        "dCol": 0,
+        "dRow": 9
+      },
+      {
+        "number": "11",
+        "dCol": 0,
+        "dRow": 10
+      },
+      {
+        "number": "12",
+        "dCol": 0,
+        "dRow": 11
+      },
+      {
+        "number": "13",
+        "dCol": 0,
+        "dRow": 12
+      },
+      {
+        "number": "14",
+        "dCol": 0,
+        "dRow": 13
+      },
+      {
+        "number": "15",
+        "dCol": 3,
+        "dRow": 13
+      },
+      {
+        "number": "16",
+        "dCol": 3,
+        "dRow": 12
+      },
+      {
+        "number": "17",
+        "dCol": 3,
+        "dRow": 11
+      },
+      {
+        "number": "18",
+        "dCol": 3,
+        "dRow": 10
+      },
+      {
+        "number": "19",
+        "dCol": 3,
+        "dRow": 9
+      },
+      {
+        "number": "20",
+        "dCol": 3,
+        "dRow": 8
+      },
+      {
+        "number": "21",
+        "dCol": 3,
+        "dRow": 7
+      },
+      {
+        "number": "22",
+        "dCol": 3,
+        "dRow": 6
+      },
+      {
+        "number": "23",
+        "dCol": 3,
+        "dRow": 5
+      },
+      {
+        "number": "24",
+        "dCol": 3,
+        "dRow": 4
+      },
+      {
+        "number": "25",
+        "dCol": 3,
+        "dRow": 3
+      },
+      {
+        "number": "26",
+        "dCol": 3,
+        "dRow": 2
+      },
+      {
+        "number": "27",
+        "dCol": 3,
+        "dRow": 1
+      },
+      {
+        "number": "28",
+        "dCol": 3,
+        "dRow": 0
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": -1.27,
+        "y": -1.2699999999999996
+      },
+      {
+        "x": 8.89,
+        "y": -1.2699999999999996
+      },
+      {
+        "x": 8.89,
+        "y": 34.290000000000006
+      },
+      {
+        "x": -1.27,
+        "y": 34.290000000000006
+      }
+    ],
+    "bodyHeight": 5,
+    "body": {
+      "archetype": "dip",
+      "dims": {
+        "length": 35.220000000000006,
+        "width": 7.42,
+        "rowSpacing": 7.62
+      }
+    },
+    "leadDiameter": 0.46,
+    "polarized": false
+  },
+  "dip-40": {
+    "id": "dip-40",
+    "name": "DIP-40",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0
+      },
+      {
+        "number": "2",
+        "dCol": 0,
+        "dRow": 1
+      },
+      {
+        "number": "3",
+        "dCol": 0,
+        "dRow": 2
+      },
+      {
+        "number": "4",
+        "dCol": 0,
+        "dRow": 3
+      },
+      {
+        "number": "5",
+        "dCol": 0,
+        "dRow": 4
+      },
+      {
+        "number": "6",
+        "dCol": 0,
+        "dRow": 5
+      },
+      {
+        "number": "7",
+        "dCol": 0,
+        "dRow": 6
+      },
+      {
+        "number": "8",
+        "dCol": 0,
+        "dRow": 7
+      },
+      {
+        "number": "9",
+        "dCol": 0,
+        "dRow": 8
+      },
+      {
+        "number": "10",
+        "dCol": 0,
+        "dRow": 9
+      },
+      {
+        "number": "11",
+        "dCol": 0,
+        "dRow": 10
+      },
+      {
+        "number": "12",
+        "dCol": 0,
+        "dRow": 11
+      },
+      {
+        "number": "13",
+        "dCol": 0,
+        "dRow": 12
+      },
+      {
+        "number": "14",
+        "dCol": 0,
+        "dRow": 13
+      },
+      {
+        "number": "15",
+        "dCol": 0,
+        "dRow": 14
+      },
+      {
+        "number": "16",
+        "dCol": 0,
+        "dRow": 15
+      },
+      {
+        "number": "17",
+        "dCol": 0,
+        "dRow": 16
+      },
+      {
+        "number": "18",
+        "dCol": 0,
+        "dRow": 17
+      },
+      {
+        "number": "19",
+        "dCol": 0,
+        "dRow": 18
+      },
+      {
+        "number": "20",
+        "dCol": 0,
+        "dRow": 19
+      },
+      {
+        "number": "21",
+        "dCol": 3,
+        "dRow": 19
+      },
+      {
+        "number": "22",
+        "dCol": 3,
+        "dRow": 18
+      },
+      {
+        "number": "23",
+        "dCol": 3,
+        "dRow": 17
+      },
+      {
+        "number": "24",
+        "dCol": 3,
+        "dRow": 16
+      },
+      {
+        "number": "25",
+        "dCol": 3,
+        "dRow": 15
+      },
+      {
+        "number": "26",
+        "dCol": 3,
+        "dRow": 14
+      },
+      {
+        "number": "27",
+        "dCol": 3,
+        "dRow": 13
+      },
+      {
+        "number": "28",
+        "dCol": 3,
+        "dRow": 12
+      },
+      {
+        "number": "29",
+        "dCol": 3,
+        "dRow": 11
+      },
+      {
+        "number": "30",
+        "dCol": 3,
+        "dRow": 10
+      },
+      {
+        "number": "31",
+        "dCol": 3,
+        "dRow": 9
+      },
+      {
+        "number": "32",
+        "dCol": 3,
+        "dRow": 8
+      },
+      {
+        "number": "33",
+        "dCol": 3,
+        "dRow": 7
+      },
+      {
+        "number": "34",
+        "dCol": 3,
+        "dRow": 6
+      },
+      {
+        "number": "35",
+        "dCol": 3,
+        "dRow": 5
+      },
+      {
+        "number": "36",
+        "dCol": 3,
+        "dRow": 4
+      },
+      {
+        "number": "37",
+        "dCol": 3,
+        "dRow": 3
+      },
+      {
+        "number": "38",
+        "dCol": 3,
+        "dRow": 2
+      },
+      {
+        "number": "39",
+        "dCol": 3,
+        "dRow": 1
+      },
+      {
+        "number": "40",
+        "dCol": 3,
+        "dRow": 0
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": -1.27,
+        "y": -1.2699999999999996
+      },
+      {
+        "x": 8.89,
+        "y": -1.2699999999999996
+      },
+      {
+        "x": 8.89,
+        "y": 49.53
+      },
+      {
+        "x": -1.27,
+        "y": 49.53
+      }
+    ],
+    "bodyHeight": 5,
+    "body": {
+      "archetype": "dip",
+      "dims": {
+        "length": 50.46,
+        "width": 7.42,
+        "rowSpacing": 7.62
+      }
+    },
+    "leadDiameter": 0.46,
+    "polarized": false
+  },
+  "dip-40-wide": {
+    "id": "dip-40-wide",
+    "name": "DIP-40 (0.6\" wide)",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0
+      },
+      {
+        "number": "2",
+        "dCol": 0,
+        "dRow": 1
+      },
+      {
+        "number": "3",
+        "dCol": 0,
+        "dRow": 2
+      },
+      {
+        "number": "4",
+        "dCol": 0,
+        "dRow": 3
+      },
+      {
+        "number": "5",
+        "dCol": 0,
+        "dRow": 4
+      },
+      {
+        "number": "6",
+        "dCol": 0,
+        "dRow": 5
+      },
+      {
+        "number": "7",
+        "dCol": 0,
+        "dRow": 6
+      },
+      {
+        "number": "8",
+        "dCol": 0,
+        "dRow": 7
+      },
+      {
+        "number": "9",
+        "dCol": 0,
+        "dRow": 8
+      },
+      {
+        "number": "10",
+        "dCol": 0,
+        "dRow": 9
+      },
+      {
+        "number": "11",
+        "dCol": 0,
+        "dRow": 10
+      },
+      {
+        "number": "12",
+        "dCol": 0,
+        "dRow": 11
+      },
+      {
+        "number": "13",
+        "dCol": 0,
+        "dRow": 12
+      },
+      {
+        "number": "14",
+        "dCol": 0,
+        "dRow": 13
+      },
+      {
+        "number": "15",
+        "dCol": 0,
+        "dRow": 14
+      },
+      {
+        "number": "16",
+        "dCol": 0,
+        "dRow": 15
+      },
+      {
+        "number": "17",
+        "dCol": 0,
+        "dRow": 16
+      },
+      {
+        "number": "18",
+        "dCol": 0,
+        "dRow": 17
+      },
+      {
+        "number": "19",
+        "dCol": 0,
+        "dRow": 18
+      },
+      {
+        "number": "20",
+        "dCol": 0,
+        "dRow": 19
+      },
+      {
+        "number": "21",
+        "dCol": 6,
+        "dRow": 19
+      },
+      {
+        "number": "22",
+        "dCol": 6,
+        "dRow": 18
+      },
+      {
+        "number": "23",
+        "dCol": 6,
+        "dRow": 17
+      },
+      {
+        "number": "24",
+        "dCol": 6,
+        "dRow": 16
+      },
+      {
+        "number": "25",
+        "dCol": 6,
+        "dRow": 15
+      },
+      {
+        "number": "26",
+        "dCol": 6,
+        "dRow": 14
+      },
+      {
+        "number": "27",
+        "dCol": 6,
+        "dRow": 13
+      },
+      {
+        "number": "28",
+        "dCol": 6,
+        "dRow": 12
+      },
+      {
+        "number": "29",
+        "dCol": 6,
+        "dRow": 11
+      },
+      {
+        "number": "30",
+        "dCol": 6,
+        "dRow": 10
+      },
+      {
+        "number": "31",
+        "dCol": 6,
+        "dRow": 9
+      },
+      {
+        "number": "32",
+        "dCol": 6,
+        "dRow": 8
+      },
+      {
+        "number": "33",
+        "dCol": 6,
+        "dRow": 7
+      },
+      {
+        "number": "34",
+        "dCol": 6,
+        "dRow": 6
+      },
+      {
+        "number": "35",
+        "dCol": 6,
+        "dRow": 5
+      },
+      {
+        "number": "36",
+        "dCol": 6,
+        "dRow": 4
+      },
+      {
+        "number": "37",
+        "dCol": 6,
+        "dRow": 3
+      },
+      {
+        "number": "38",
+        "dCol": 6,
+        "dRow": 2
+      },
+      {
+        "number": "39",
+        "dCol": 6,
+        "dRow": 1
+      },
+      {
+        "number": "40",
+        "dCol": 6,
+        "dRow": 0
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": -1.2700000000000005,
+        "y": -1.2699999999999996
+      },
+      {
+        "x": 16.51,
+        "y": -1.2699999999999996
+      },
+      {
+        "x": 16.51,
+        "y": 49.53
+      },
+      {
+        "x": -1.2700000000000005,
+        "y": 49.53
+      }
+    ],
+    "bodyHeight": 5,
+    "body": {
+      "archetype": "dip",
+      "dims": {
+        "length": 50.46,
+        "width": 15.040000000000001,
+        "rowSpacing": 15.24
+      }
+    },
+    "leadDiameter": 0.46,
+    "polarized": false
+  },
+  "to92": {
+    "id": "to92",
+    "name": "TO-92",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0
+      },
+      {
+        "number": "2",
+        "dCol": 1,
+        "dRow": 0
+      },
+      {
+        "number": "3",
+        "dCol": 2,
+        "dRow": 0
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": -1.27,
+        "y": -3.12
+      },
+      {
+        "x": 6.35,
+        "y": -3.12
+      },
+      {
+        "x": 6.35,
+        "y": 3.12
+      },
+      {
+        "x": -1.27,
+        "y": 3.12
+      }
+    ],
+    "bodyHeight": 5.2,
+    "body": {
+      "archetype": "to92",
+      "dims": {
+        "width": 4.5,
+        "depth": 3.7
+      }
+    },
+    "leadDiameter": 0.45,
+    "polarized": false
+  },
+  "to220": {
+    "id": "to220",
+    "name": "TO-220",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0
+      },
+      {
+        "number": "2",
+        "dCol": 1,
+        "dRow": 0
+      },
+      {
+        "number": "3",
+        "dCol": 2,
+        "dRow": 0
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": -3.7299999999999995,
+        "y": -3.57
+      },
+      {
+        "x": 8.809999999999999,
+        "y": -3.57
+      },
+      {
+        "x": 8.809999999999999,
+        "y": 3.57
+      },
+      {
+        "x": -3.7299999999999995,
+        "y": 3.57
+      }
+    ],
+    "bodyHeight": 20,
+    "body": {
+      "archetype": "to220",
+      "dims": {
+        "width": 10,
+        "depth": 4.6,
+        "tabHeight": 3.5,
+        "tabHoleDiameter": 3.4
+      }
+    },
+    "leadDiameter": 0.7,
+    "polarized": false
+  },
+  "led-3mm": {
+    "id": "led-3mm",
+    "name": "LED, 3 mm round",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0,
+        "name": "A"
+      },
+      {
+        "number": "2",
+        "dCol": 1,
+        "dRow": 0,
+        "name": "K"
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": 4.04,
+        "y": 0
+      },
+      {
+        "x": 3.945614538820719,
+        "y": 0.7169287549339824
+      },
+      {
+        "x": 3.668890368482895,
+        "y": 1.3849999999999998
+      },
+      {
+        "x": 3.228685783886737,
+        "y": 1.9586857838867364
+      },
+      {
+        "x": 2.6550000000000002,
+        "y": 2.398890368482895
+      },
+      {
+        "x": 1.9869287549339825,
+        "y": 2.675614538820719
+      },
+      {
+        "x": 1.2700000000000002,
+        "y": 2.77
+      },
+      {
+        "x": 0.5530712450660179,
+        "y": 2.675614538820719
+      },
+      {
+        "x": -0.11499999999999932,
+        "y": 2.398890368482895
+      },
+      {
+        "x": -0.6886857838867364,
+        "y": 1.9586857838867369
+      },
+      {
+        "x": -1.128890368482895,
+        "y": 1.3849999999999998
+      },
+      {
+        "x": -1.405614538820719,
+        "y": 0.7169287549339832
+      },
+      {
+        "x": -1.5,
+        "y": 3.3922716336381685e-16
+      },
+      {
+        "x": -1.405614538820719,
+        "y": -0.7169287549339826
+      },
+      {
+        "x": -1.1288903684828955,
+        "y": -1.3849999999999993
+      },
+      {
+        "x": -0.6886857838867377,
+        "y": -1.9586857838867355
+      },
+      {
+        "x": -0.11500000000000132,
+        "y": -2.3988903684828946
+      },
+      {
+        "x": 0.5530712450660179,
+        "y": -2.675614538820719
+      },
+      {
+        "x": 1.2699999999999996,
+        "y": -2.77
+      },
+      {
+        "x": 1.9869287549339814,
+        "y": -2.6756145388207195
+      },
+      {
+        "x": 2.6550000000000002,
+        "y": -2.398890368482895
+      },
+      {
+        "x": 3.2286857838867364,
+        "y": -1.958685783886737
+      },
+      {
+        "x": 3.668890368482894,
+        "y": -1.3850000000000013
+      },
+      {
+        "x": 3.9456145388207187,
+        "y": -0.7169287549339848
+      }
+    ],
+    "bodyHeight": 4.8,
+    "body": {
+      "archetype": "led-round",
+      "dims": {
+        "diameter": 3
+      }
+    },
+    "leadDiameter": 0.5,
+    "polarized": true
+  },
+  "led-5mm": {
+    "id": "led-5mm",
+    "name": "LED, 5 mm round",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0,
+        "name": "A"
+      },
+      {
+        "number": "2",
+        "dCol": 1,
+        "dRow": 0,
+        "name": "K"
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": 5.04,
+        "y": 0
+      },
+      {
+        "x": 4.911540365109788,
+        "y": 0.9757478000365032
+      },
+      {
+        "x": 4.534915772267334,
+        "y": 1.8849999999999998
+      },
+      {
+        "x": 3.9357925650732843,
+        "y": 2.665792565073284
+      },
+      {
+        "x": 3.1550000000000002,
+        "y": 3.2649157722673334
+      },
+      {
+        "x": 2.2457478000365034,
+        "y": 3.6415403651097877
+      },
+      {
+        "x": 1.2700000000000002,
+        "y": 3.77
+      },
+      {
+        "x": 0.2942521999634973,
+        "y": 3.6415403651097877
+      },
+      {
+        "x": -0.6149999999999991,
+        "y": 3.264915772267334
+      },
+      {
+        "x": -1.3957925650732839,
+        "y": 2.6657925650732843
+      },
+      {
+        "x": -1.9949157722673339,
+        "y": 1.8849999999999998
+      },
+      {
+        "x": -2.3715403651097873,
+        "y": 0.9757478000365042
+      },
+      {
+        "x": -2.5,
+        "y": 4.616918432785521e-16
+      },
+      {
+        "x": -2.3715403651097877,
+        "y": -0.9757478000365034
+      },
+      {
+        "x": -1.9949157722673343,
+        "y": -1.884999999999999
+      },
+      {
+        "x": -1.3957925650732856,
+        "y": -2.6657925650732825
+      },
+      {
+        "x": -0.6150000000000018,
+        "y": -3.264915772267333
+      },
+      {
+        "x": 0.2942521999634973,
+        "y": -3.6415403651097877
+      },
+      {
+        "x": 1.2699999999999994,
+        "y": -3.77
+      },
+      {
+        "x": 2.2457478000365017,
+        "y": -3.641540365109788
+      },
+      {
+        "x": 3.1550000000000002,
+        "y": -3.2649157722673334
+      },
+      {
+        "x": 3.9357925650732835,
+        "y": -2.6657925650732848
+      },
+      {
+        "x": 4.534915772267333,
+        "y": -1.8850000000000018
+      },
+      {
+        "x": 4.911540365109786,
+        "y": -0.9757478000365063
+      }
+    ],
+    "bodyHeight": 8.6,
+    "body": {
+      "archetype": "led-round",
+      "dims": {
+        "diameter": 5
+      }
+    },
+    "leadDiameter": 0.5,
+    "polarized": true
+  },
+  "led-10mm": {
+    "id": "led-10mm",
+    "name": "LED, 10 mm round",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0,
+        "name": "A"
+      },
+      {
+        "number": "2",
+        "dCol": 1,
+        "dRow": 0,
+        "name": "K"
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": 7.539999999999999,
+        "y": 0
+      },
+      {
+        "x": 7.3263549308324585,
+        "y": 1.622795412792805
+      },
+      {
+        "x": 6.69997928172843,
+        "y": 3.1349999999999993
+      },
+      {
+        "x": 5.703559518039652,
+        "y": 4.433559518039652
+      },
+      {
+        "x": 4.405000000000001,
+        "y": 5.429979281728429
+      },
+      {
+        "x": 2.892795412792805,
+        "y": 6.056354930832458
+      },
+      {
+        "x": 1.2700000000000005,
+        "y": 6.27
+      },
+      {
+        "x": -0.35279541279280413,
+        "y": 6.056354930832458
+      },
+      {
+        "x": -1.8649999999999984,
+        "y": 5.42997928172843
+      },
+      {
+        "x": -3.163559518039652,
+        "y": 4.433559518039653
+      },
+      {
+        "x": -4.159979281728431,
+        "y": 3.1349999999999993
+      },
+      {
+        "x": -4.7863549308324576,
+        "y": 1.6227954127928066
+      },
+      {
+        "x": -5,
+        "y": 7.678535430653904e-16
+      },
+      {
+        "x": -4.7863549308324576,
+        "y": -1.6227954127928053
+      },
+      {
+        "x": -4.159979281728431,
+        "y": -3.134999999999998
+      },
+      {
+        "x": -3.1635595180396554,
+        "y": -4.43355951803965
+      },
+      {
+        "x": -1.8650000000000024,
+        "y": -5.429979281728429
+      },
+      {
+        "x": -0.35279541279280413,
+        "y": -6.056354930832458
+      },
+      {
+        "x": 1.269999999999999,
+        "y": -6.27
+      },
+      {
+        "x": 2.892795412792802,
+        "y": -6.056354930832459
+      },
+      {
+        "x": 4.405000000000001,
+        "y": -5.429979281728429
+      },
+      {
+        "x": 5.703559518039652,
+        "y": -4.433559518039654
+      },
+      {
+        "x": 6.699979281728428,
+        "y": -3.1350000000000025
+      },
+      {
+        "x": 7.326354930832457,
+        "y": -1.6227954127928101
+      }
+    ],
+    "bodyHeight": 13,
+    "body": {
+      "archetype": "led-round",
+      "dims": {
+        "diameter": 10
+      }
+    },
+    "leadDiameter": 0.5,
+    "polarized": true
+  },
+  "hdr-1x1": {
+    "id": "hdr-1x1",
+    "name": "Pin header, 1x1",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": -1.27,
+        "y": -1.27
+      },
+      {
+        "x": 1.27,
+        "y": -1.27
+      },
+      {
+        "x": 1.27,
+        "y": 1.27
+      },
+      {
+        "x": -1.27,
+        "y": 1.27
+      }
+    ],
+    "bodyHeight": 8.5,
+    "body": {
+      "archetype": "pin-header",
+      "dims": {
+        "length": 0,
+        "width": 0,
+        "height": 8.5
+      }
+    },
+    "leadDiameter": 0.64,
+    "polarized": false
+  },
+  "hdr-2x1": {
+    "id": "hdr-2x1",
+    "name": "Pin header, 2x1",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0
+      },
+      {
+        "number": "2",
+        "dCol": 0,
+        "dRow": 1
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": -1.27,
+        "y": -1.27
+      },
+      {
+        "x": 1.27,
+        "y": -1.27
+      },
+      {
+        "x": 1.27,
+        "y": 3.81
+      },
+      {
+        "x": -1.27,
+        "y": 3.81
+      }
+    ],
+    "bodyHeight": 8.5,
+    "body": {
+      "archetype": "pin-header",
+      "dims": {
+        "length": 0,
+        "width": 2.54,
+        "height": 8.5
+      }
+    },
+    "leadDiameter": 0.64,
+    "polarized": false
+  },
+  "hdr-1x2": {
+    "id": "hdr-1x2",
+    "name": "Pin header, 1x2",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0
+      },
+      {
+        "number": "2",
+        "dCol": 1,
+        "dRow": 0
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": -1.27,
+        "y": -1.27
+      },
+      {
+        "x": 3.81,
+        "y": -1.27
+      },
+      {
+        "x": 3.81,
+        "y": 1.27
+      },
+      {
+        "x": -1.27,
+        "y": 1.27
+      }
+    ],
+    "bodyHeight": 8.5,
+    "body": {
+      "archetype": "pin-header",
+      "dims": {
+        "length": 2.54,
+        "width": 0,
+        "height": 8.5
+      }
+    },
+    "leadDiameter": 0.64,
+    "polarized": false
+  },
+  "hdr-2x2": {
+    "id": "hdr-2x2",
+    "name": "Pin header, 2x2",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0
+      },
+      {
+        "number": "2",
+        "dCol": 0,
+        "dRow": 1
+      },
+      {
+        "number": "3",
+        "dCol": 1,
+        "dRow": 0
+      },
+      {
+        "number": "4",
+        "dCol": 1,
+        "dRow": 1
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": -1.27,
+        "y": -1.27
+      },
+      {
+        "x": 3.81,
+        "y": -1.27
+      },
+      {
+        "x": 3.81,
+        "y": 3.81
+      },
+      {
+        "x": -1.27,
+        "y": 3.81
+      }
+    ],
+    "bodyHeight": 8.5,
+    "body": {
+      "archetype": "pin-header",
+      "dims": {
+        "length": 2.54,
+        "width": 2.54,
+        "height": 8.5
+      }
+    },
+    "leadDiameter": 0.64,
+    "polarized": false
+  },
+  "hdr-1x3": {
+    "id": "hdr-1x3",
+    "name": "Pin header, 1x3",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0
+      },
+      {
+        "number": "2",
+        "dCol": 1,
+        "dRow": 0
+      },
+      {
+        "number": "3",
+        "dCol": 2,
+        "dRow": 0
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": -1.27,
+        "y": -1.27
+      },
+      {
+        "x": 6.35,
+        "y": -1.27
+      },
+      {
+        "x": 6.35,
+        "y": 1.27
+      },
+      {
+        "x": -1.27,
+        "y": 1.27
+      }
+    ],
+    "bodyHeight": 8.5,
+    "body": {
+      "archetype": "pin-header",
+      "dims": {
+        "length": 5.08,
+        "width": 0,
+        "height": 8.5
+      }
+    },
+    "leadDiameter": 0.64,
+    "polarized": false
+  },
+  "hdr-2x3": {
+    "id": "hdr-2x3",
+    "name": "Pin header, 2x3",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0
+      },
+      {
+        "number": "2",
+        "dCol": 0,
+        "dRow": 1
+      },
+      {
+        "number": "3",
+        "dCol": 1,
+        "dRow": 0
+      },
+      {
+        "number": "4",
+        "dCol": 1,
+        "dRow": 1
+      },
+      {
+        "number": "5",
+        "dCol": 2,
+        "dRow": 0
+      },
+      {
+        "number": "6",
+        "dCol": 2,
+        "dRow": 1
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": -1.27,
+        "y": -1.27
+      },
+      {
+        "x": 6.35,
+        "y": -1.27
+      },
+      {
+        "x": 6.35,
+        "y": 3.81
+      },
+      {
+        "x": -1.27,
+        "y": 3.81
+      }
+    ],
+    "bodyHeight": 8.5,
+    "body": {
+      "archetype": "pin-header",
+      "dims": {
+        "length": 5.08,
+        "width": 2.54,
+        "height": 8.5
+      }
+    },
+    "leadDiameter": 0.64,
+    "polarized": false
+  },
+  "hdr-1x4": {
+    "id": "hdr-1x4",
+    "name": "Pin header, 1x4",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0
+      },
+      {
+        "number": "2",
+        "dCol": 1,
+        "dRow": 0
+      },
+      {
+        "number": "3",
+        "dCol": 2,
+        "dRow": 0
+      },
+      {
+        "number": "4",
+        "dCol": 3,
+        "dRow": 0
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": -1.27,
+        "y": -1.27
+      },
+      {
+        "x": 8.89,
+        "y": -1.27
+      },
+      {
+        "x": 8.89,
+        "y": 1.27
+      },
+      {
+        "x": -1.27,
+        "y": 1.27
+      }
+    ],
+    "bodyHeight": 8.5,
+    "body": {
+      "archetype": "pin-header",
+      "dims": {
+        "length": 7.62,
+        "width": 0,
+        "height": 8.5
+      }
+    },
+    "leadDiameter": 0.64,
+    "polarized": false
+  },
+  "hdr-2x4": {
+    "id": "hdr-2x4",
+    "name": "Pin header, 2x4",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0
+      },
+      {
+        "number": "2",
+        "dCol": 0,
+        "dRow": 1
+      },
+      {
+        "number": "3",
+        "dCol": 1,
+        "dRow": 0
+      },
+      {
+        "number": "4",
+        "dCol": 1,
+        "dRow": 1
+      },
+      {
+        "number": "5",
+        "dCol": 2,
+        "dRow": 0
+      },
+      {
+        "number": "6",
+        "dCol": 2,
+        "dRow": 1
+      },
+      {
+        "number": "7",
+        "dCol": 3,
+        "dRow": 0
+      },
+      {
+        "number": "8",
+        "dCol": 3,
+        "dRow": 1
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": -1.27,
+        "y": -1.27
+      },
+      {
+        "x": 8.89,
+        "y": -1.27
+      },
+      {
+        "x": 8.89,
+        "y": 3.81
+      },
+      {
+        "x": -1.27,
+        "y": 3.81
+      }
+    ],
+    "bodyHeight": 8.5,
+    "body": {
+      "archetype": "pin-header",
+      "dims": {
+        "length": 7.62,
+        "width": 2.54,
+        "height": 8.5
+      }
+    },
+    "leadDiameter": 0.64,
+    "polarized": false
+  },
+  "hdr-1x5": {
+    "id": "hdr-1x5",
+    "name": "Pin header, 1x5",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0
+      },
+      {
+        "number": "2",
+        "dCol": 1,
+        "dRow": 0
+      },
+      {
+        "number": "3",
+        "dCol": 2,
+        "dRow": 0
+      },
+      {
+        "number": "4",
+        "dCol": 3,
+        "dRow": 0
+      },
+      {
+        "number": "5",
+        "dCol": 4,
+        "dRow": 0
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": -1.2699999999999996,
+        "y": -1.27
+      },
+      {
+        "x": 11.43,
+        "y": -1.27
+      },
+      {
+        "x": 11.43,
+        "y": 1.27
+      },
+      {
+        "x": -1.2699999999999996,
+        "y": 1.27
+      }
+    ],
+    "bodyHeight": 8.5,
+    "body": {
+      "archetype": "pin-header",
+      "dims": {
+        "length": 10.16,
+        "width": 0,
+        "height": 8.5
+      }
+    },
+    "leadDiameter": 0.64,
+    "polarized": false
+  },
+  "hdr-2x5": {
+    "id": "hdr-2x5",
+    "name": "Pin header, 2x5",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0
+      },
+      {
+        "number": "2",
+        "dCol": 0,
+        "dRow": 1
+      },
+      {
+        "number": "3",
+        "dCol": 1,
+        "dRow": 0
+      },
+      {
+        "number": "4",
+        "dCol": 1,
+        "dRow": 1
+      },
+      {
+        "number": "5",
+        "dCol": 2,
+        "dRow": 0
+      },
+      {
+        "number": "6",
+        "dCol": 2,
+        "dRow": 1
+      },
+      {
+        "number": "7",
+        "dCol": 3,
+        "dRow": 0
+      },
+      {
+        "number": "8",
+        "dCol": 3,
+        "dRow": 1
+      },
+      {
+        "number": "9",
+        "dCol": 4,
+        "dRow": 0
+      },
+      {
+        "number": "10",
+        "dCol": 4,
+        "dRow": 1
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": -1.2699999999999996,
+        "y": -1.27
+      },
+      {
+        "x": 11.43,
+        "y": -1.27
+      },
+      {
+        "x": 11.43,
+        "y": 3.81
+      },
+      {
+        "x": -1.2699999999999996,
+        "y": 3.81
+      }
+    ],
+    "bodyHeight": 8.5,
+    "body": {
+      "archetype": "pin-header",
+      "dims": {
+        "length": 10.16,
+        "width": 2.54,
+        "height": 8.5
+      }
+    },
+    "leadDiameter": 0.64,
+    "polarized": false
+  },
+  "hdr-1x6": {
+    "id": "hdr-1x6",
+    "name": "Pin header, 1x6",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0
+      },
+      {
+        "number": "2",
+        "dCol": 1,
+        "dRow": 0
+      },
+      {
+        "number": "3",
+        "dCol": 2,
+        "dRow": 0
+      },
+      {
+        "number": "4",
+        "dCol": 3,
+        "dRow": 0
+      },
+      {
+        "number": "5",
+        "dCol": 4,
+        "dRow": 0
+      },
+      {
+        "number": "6",
+        "dCol": 5,
+        "dRow": 0
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": -1.2699999999999996,
+        "y": -1.27
+      },
+      {
+        "x": 13.969999999999999,
+        "y": -1.27
+      },
+      {
+        "x": 13.969999999999999,
+        "y": 1.27
+      },
+      {
+        "x": -1.2699999999999996,
+        "y": 1.27
+      }
+    ],
+    "bodyHeight": 8.5,
+    "body": {
+      "archetype": "pin-header",
+      "dims": {
+        "length": 12.7,
+        "width": 0,
+        "height": 8.5
+      }
+    },
+    "leadDiameter": 0.64,
+    "polarized": false
+  },
+  "hdr-2x6": {
+    "id": "hdr-2x6",
+    "name": "Pin header, 2x6",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0
+      },
+      {
+        "number": "2",
+        "dCol": 0,
+        "dRow": 1
+      },
+      {
+        "number": "3",
+        "dCol": 1,
+        "dRow": 0
+      },
+      {
+        "number": "4",
+        "dCol": 1,
+        "dRow": 1
+      },
+      {
+        "number": "5",
+        "dCol": 2,
+        "dRow": 0
+      },
+      {
+        "number": "6",
+        "dCol": 2,
+        "dRow": 1
+      },
+      {
+        "number": "7",
+        "dCol": 3,
+        "dRow": 0
+      },
+      {
+        "number": "8",
+        "dCol": 3,
+        "dRow": 1
+      },
+      {
+        "number": "9",
+        "dCol": 4,
+        "dRow": 0
+      },
+      {
+        "number": "10",
+        "dCol": 4,
+        "dRow": 1
+      },
+      {
+        "number": "11",
+        "dCol": 5,
+        "dRow": 0
+      },
+      {
+        "number": "12",
+        "dCol": 5,
+        "dRow": 1
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": -1.2699999999999996,
+        "y": -1.27
+      },
+      {
+        "x": 13.969999999999999,
+        "y": -1.27
+      },
+      {
+        "x": 13.969999999999999,
+        "y": 3.81
+      },
+      {
+        "x": -1.2699999999999996,
+        "y": 3.81
+      }
+    ],
+    "bodyHeight": 8.5,
+    "body": {
+      "archetype": "pin-header",
+      "dims": {
+        "length": 12.7,
+        "width": 2.54,
+        "height": 8.5
+      }
+    },
+    "leadDiameter": 0.64,
+    "polarized": false
+  },
+  "hdr-1x7": {
+    "id": "hdr-1x7",
+    "name": "Pin header, 1x7",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0
+      },
+      {
+        "number": "2",
+        "dCol": 1,
+        "dRow": 0
+      },
+      {
+        "number": "3",
+        "dCol": 2,
+        "dRow": 0
+      },
+      {
+        "number": "4",
+        "dCol": 3,
+        "dRow": 0
+      },
+      {
+        "number": "5",
+        "dCol": 4,
+        "dRow": 0
+      },
+      {
+        "number": "6",
+        "dCol": 5,
+        "dRow": 0
+      },
+      {
+        "number": "7",
+        "dCol": 6,
+        "dRow": 0
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": -1.2700000000000005,
+        "y": -1.27
+      },
+      {
+        "x": 16.51,
+        "y": -1.27
+      },
+      {
+        "x": 16.51,
+        "y": 1.27
+      },
+      {
+        "x": -1.2700000000000005,
+        "y": 1.27
+      }
+    ],
+    "bodyHeight": 8.5,
+    "body": {
+      "archetype": "pin-header",
+      "dims": {
+        "length": 15.24,
+        "width": 0,
+        "height": 8.5
+      }
+    },
+    "leadDiameter": 0.64,
+    "polarized": false
+  },
+  "hdr-2x7": {
+    "id": "hdr-2x7",
+    "name": "Pin header, 2x7",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0
+      },
+      {
+        "number": "2",
+        "dCol": 0,
+        "dRow": 1
+      },
+      {
+        "number": "3",
+        "dCol": 1,
+        "dRow": 0
+      },
+      {
+        "number": "4",
+        "dCol": 1,
+        "dRow": 1
+      },
+      {
+        "number": "5",
+        "dCol": 2,
+        "dRow": 0
+      },
+      {
+        "number": "6",
+        "dCol": 2,
+        "dRow": 1
+      },
+      {
+        "number": "7",
+        "dCol": 3,
+        "dRow": 0
+      },
+      {
+        "number": "8",
+        "dCol": 3,
+        "dRow": 1
+      },
+      {
+        "number": "9",
+        "dCol": 4,
+        "dRow": 0
+      },
+      {
+        "number": "10",
+        "dCol": 4,
+        "dRow": 1
+      },
+      {
+        "number": "11",
+        "dCol": 5,
+        "dRow": 0
+      },
+      {
+        "number": "12",
+        "dCol": 5,
+        "dRow": 1
+      },
+      {
+        "number": "13",
+        "dCol": 6,
+        "dRow": 0
+      },
+      {
+        "number": "14",
+        "dCol": 6,
+        "dRow": 1
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": -1.2700000000000005,
+        "y": -1.27
+      },
+      {
+        "x": 16.51,
+        "y": -1.27
+      },
+      {
+        "x": 16.51,
+        "y": 3.81
+      },
+      {
+        "x": -1.2700000000000005,
+        "y": 3.81
+      }
+    ],
+    "bodyHeight": 8.5,
+    "body": {
+      "archetype": "pin-header",
+      "dims": {
+        "length": 15.24,
+        "width": 2.54,
+        "height": 8.5
+      }
+    },
+    "leadDiameter": 0.64,
+    "polarized": false
+  },
+  "hdr-1x8": {
+    "id": "hdr-1x8",
+    "name": "Pin header, 1x8",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0
+      },
+      {
+        "number": "2",
+        "dCol": 1,
+        "dRow": 0
+      },
+      {
+        "number": "3",
+        "dCol": 2,
+        "dRow": 0
+      },
+      {
+        "number": "4",
+        "dCol": 3,
+        "dRow": 0
+      },
+      {
+        "number": "5",
+        "dCol": 4,
+        "dRow": 0
+      },
+      {
+        "number": "6",
+        "dCol": 5,
+        "dRow": 0
+      },
+      {
+        "number": "7",
+        "dCol": 6,
+        "dRow": 0
+      },
+      {
+        "number": "8",
+        "dCol": 7,
+        "dRow": 0
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": -1.2699999999999996,
+        "y": -1.27
+      },
+      {
+        "x": 19.05,
+        "y": -1.27
+      },
+      {
+        "x": 19.05,
+        "y": 1.27
+      },
+      {
+        "x": -1.2699999999999996,
+        "y": 1.27
+      }
+    ],
+    "bodyHeight": 8.5,
+    "body": {
+      "archetype": "pin-header",
+      "dims": {
+        "length": 17.78,
+        "width": 0,
+        "height": 8.5
+      }
+    },
+    "leadDiameter": 0.64,
+    "polarized": false
+  },
+  "hdr-2x8": {
+    "id": "hdr-2x8",
+    "name": "Pin header, 2x8",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0
+      },
+      {
+        "number": "2",
+        "dCol": 0,
+        "dRow": 1
+      },
+      {
+        "number": "3",
+        "dCol": 1,
+        "dRow": 0
+      },
+      {
+        "number": "4",
+        "dCol": 1,
+        "dRow": 1
+      },
+      {
+        "number": "5",
+        "dCol": 2,
+        "dRow": 0
+      },
+      {
+        "number": "6",
+        "dCol": 2,
+        "dRow": 1
+      },
+      {
+        "number": "7",
+        "dCol": 3,
+        "dRow": 0
+      },
+      {
+        "number": "8",
+        "dCol": 3,
+        "dRow": 1
+      },
+      {
+        "number": "9",
+        "dCol": 4,
+        "dRow": 0
+      },
+      {
+        "number": "10",
+        "dCol": 4,
+        "dRow": 1
+      },
+      {
+        "number": "11",
+        "dCol": 5,
+        "dRow": 0
+      },
+      {
+        "number": "12",
+        "dCol": 5,
+        "dRow": 1
+      },
+      {
+        "number": "13",
+        "dCol": 6,
+        "dRow": 0
+      },
+      {
+        "number": "14",
+        "dCol": 6,
+        "dRow": 1
+      },
+      {
+        "number": "15",
+        "dCol": 7,
+        "dRow": 0
+      },
+      {
+        "number": "16",
+        "dCol": 7,
+        "dRow": 1
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": -1.2699999999999996,
+        "y": -1.27
+      },
+      {
+        "x": 19.05,
+        "y": -1.27
+      },
+      {
+        "x": 19.05,
+        "y": 3.81
+      },
+      {
+        "x": -1.2699999999999996,
+        "y": 3.81
+      }
+    ],
+    "bodyHeight": 8.5,
+    "body": {
+      "archetype": "pin-header",
+      "dims": {
+        "length": 17.78,
+        "width": 2.54,
+        "height": 8.5
+      }
+    },
+    "leadDiameter": 0.64,
+    "polarized": false
+  },
+  "hdr-1x9": {
+    "id": "hdr-1x9",
+    "name": "Pin header, 1x9",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0
+      },
+      {
+        "number": "2",
+        "dCol": 1,
+        "dRow": 0
+      },
+      {
+        "number": "3",
+        "dCol": 2,
+        "dRow": 0
+      },
+      {
+        "number": "4",
+        "dCol": 3,
+        "dRow": 0
+      },
+      {
+        "number": "5",
+        "dCol": 4,
+        "dRow": 0
+      },
+      {
+        "number": "6",
+        "dCol": 5,
+        "dRow": 0
+      },
+      {
+        "number": "7",
+        "dCol": 6,
+        "dRow": 0
+      },
+      {
+        "number": "8",
+        "dCol": 7,
+        "dRow": 0
+      },
+      {
+        "number": "9",
+        "dCol": 8,
+        "dRow": 0
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": -1.2699999999999996,
+        "y": -1.27
+      },
+      {
+        "x": 21.59,
+        "y": -1.27
+      },
+      {
+        "x": 21.59,
+        "y": 1.27
+      },
+      {
+        "x": -1.2699999999999996,
+        "y": 1.27
+      }
+    ],
+    "bodyHeight": 8.5,
+    "body": {
+      "archetype": "pin-header",
+      "dims": {
+        "length": 20.32,
+        "width": 0,
+        "height": 8.5
+      }
+    },
+    "leadDiameter": 0.64,
+    "polarized": false
+  },
+  "hdr-2x9": {
+    "id": "hdr-2x9",
+    "name": "Pin header, 2x9",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0
+      },
+      {
+        "number": "2",
+        "dCol": 0,
+        "dRow": 1
+      },
+      {
+        "number": "3",
+        "dCol": 1,
+        "dRow": 0
+      },
+      {
+        "number": "4",
+        "dCol": 1,
+        "dRow": 1
+      },
+      {
+        "number": "5",
+        "dCol": 2,
+        "dRow": 0
+      },
+      {
+        "number": "6",
+        "dCol": 2,
+        "dRow": 1
+      },
+      {
+        "number": "7",
+        "dCol": 3,
+        "dRow": 0
+      },
+      {
+        "number": "8",
+        "dCol": 3,
+        "dRow": 1
+      },
+      {
+        "number": "9",
+        "dCol": 4,
+        "dRow": 0
+      },
+      {
+        "number": "10",
+        "dCol": 4,
+        "dRow": 1
+      },
+      {
+        "number": "11",
+        "dCol": 5,
+        "dRow": 0
+      },
+      {
+        "number": "12",
+        "dCol": 5,
+        "dRow": 1
+      },
+      {
+        "number": "13",
+        "dCol": 6,
+        "dRow": 0
+      },
+      {
+        "number": "14",
+        "dCol": 6,
+        "dRow": 1
+      },
+      {
+        "number": "15",
+        "dCol": 7,
+        "dRow": 0
+      },
+      {
+        "number": "16",
+        "dCol": 7,
+        "dRow": 1
+      },
+      {
+        "number": "17",
+        "dCol": 8,
+        "dRow": 0
+      },
+      {
+        "number": "18",
+        "dCol": 8,
+        "dRow": 1
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": -1.2699999999999996,
+        "y": -1.27
+      },
+      {
+        "x": 21.59,
+        "y": -1.27
+      },
+      {
+        "x": 21.59,
+        "y": 3.81
+      },
+      {
+        "x": -1.2699999999999996,
+        "y": 3.81
+      }
+    ],
+    "bodyHeight": 8.5,
+    "body": {
+      "archetype": "pin-header",
+      "dims": {
+        "length": 20.32,
+        "width": 2.54,
+        "height": 8.5
+      }
+    },
+    "leadDiameter": 0.64,
+    "polarized": false
+  },
+  "hdr-1x10": {
+    "id": "hdr-1x10",
+    "name": "Pin header, 1x10",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0
+      },
+      {
+        "number": "2",
+        "dCol": 1,
+        "dRow": 0
+      },
+      {
+        "number": "3",
+        "dCol": 2,
+        "dRow": 0
+      },
+      {
+        "number": "4",
+        "dCol": 3,
+        "dRow": 0
+      },
+      {
+        "number": "5",
+        "dCol": 4,
+        "dRow": 0
+      },
+      {
+        "number": "6",
+        "dCol": 5,
+        "dRow": 0
+      },
+      {
+        "number": "7",
+        "dCol": 6,
+        "dRow": 0
+      },
+      {
+        "number": "8",
+        "dCol": 7,
+        "dRow": 0
+      },
+      {
+        "number": "9",
+        "dCol": 8,
+        "dRow": 0
+      },
+      {
+        "number": "10",
+        "dCol": 9,
+        "dRow": 0
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": -1.2699999999999996,
+        "y": -1.27
+      },
+      {
+        "x": 24.13,
+        "y": -1.27
+      },
+      {
+        "x": 24.13,
+        "y": 1.27
+      },
+      {
+        "x": -1.2699999999999996,
+        "y": 1.27
+      }
+    ],
+    "bodyHeight": 8.5,
+    "body": {
+      "archetype": "pin-header",
+      "dims": {
+        "length": 22.86,
+        "width": 0,
+        "height": 8.5
+      }
+    },
+    "leadDiameter": 0.64,
+    "polarized": false
+  },
+  "hdr-2x10": {
+    "id": "hdr-2x10",
+    "name": "Pin header, 2x10",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0
+      },
+      {
+        "number": "2",
+        "dCol": 0,
+        "dRow": 1
+      },
+      {
+        "number": "3",
+        "dCol": 1,
+        "dRow": 0
+      },
+      {
+        "number": "4",
+        "dCol": 1,
+        "dRow": 1
+      },
+      {
+        "number": "5",
+        "dCol": 2,
+        "dRow": 0
+      },
+      {
+        "number": "6",
+        "dCol": 2,
+        "dRow": 1
+      },
+      {
+        "number": "7",
+        "dCol": 3,
+        "dRow": 0
+      },
+      {
+        "number": "8",
+        "dCol": 3,
+        "dRow": 1
+      },
+      {
+        "number": "9",
+        "dCol": 4,
+        "dRow": 0
+      },
+      {
+        "number": "10",
+        "dCol": 4,
+        "dRow": 1
+      },
+      {
+        "number": "11",
+        "dCol": 5,
+        "dRow": 0
+      },
+      {
+        "number": "12",
+        "dCol": 5,
+        "dRow": 1
+      },
+      {
+        "number": "13",
+        "dCol": 6,
+        "dRow": 0
+      },
+      {
+        "number": "14",
+        "dCol": 6,
+        "dRow": 1
+      },
+      {
+        "number": "15",
+        "dCol": 7,
+        "dRow": 0
+      },
+      {
+        "number": "16",
+        "dCol": 7,
+        "dRow": 1
+      },
+      {
+        "number": "17",
+        "dCol": 8,
+        "dRow": 0
+      },
+      {
+        "number": "18",
+        "dCol": 8,
+        "dRow": 1
+      },
+      {
+        "number": "19",
+        "dCol": 9,
+        "dRow": 0
+      },
+      {
+        "number": "20",
+        "dCol": 9,
+        "dRow": 1
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": -1.2699999999999996,
+        "y": -1.27
+      },
+      {
+        "x": 24.13,
+        "y": -1.27
+      },
+      {
+        "x": 24.13,
+        "y": 3.81
+      },
+      {
+        "x": -1.2699999999999996,
+        "y": 3.81
+      }
+    ],
+    "bodyHeight": 8.5,
+    "body": {
+      "archetype": "pin-header",
+      "dims": {
+        "length": 22.86,
+        "width": 2.54,
+        "height": 8.5
+      }
+    },
+    "leadDiameter": 0.64,
+    "polarized": false
+  },
+  "hdr-1x12": {
+    "id": "hdr-1x12",
+    "name": "Pin header, 1x12",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0
+      },
+      {
+        "number": "2",
+        "dCol": 1,
+        "dRow": 0
+      },
+      {
+        "number": "3",
+        "dCol": 2,
+        "dRow": 0
+      },
+      {
+        "number": "4",
+        "dCol": 3,
+        "dRow": 0
+      },
+      {
+        "number": "5",
+        "dCol": 4,
+        "dRow": 0
+      },
+      {
+        "number": "6",
+        "dCol": 5,
+        "dRow": 0
+      },
+      {
+        "number": "7",
+        "dCol": 6,
+        "dRow": 0
+      },
+      {
+        "number": "8",
+        "dCol": 7,
+        "dRow": 0
+      },
+      {
+        "number": "9",
+        "dCol": 8,
+        "dRow": 0
+      },
+      {
+        "number": "10",
+        "dCol": 9,
+        "dRow": 0
+      },
+      {
+        "number": "11",
+        "dCol": 10,
+        "dRow": 0
+      },
+      {
+        "number": "12",
+        "dCol": 11,
+        "dRow": 0
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": -1.2699999999999996,
+        "y": -1.27
+      },
+      {
+        "x": 29.21,
+        "y": -1.27
+      },
+      {
+        "x": 29.21,
+        "y": 1.27
+      },
+      {
+        "x": -1.2699999999999996,
+        "y": 1.27
+      }
+    ],
+    "bodyHeight": 8.5,
+    "body": {
+      "archetype": "pin-header",
+      "dims": {
+        "length": 27.94,
+        "width": 0,
+        "height": 8.5
+      }
+    },
+    "leadDiameter": 0.64,
+    "polarized": false
+  },
+  "hdr-2x12": {
+    "id": "hdr-2x12",
+    "name": "Pin header, 2x12",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0
+      },
+      {
+        "number": "2",
+        "dCol": 0,
+        "dRow": 1
+      },
+      {
+        "number": "3",
+        "dCol": 1,
+        "dRow": 0
+      },
+      {
+        "number": "4",
+        "dCol": 1,
+        "dRow": 1
+      },
+      {
+        "number": "5",
+        "dCol": 2,
+        "dRow": 0
+      },
+      {
+        "number": "6",
+        "dCol": 2,
+        "dRow": 1
+      },
+      {
+        "number": "7",
+        "dCol": 3,
+        "dRow": 0
+      },
+      {
+        "number": "8",
+        "dCol": 3,
+        "dRow": 1
+      },
+      {
+        "number": "9",
+        "dCol": 4,
+        "dRow": 0
+      },
+      {
+        "number": "10",
+        "dCol": 4,
+        "dRow": 1
+      },
+      {
+        "number": "11",
+        "dCol": 5,
+        "dRow": 0
+      },
+      {
+        "number": "12",
+        "dCol": 5,
+        "dRow": 1
+      },
+      {
+        "number": "13",
+        "dCol": 6,
+        "dRow": 0
+      },
+      {
+        "number": "14",
+        "dCol": 6,
+        "dRow": 1
+      },
+      {
+        "number": "15",
+        "dCol": 7,
+        "dRow": 0
+      },
+      {
+        "number": "16",
+        "dCol": 7,
+        "dRow": 1
+      },
+      {
+        "number": "17",
+        "dCol": 8,
+        "dRow": 0
+      },
+      {
+        "number": "18",
+        "dCol": 8,
+        "dRow": 1
+      },
+      {
+        "number": "19",
+        "dCol": 9,
+        "dRow": 0
+      },
+      {
+        "number": "20",
+        "dCol": 9,
+        "dRow": 1
+      },
+      {
+        "number": "21",
+        "dCol": 10,
+        "dRow": 0
+      },
+      {
+        "number": "22",
+        "dCol": 10,
+        "dRow": 1
+      },
+      {
+        "number": "23",
+        "dCol": 11,
+        "dRow": 0
+      },
+      {
+        "number": "24",
+        "dCol": 11,
+        "dRow": 1
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": -1.2699999999999996,
+        "y": -1.27
+      },
+      {
+        "x": 29.21,
+        "y": -1.27
+      },
+      {
+        "x": 29.21,
+        "y": 3.81
+      },
+      {
+        "x": -1.2699999999999996,
+        "y": 3.81
+      }
+    ],
+    "bodyHeight": 8.5,
+    "body": {
+      "archetype": "pin-header",
+      "dims": {
+        "length": 27.94,
+        "width": 2.54,
+        "height": 8.5
+      }
+    },
+    "leadDiameter": 0.64,
+    "polarized": false
+  },
+  "hdr-1x14": {
+    "id": "hdr-1x14",
+    "name": "Pin header, 1x14",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0
+      },
+      {
+        "number": "2",
+        "dCol": 1,
+        "dRow": 0
+      },
+      {
+        "number": "3",
+        "dCol": 2,
+        "dRow": 0
+      },
+      {
+        "number": "4",
+        "dCol": 3,
+        "dRow": 0
+      },
+      {
+        "number": "5",
+        "dCol": 4,
+        "dRow": 0
+      },
+      {
+        "number": "6",
+        "dCol": 5,
+        "dRow": 0
+      },
+      {
+        "number": "7",
+        "dCol": 6,
+        "dRow": 0
+      },
+      {
+        "number": "8",
+        "dCol": 7,
+        "dRow": 0
+      },
+      {
+        "number": "9",
+        "dCol": 8,
+        "dRow": 0
+      },
+      {
+        "number": "10",
+        "dCol": 9,
+        "dRow": 0
+      },
+      {
+        "number": "11",
+        "dCol": 10,
+        "dRow": 0
+      },
+      {
+        "number": "12",
+        "dCol": 11,
+        "dRow": 0
+      },
+      {
+        "number": "13",
+        "dCol": 12,
+        "dRow": 0
+      },
+      {
+        "number": "14",
+        "dCol": 13,
+        "dRow": 0
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": -1.2699999999999996,
+        "y": -1.27
+      },
+      {
+        "x": 34.290000000000006,
+        "y": -1.27
+      },
+      {
+        "x": 34.290000000000006,
+        "y": 1.27
+      },
+      {
+        "x": -1.2699999999999996,
+        "y": 1.27
+      }
+    ],
+    "bodyHeight": 8.5,
+    "body": {
+      "archetype": "pin-header",
+      "dims": {
+        "length": 33.02,
+        "width": 0,
+        "height": 8.5
+      }
+    },
+    "leadDiameter": 0.64,
+    "polarized": false
+  },
+  "hdr-2x14": {
+    "id": "hdr-2x14",
+    "name": "Pin header, 2x14",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0
+      },
+      {
+        "number": "2",
+        "dCol": 0,
+        "dRow": 1
+      },
+      {
+        "number": "3",
+        "dCol": 1,
+        "dRow": 0
+      },
+      {
+        "number": "4",
+        "dCol": 1,
+        "dRow": 1
+      },
+      {
+        "number": "5",
+        "dCol": 2,
+        "dRow": 0
+      },
+      {
+        "number": "6",
+        "dCol": 2,
+        "dRow": 1
+      },
+      {
+        "number": "7",
+        "dCol": 3,
+        "dRow": 0
+      },
+      {
+        "number": "8",
+        "dCol": 3,
+        "dRow": 1
+      },
+      {
+        "number": "9",
+        "dCol": 4,
+        "dRow": 0
+      },
+      {
+        "number": "10",
+        "dCol": 4,
+        "dRow": 1
+      },
+      {
+        "number": "11",
+        "dCol": 5,
+        "dRow": 0
+      },
+      {
+        "number": "12",
+        "dCol": 5,
+        "dRow": 1
+      },
+      {
+        "number": "13",
+        "dCol": 6,
+        "dRow": 0
+      },
+      {
+        "number": "14",
+        "dCol": 6,
+        "dRow": 1
+      },
+      {
+        "number": "15",
+        "dCol": 7,
+        "dRow": 0
+      },
+      {
+        "number": "16",
+        "dCol": 7,
+        "dRow": 1
+      },
+      {
+        "number": "17",
+        "dCol": 8,
+        "dRow": 0
+      },
+      {
+        "number": "18",
+        "dCol": 8,
+        "dRow": 1
+      },
+      {
+        "number": "19",
+        "dCol": 9,
+        "dRow": 0
+      },
+      {
+        "number": "20",
+        "dCol": 9,
+        "dRow": 1
+      },
+      {
+        "number": "21",
+        "dCol": 10,
+        "dRow": 0
+      },
+      {
+        "number": "22",
+        "dCol": 10,
+        "dRow": 1
+      },
+      {
+        "number": "23",
+        "dCol": 11,
+        "dRow": 0
+      },
+      {
+        "number": "24",
+        "dCol": 11,
+        "dRow": 1
+      },
+      {
+        "number": "25",
+        "dCol": 12,
+        "dRow": 0
+      },
+      {
+        "number": "26",
+        "dCol": 12,
+        "dRow": 1
+      },
+      {
+        "number": "27",
+        "dCol": 13,
+        "dRow": 0
+      },
+      {
+        "number": "28",
+        "dCol": 13,
+        "dRow": 1
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": -1.2699999999999996,
+        "y": -1.27
+      },
+      {
+        "x": 34.290000000000006,
+        "y": -1.27
+      },
+      {
+        "x": 34.290000000000006,
+        "y": 3.81
+      },
+      {
+        "x": -1.2699999999999996,
+        "y": 3.81
+      }
+    ],
+    "bodyHeight": 8.5,
+    "body": {
+      "archetype": "pin-header",
+      "dims": {
+        "length": 33.02,
+        "width": 2.54,
+        "height": 8.5
+      }
+    },
+    "leadDiameter": 0.64,
+    "polarized": false
+  },
+  "hdr-1x16": {
+    "id": "hdr-1x16",
+    "name": "Pin header, 1x16",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0
+      },
+      {
+        "number": "2",
+        "dCol": 1,
+        "dRow": 0
+      },
+      {
+        "number": "3",
+        "dCol": 2,
+        "dRow": 0
+      },
+      {
+        "number": "4",
+        "dCol": 3,
+        "dRow": 0
+      },
+      {
+        "number": "5",
+        "dCol": 4,
+        "dRow": 0
+      },
+      {
+        "number": "6",
+        "dCol": 5,
+        "dRow": 0
+      },
+      {
+        "number": "7",
+        "dCol": 6,
+        "dRow": 0
+      },
+      {
+        "number": "8",
+        "dCol": 7,
+        "dRow": 0
+      },
+      {
+        "number": "9",
+        "dCol": 8,
+        "dRow": 0
+      },
+      {
+        "number": "10",
+        "dCol": 9,
+        "dRow": 0
+      },
+      {
+        "number": "11",
+        "dCol": 10,
+        "dRow": 0
+      },
+      {
+        "number": "12",
+        "dCol": 11,
+        "dRow": 0
+      },
+      {
+        "number": "13",
+        "dCol": 12,
+        "dRow": 0
+      },
+      {
+        "number": "14",
+        "dCol": 13,
+        "dRow": 0
+      },
+      {
+        "number": "15",
+        "dCol": 14,
+        "dRow": 0
+      },
+      {
+        "number": "16",
+        "dCol": 15,
+        "dRow": 0
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": -1.2699999999999996,
+        "y": -1.27
+      },
+      {
+        "x": 39.370000000000005,
+        "y": -1.27
+      },
+      {
+        "x": 39.370000000000005,
+        "y": 1.27
+      },
+      {
+        "x": -1.2699999999999996,
+        "y": 1.27
+      }
+    ],
+    "bodyHeight": 8.5,
+    "body": {
+      "archetype": "pin-header",
+      "dims": {
+        "length": 38.1,
+        "width": 0,
+        "height": 8.5
+      }
+    },
+    "leadDiameter": 0.64,
+    "polarized": false
+  },
+  "hdr-2x16": {
+    "id": "hdr-2x16",
+    "name": "Pin header, 2x16",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0
+      },
+      {
+        "number": "2",
+        "dCol": 0,
+        "dRow": 1
+      },
+      {
+        "number": "3",
+        "dCol": 1,
+        "dRow": 0
+      },
+      {
+        "number": "4",
+        "dCol": 1,
+        "dRow": 1
+      },
+      {
+        "number": "5",
+        "dCol": 2,
+        "dRow": 0
+      },
+      {
+        "number": "6",
+        "dCol": 2,
+        "dRow": 1
+      },
+      {
+        "number": "7",
+        "dCol": 3,
+        "dRow": 0
+      },
+      {
+        "number": "8",
+        "dCol": 3,
+        "dRow": 1
+      },
+      {
+        "number": "9",
+        "dCol": 4,
+        "dRow": 0
+      },
+      {
+        "number": "10",
+        "dCol": 4,
+        "dRow": 1
+      },
+      {
+        "number": "11",
+        "dCol": 5,
+        "dRow": 0
+      },
+      {
+        "number": "12",
+        "dCol": 5,
+        "dRow": 1
+      },
+      {
+        "number": "13",
+        "dCol": 6,
+        "dRow": 0
+      },
+      {
+        "number": "14",
+        "dCol": 6,
+        "dRow": 1
+      },
+      {
+        "number": "15",
+        "dCol": 7,
+        "dRow": 0
+      },
+      {
+        "number": "16",
+        "dCol": 7,
+        "dRow": 1
+      },
+      {
+        "number": "17",
+        "dCol": 8,
+        "dRow": 0
+      },
+      {
+        "number": "18",
+        "dCol": 8,
+        "dRow": 1
+      },
+      {
+        "number": "19",
+        "dCol": 9,
+        "dRow": 0
+      },
+      {
+        "number": "20",
+        "dCol": 9,
+        "dRow": 1
+      },
+      {
+        "number": "21",
+        "dCol": 10,
+        "dRow": 0
+      },
+      {
+        "number": "22",
+        "dCol": 10,
+        "dRow": 1
+      },
+      {
+        "number": "23",
+        "dCol": 11,
+        "dRow": 0
+      },
+      {
+        "number": "24",
+        "dCol": 11,
+        "dRow": 1
+      },
+      {
+        "number": "25",
+        "dCol": 12,
+        "dRow": 0
+      },
+      {
+        "number": "26",
+        "dCol": 12,
+        "dRow": 1
+      },
+      {
+        "number": "27",
+        "dCol": 13,
+        "dRow": 0
+      },
+      {
+        "number": "28",
+        "dCol": 13,
+        "dRow": 1
+      },
+      {
+        "number": "29",
+        "dCol": 14,
+        "dRow": 0
+      },
+      {
+        "number": "30",
+        "dCol": 14,
+        "dRow": 1
+      },
+      {
+        "number": "31",
+        "dCol": 15,
+        "dRow": 0
+      },
+      {
+        "number": "32",
+        "dCol": 15,
+        "dRow": 1
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": -1.2699999999999996,
+        "y": -1.27
+      },
+      {
+        "x": 39.370000000000005,
+        "y": -1.27
+      },
+      {
+        "x": 39.370000000000005,
+        "y": 3.81
+      },
+      {
+        "x": -1.2699999999999996,
+        "y": 3.81
+      }
+    ],
+    "bodyHeight": 8.5,
+    "body": {
+      "archetype": "pin-header",
+      "dims": {
+        "length": 38.1,
+        "width": 2.54,
+        "height": 8.5
+      }
+    },
+    "leadDiameter": 0.64,
+    "polarized": false
+  },
+  "hdr-1x20": {
+    "id": "hdr-1x20",
+    "name": "Pin header, 1x20",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0
+      },
+      {
+        "number": "2",
+        "dCol": 1,
+        "dRow": 0
+      },
+      {
+        "number": "3",
+        "dCol": 2,
+        "dRow": 0
+      },
+      {
+        "number": "4",
+        "dCol": 3,
+        "dRow": 0
+      },
+      {
+        "number": "5",
+        "dCol": 4,
+        "dRow": 0
+      },
+      {
+        "number": "6",
+        "dCol": 5,
+        "dRow": 0
+      },
+      {
+        "number": "7",
+        "dCol": 6,
+        "dRow": 0
+      },
+      {
+        "number": "8",
+        "dCol": 7,
+        "dRow": 0
+      },
+      {
+        "number": "9",
+        "dCol": 8,
+        "dRow": 0
+      },
+      {
+        "number": "10",
+        "dCol": 9,
+        "dRow": 0
+      },
+      {
+        "number": "11",
+        "dCol": 10,
+        "dRow": 0
+      },
+      {
+        "number": "12",
+        "dCol": 11,
+        "dRow": 0
+      },
+      {
+        "number": "13",
+        "dCol": 12,
+        "dRow": 0
+      },
+      {
+        "number": "14",
+        "dCol": 13,
+        "dRow": 0
+      },
+      {
+        "number": "15",
+        "dCol": 14,
+        "dRow": 0
+      },
+      {
+        "number": "16",
+        "dCol": 15,
+        "dRow": 0
+      },
+      {
+        "number": "17",
+        "dCol": 16,
+        "dRow": 0
+      },
+      {
+        "number": "18",
+        "dCol": 17,
+        "dRow": 0
+      },
+      {
+        "number": "19",
+        "dCol": 18,
+        "dRow": 0
+      },
+      {
+        "number": "20",
+        "dCol": 19,
+        "dRow": 0
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": -1.2699999999999996,
+        "y": -1.27
+      },
+      {
+        "x": 49.53,
+        "y": -1.27
+      },
+      {
+        "x": 49.53,
+        "y": 1.27
+      },
+      {
+        "x": -1.2699999999999996,
+        "y": 1.27
+      }
+    ],
+    "bodyHeight": 8.5,
+    "body": {
+      "archetype": "pin-header",
+      "dims": {
+        "length": 48.26,
+        "width": 0,
+        "height": 8.5
+      }
+    },
+    "leadDiameter": 0.64,
+    "polarized": false
+  },
+  "hdr-2x20": {
+    "id": "hdr-2x20",
+    "name": "Pin header, 2x20",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0
+      },
+      {
+        "number": "2",
+        "dCol": 0,
+        "dRow": 1
+      },
+      {
+        "number": "3",
+        "dCol": 1,
+        "dRow": 0
+      },
+      {
+        "number": "4",
+        "dCol": 1,
+        "dRow": 1
+      },
+      {
+        "number": "5",
+        "dCol": 2,
+        "dRow": 0
+      },
+      {
+        "number": "6",
+        "dCol": 2,
+        "dRow": 1
+      },
+      {
+        "number": "7",
+        "dCol": 3,
+        "dRow": 0
+      },
+      {
+        "number": "8",
+        "dCol": 3,
+        "dRow": 1
+      },
+      {
+        "number": "9",
+        "dCol": 4,
+        "dRow": 0
+      },
+      {
+        "number": "10",
+        "dCol": 4,
+        "dRow": 1
+      },
+      {
+        "number": "11",
+        "dCol": 5,
+        "dRow": 0
+      },
+      {
+        "number": "12",
+        "dCol": 5,
+        "dRow": 1
+      },
+      {
+        "number": "13",
+        "dCol": 6,
+        "dRow": 0
+      },
+      {
+        "number": "14",
+        "dCol": 6,
+        "dRow": 1
+      },
+      {
+        "number": "15",
+        "dCol": 7,
+        "dRow": 0
+      },
+      {
+        "number": "16",
+        "dCol": 7,
+        "dRow": 1
+      },
+      {
+        "number": "17",
+        "dCol": 8,
+        "dRow": 0
+      },
+      {
+        "number": "18",
+        "dCol": 8,
+        "dRow": 1
+      },
+      {
+        "number": "19",
+        "dCol": 9,
+        "dRow": 0
+      },
+      {
+        "number": "20",
+        "dCol": 9,
+        "dRow": 1
+      },
+      {
+        "number": "21",
+        "dCol": 10,
+        "dRow": 0
+      },
+      {
+        "number": "22",
+        "dCol": 10,
+        "dRow": 1
+      },
+      {
+        "number": "23",
+        "dCol": 11,
+        "dRow": 0
+      },
+      {
+        "number": "24",
+        "dCol": 11,
+        "dRow": 1
+      },
+      {
+        "number": "25",
+        "dCol": 12,
+        "dRow": 0
+      },
+      {
+        "number": "26",
+        "dCol": 12,
+        "dRow": 1
+      },
+      {
+        "number": "27",
+        "dCol": 13,
+        "dRow": 0
+      },
+      {
+        "number": "28",
+        "dCol": 13,
+        "dRow": 1
+      },
+      {
+        "number": "29",
+        "dCol": 14,
+        "dRow": 0
+      },
+      {
+        "number": "30",
+        "dCol": 14,
+        "dRow": 1
+      },
+      {
+        "number": "31",
+        "dCol": 15,
+        "dRow": 0
+      },
+      {
+        "number": "32",
+        "dCol": 15,
+        "dRow": 1
+      },
+      {
+        "number": "33",
+        "dCol": 16,
+        "dRow": 0
+      },
+      {
+        "number": "34",
+        "dCol": 16,
+        "dRow": 1
+      },
+      {
+        "number": "35",
+        "dCol": 17,
+        "dRow": 0
+      },
+      {
+        "number": "36",
+        "dCol": 17,
+        "dRow": 1
+      },
+      {
+        "number": "37",
+        "dCol": 18,
+        "dRow": 0
+      },
+      {
+        "number": "38",
+        "dCol": 18,
+        "dRow": 1
+      },
+      {
+        "number": "39",
+        "dCol": 19,
+        "dRow": 0
+      },
+      {
+        "number": "40",
+        "dCol": 19,
+        "dRow": 1
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": -1.2699999999999996,
+        "y": -1.27
+      },
+      {
+        "x": 49.53,
+        "y": -1.27
+      },
+      {
+        "x": 49.53,
+        "y": 3.81
+      },
+      {
+        "x": -1.2699999999999996,
+        "y": 3.81
+      }
+    ],
+    "bodyHeight": 8.5,
+    "body": {
+      "archetype": "pin-header",
+      "dims": {
+        "length": 48.26,
+        "width": 2.54,
+        "height": 8.5
+      }
+    },
+    "leadDiameter": 0.64,
+    "polarized": false
+  },
+  "screw-terminal-2": {
+    "id": "screw-terminal-2",
+    "name": "Screw terminal, 2-way",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0
+      },
+      {
+        "number": "2",
+        "dCol": 2,
+        "dRow": 0
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": -4.56,
+        "y": -5.27
+      },
+      {
+        "x": 9.64,
+        "y": -5.27
+      },
+      {
+        "x": 9.64,
+        "y": 5.27
+      },
+      {
+        "x": -4.56,
+        "y": 5.27
+      }
+    ],
+    "bodyHeight": 10,
+    "body": {
+      "archetype": "screw-terminal",
+      "dims": {
+        "length": 11.66,
+        "width": 8,
+        "height": 10
+      }
+    },
+    "leadDiameter": 0.8,
+    "polarized": false
+  },
+  "screw-terminal-3": {
+    "id": "screw-terminal-3",
+    "name": "Screw terminal, 3-way",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0
+      },
+      {
+        "number": "2",
+        "dCol": 2,
+        "dRow": 0
+      },
+      {
+        "number": "3",
+        "dCol": 4,
+        "dRow": 0
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": -4.5600000000000005,
+        "y": -5.27
+      },
+      {
+        "x": 14.72,
+        "y": -5.27
+      },
+      {
+        "x": 14.72,
+        "y": 5.27
+      },
+      {
+        "x": -4.5600000000000005,
+        "y": 5.27
+      }
+    ],
+    "bodyHeight": 10,
+    "body": {
+      "archetype": "screw-terminal",
+      "dims": {
+        "length": 16.740000000000002,
+        "width": 8,
+        "height": 10
+      }
+    },
+    "leadDiameter": 0.8,
+    "polarized": false
+  },
+  "pot-3": {
+    "id": "pot-3",
+    "name": "Potentiometer, 3-pin inline",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0
+      },
+      {
+        "number": "2",
+        "dCol": 1,
+        "dRow": 0
+      },
+      {
+        "number": "3",
+        "dCol": 2,
+        "dRow": 0
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": 11.809999999999999,
+        "y": 0
+      },
+      {
+        "x": 11.494132409699663,
+        "y": 2.399252548100367
+      },
+      {
+        "x": 10.568055493081747,
+        "y": 4.634999999999999
+      },
+      {
+        "x": 9.094879861599296,
+        "y": 6.554879861599295
+      },
+      {
+        "x": 7.175000000000001,
+        "y": 8.028055493081746
+      },
+      {
+        "x": 4.939252548100367,
+        "y": 8.954132409699662
+      },
+      {
+        "x": 2.5400000000000005,
+        "y": 9.27
+      },
+      {
+        "x": 0.1407474518996339,
+        "y": 8.954132409699662
+      },
+      {
+        "x": -2.094999999999998,
+        "y": 8.028055493081746
+      },
+      {
+        "x": -4.014879861599295,
+        "y": 6.554879861599296
+      },
+      {
+        "x": -5.488055493081746,
+        "y": 4.634999999999999
+      },
+      {
+        "x": -6.414132409699662,
+        "y": 2.3992525481003697
+      },
+      {
+        "x": -6.7299999999999995,
+        "y": 1.1352475828095964e-15
+      },
+      {
+        "x": -6.414132409699662,
+        "y": -2.3992525481003675
+      },
+      {
+        "x": -5.488055493081748,
+        "y": -4.634999999999997
+      },
+      {
+        "x": -4.014879861599299,
+        "y": -6.554879861599291
+      },
+      {
+        "x": -2.095000000000004,
+        "y": -8.028055493081744
+      },
+      {
+        "x": 0.1407474518996339,
+        "y": -8.954132409699662
+      },
+      {
+        "x": 2.5399999999999983,
+        "y": -9.27
+      },
+      {
+        "x": 4.939252548100363,
+        "y": -8.954132409699664
+      },
+      {
+        "x": 7.175000000000001,
+        "y": -8.028055493081746
+      },
+      {
+        "x": 9.094879861599294,
+        "y": -6.5548798615992965
+      },
+      {
+        "x": 10.568055493081744,
+        "y": -4.635000000000004
+      },
+      {
+        "x": 11.49413240969966,
+        "y": -2.399252548100375
+      }
+    ],
+    "bodyHeight": 10,
+    "body": {
+      "archetype": "potentiometer",
+      "dims": {
+        "diameter": 16,
+        "height": 10
+      }
+    },
+    "leadDiameter": 0.5,
+    "polarized": false
+  },
+  "sw-tactile": {
+    "id": "sw-tactile",
+    "name": "Tactile switch, 4-pin",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0
+      },
+      {
+        "number": "2",
+        "dCol": 0,
+        "dRow": 1
+      },
+      {
+        "number": "3",
+        "dCol": 2,
+        "dRow": 0
+      },
+      {
+        "number": "4",
+        "dCol": 2,
+        "dRow": 1
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": -1.7299999999999995,
+        "y": -2.9999999999999996
+      },
+      {
+        "x": 6.81,
+        "y": -2.9999999999999996
+      },
+      {
+        "x": 6.81,
+        "y": 5.539999999999999
+      },
+      {
+        "x": -1.7299999999999995,
+        "y": 5.539999999999999
+      }
+    ],
+    "bodyHeight": 4.3,
+    "body": {
+      "archetype": "tactile-switch",
+      "dims": {
+        "width": 6,
+        "depth": 6
+      }
+    },
+    "leadDiameter": 0.5,
+    "polarized": false
+  },
+  "xtal-hc49": {
+    "id": "xtal-hc49",
+    "name": "Crystal, HC-49/U",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0
+      },
+      {
+        "number": "2",
+        "dCol": 2,
+        "dRow": 0
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": -1.27,
+        "y": -3.02
+      },
+      {
+        "x": 6.35,
+        "y": -3.02
+      },
+      {
+        "x": 6.35,
+        "y": 3.02
+      },
+      {
+        "x": -1.27,
+        "y": 3.02
+      }
+    ],
+    "bodyHeight": 13.46,
+    "body": {
+      "archetype": "crystal-hc49",
+      "dims": {
+        "width": 4.65,
+        "depth": 3.5
+      }
+    },
+    "leadDiameter": 0.45,
+    "polarized": false
+  },
+  "relay-spdt": {
+    "id": "relay-spdt",
+    "name": "Small SPDT relay",
+    "pins": [
+      {
+        "number": "1",
+        "dCol": 0,
+        "dRow": 0
+      },
+      {
+        "number": "2",
+        "dCol": 0,
+        "dRow": 2
+      },
+      {
+        "number": "3",
+        "dCol": 5,
+        "dRow": 0
+      },
+      {
+        "number": "4",
+        "dCol": 5,
+        "dRow": 1
+      },
+      {
+        "number": "5",
+        "dCol": 5,
+        "dRow": 2
+      }
+    ],
+    "bodyOutline": [
+      {
+        "x": -4.42,
+        "y": -6.2299999999999995
+      },
+      {
+        "x": 17.119999999999997,
+        "y": -6.2299999999999995
+      },
+      {
+        "x": 17.119999999999997,
+        "y": 11.309999999999999
+      },
+      {
+        "x": -4.42,
+        "y": 11.309999999999999
+      }
+    ],
+    "bodyHeight": 15,
+    "body": {
+      "archetype": "relay-box",
+      "dims": {
+        "length": 19,
+        "width": 15
+      }
+    },
+    "leadDiameter": 0.6,
+    "polarized": false
+  }
+}

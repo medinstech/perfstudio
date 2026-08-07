@@ -1,0 +1,151 @@
+{
+  "formatVersion": 1,
+  "meta": {
+    "name": "diffcheck",
+    "created": "2026-01-01T00:00:00.000Z",
+    "modified": "2026-01-01T00:00:00.000Z"
+  },
+  "board": {
+    "type": "pad-per-hole",
+    "cols": 16,
+    "rows": 12,
+    "pitch": 2.54,
+    "thickness": 1.6,
+    "material": "FR4",
+    "padDiameter": 1.9,
+    "drillDiameter": 1
+  },
+  "components": [
+    {
+      "id": "cmp-1",
+      "ref": "X1",
+      "value": "v0",
+      "footprintId": "dip-8",
+      "anchor": {
+        "col": 10,
+        "row": 5
+      },
+      "rotation": 180,
+      "mirrored": false,
+      "locked": false
+    },
+    {
+      "id": "cmp-2",
+      "ref": "X2",
+      "value": "v1",
+      "footprintId": "c-elec-d5-p2",
+      "anchor": {
+        "col": 3,
+        "row": 4
+      },
+      "rotation": 180,
+      "mirrored": false,
+      "locked": false
+    },
+    {
+      "id": "cmp-3",
+      "ref": "X3",
+      "value": "v2",
+      "footprintId": "r-axial-4",
+      "anchor": {
+        "col": 8,
+        "row": 4
+      },
+      "rotation": 0,
+      "mirrored": false,
+      "locked": false
+    }
+  ],
+  "conductors": [
+    {
+      "id": "cond-1",
+      "kind": "solder-trace",
+      "path": [
+        {
+          "col": 3,
+          "row": 6
+        },
+        {
+          "col": 4,
+          "row": 6
+        },
+        {
+          "col": 5,
+          "row": 6
+        }
+      ],
+      "side": "bottom",
+      "layerZ": 0,
+      "buildup": "light"
+    },
+    {
+      "id": "cond-2",
+      "kind": "bare-wire",
+      "path": [
+        {
+          "col": 14,
+          "row": 2
+        },
+        {
+          "col": 2,
+          "row": 1
+        }
+      ],
+      "side": "bottom",
+      "layerZ": 1,
+      "gaugeAwg": 22
+    }
+  ],
+  "cuts": [],
+  "nets": [
+    {
+      "id": "net-1",
+      "name": "GND",
+      "nodes": [
+        {
+          "componentRef": "X2",
+          "pin": "1"
+        },
+        {
+          "componentRef": "X3",
+          "pin": "1"
+        },
+        {
+          "componentRef": "X2",
+          "pin": "1"
+        }
+      ],
+      "class": "ground"
+    },
+    {
+      "id": "net-2",
+      "name": "VCC",
+      "nodes": [
+        {
+          "componentRef": "X1",
+          "pin": "1"
+        },
+        {
+          "componentRef": "X2",
+          "pin": "1"
+        }
+      ],
+      "class": "power"
+    },
+    {
+      "id": "net-3",
+      "name": "SIG",
+      "nodes": [
+        {
+          "componentRef": "X1",
+          "pin": "1"
+        },
+        {
+          "componentRef": "X2",
+          "pin": "1"
+        }
+      ],
+      "class": "signal"
+    }
+  ]
+}

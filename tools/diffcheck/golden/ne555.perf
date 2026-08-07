@@ -1,0 +1,261 @@
+{
+  "formatVersion": 1,
+  "meta": {
+    "name": "diffcheck",
+    "created": "2026-01-01T00:00:00.000Z",
+    "modified": "2026-01-01T00:00:00.000Z"
+  },
+  "board": {
+    "type": "pad-per-hole",
+    "cols": 32,
+    "rows": 22,
+    "pitch": 2.54,
+    "thickness": 1.6,
+    "material": "FR4",
+    "padDiameter": 1.9,
+    "drillDiameter": 1
+  },
+  "components": [
+    {
+      "id": "cmp-1",
+      "ref": "U1",
+      "value": "NE555",
+      "footprintId": "dip-8",
+      "anchor": {
+        "col": 1,
+        "row": 2
+      },
+      "rotation": 0,
+      "mirrored": false,
+      "locked": false
+    },
+    {
+      "id": "cmp-2",
+      "ref": "R1",
+      "value": "10k",
+      "footprintId": "r-axial-4",
+      "anchor": {
+        "col": 8,
+        "row": 2
+      },
+      "rotation": 0,
+      "mirrored": false,
+      "locked": false
+    },
+    {
+      "id": "cmp-3",
+      "ref": "R2",
+      "value": "100k",
+      "footprintId": "r-axial-4",
+      "anchor": {
+        "col": 15,
+        "row": 2
+      },
+      "rotation": 0,
+      "mirrored": false,
+      "locked": false
+    },
+    {
+      "id": "cmp-4",
+      "ref": "C1",
+      "value": "10uF",
+      "footprintId": "c-elec-d5-p2",
+      "anchor": {
+        "col": 22,
+        "row": 2
+      },
+      "rotation": 0,
+      "mirrored": false,
+      "locked": false
+    },
+    {
+      "id": "cmp-5",
+      "ref": "C2",
+      "value": "0.01uF",
+      "footprintId": "c-elec-d5-p2",
+      "anchor": {
+        "col": 1,
+        "row": 10
+      },
+      "rotation": 0,
+      "mirrored": false,
+      "locked": false
+    },
+    {
+      "id": "cmp-6",
+      "ref": "R3",
+      "value": "330",
+      "footprintId": "r-axial-4",
+      "anchor": {
+        "col": 8,
+        "row": 10
+      },
+      "rotation": 0,
+      "mirrored": false,
+      "locked": false
+    },
+    {
+      "id": "cmp-7",
+      "ref": "LED1",
+      "value": "LED",
+      "footprintId": "r-axial-4",
+      "anchor": {
+        "col": 15,
+        "row": 10
+      },
+      "rotation": 0,
+      "mirrored": false,
+      "locked": false
+    },
+    {
+      "id": "cmp-8",
+      "ref": "J1",
+      "value": "Conn_01x02",
+      "footprintId": "hdr-1x4",
+      "anchor": {
+        "col": 22,
+        "row": 10
+      },
+      "rotation": 0,
+      "mirrored": false,
+      "locked": false
+    }
+  ],
+  "conductors": [],
+  "cuts": [],
+  "nets": [
+    {
+      "id": "net-1",
+      "name": "VCC",
+      "nodes": [
+        {
+          "componentRef": "U1",
+          "pin": "8"
+        },
+        {
+          "componentRef": "R1",
+          "pin": "1"
+        },
+        {
+          "componentRef": "J1",
+          "pin": "1"
+        }
+      ],
+      "class": "power"
+    },
+    {
+      "id": "net-2",
+      "name": "OUT",
+      "nodes": [
+        {
+          "componentRef": "U1",
+          "pin": "3"
+        },
+        {
+          "componentRef": "R3",
+          "pin": "1"
+        }
+      ],
+      "class": "signal"
+    },
+    {
+      "id": "net-3",
+      "name": "GND",
+      "nodes": [
+        {
+          "componentRef": "U1",
+          "pin": "1"
+        },
+        {
+          "componentRef": "C1",
+          "pin": "2"
+        },
+        {
+          "componentRef": "C2",
+          "pin": "2"
+        },
+        {
+          "componentRef": "LED1",
+          "pin": "2"
+        },
+        {
+          "componentRef": "J1",
+          "pin": "2"
+        }
+      ],
+      "class": "ground"
+    },
+    {
+      "id": "net-4",
+      "name": "LED_A",
+      "nodes": [
+        {
+          "componentRef": "R3",
+          "pin": "2"
+        },
+        {
+          "componentRef": "LED1",
+          "pin": "1"
+        }
+      ],
+      "class": "signal"
+    },
+    {
+      "id": "net-5",
+      "name": "THRESH",
+      "nodes": [
+        {
+          "componentRef": "U1",
+          "pin": "2"
+        },
+        {
+          "componentRef": "U1",
+          "pin": "6"
+        },
+        {
+          "componentRef": "R2",
+          "pin": "2"
+        },
+        {
+          "componentRef": "C1",
+          "pin": "1"
+        }
+      ],
+      "class": "signal"
+    },
+    {
+      "id": "net-6",
+      "name": "DISCH",
+      "nodes": [
+        {
+          "componentRef": "U1",
+          "pin": "7"
+        },
+        {
+          "componentRef": "R1",
+          "pin": "2"
+        },
+        {
+          "componentRef": "R2",
+          "pin": "1"
+        }
+      ],
+      "class": "signal"
+    },
+    {
+      "id": "net-7",
+      "name": "CTRL",
+      "nodes": [
+        {
+          "componentRef": "U1",
+          "pin": "5"
+        },
+        {
+          "componentRef": "C2",
+          "pin": "1"
+        }
+      ],
+      "class": "signal"
+    }
+  ]
+}
