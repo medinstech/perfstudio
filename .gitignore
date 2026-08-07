@@ -12,3 +12,8 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+
+# Qt prototype (evaluation only)
+prototypes/qt/.venv/
+prototypes/qt/out_*.png
+prototypes/qt/*.pdf

@@ -1,0 +1,473 @@
+{
+  "formatVersion": 1,
+  "meta": {
+    "name": "ne555-blinker",
+    "created": "2026-01-01T00:00:00.000Z",
+    "modified": "2026-01-01T00:00:00.000Z"
+  },
+  "board": {
+    "type": "pad-per-hole",
+    "cols": 32,
+    "rows": 22,
+    "pitch": 2.54,
+    "thickness": 1.6,
+    "material": "FR2",
+    "padDiameter": 1.9,
+    "drillDiameter": 1
+  },
+  "components": [
+    {
+      "id": "cmp-1",
+      "ref": "U1",
+      "value": "NE555",
+      "footprintId": "dip-8",
+      "anchor": {
+        "col": 6,
+        "row": 8
+      },
+      "rotation": 0,
+      "mirrored": false,
+      "locked": false
+    },
+    {
+      "id": "cmp-2",
+      "ref": "R1",
+      "value": "10k",
+      "footprintId": "r-axial-4",
+      "anchor": {
+        "col": 3,
+        "row": 4
+      },
+      "rotation": 0,
+      "mirrored": false,
+      "locked": false
+    },
+    {
+      "id": "cmp-3",
+      "ref": "R2",
+      "value": "47k",
+      "footprintId": "r-axial-4",
+      "anchor": {
+        "col": 3,
+        "row": 14
+      },
+      "rotation": 0,
+      "mirrored": false,
+      "locked": false
+    },
+    {
+      "id": "cmp-4",
+      "ref": "R3",
+      "value": "470R",
+      "footprintId": "r-axial-4",
+      "anchor": {
+        "col": 14,
+        "row": 4
+      },
+      "rotation": 0,
+      "mirrored": false,
+      "locked": false
+    },
+    {
+      "id": "cmp-5",
+      "ref": "C1",
+      "value": "10uF",
+      "footprintId": "c-elec-d5-p2",
+      "anchor": {
+        "col": 12,
+        "row": 14
+      },
+      "rotation": 0,
+      "mirrored": false,
+      "locked": false
+    },
+    {
+      "id": "cmp-6",
+      "ref": "C2",
+      "value": "100nF",
+      "footprintId": "c-disc-1",
+      "anchor": {
+        "col": 12,
+        "row": 17
+      },
+      "rotation": 0,
+      "mirrored": false,
+      "locked": false
+    },
+    {
+      "id": "cmp-7",
+      "ref": "D1",
+      "value": "LED",
+      "footprintId": "led-5mm",
+      "anchor": {
+        "col": 20,
+        "row": 6
+      },
+      "rotation": 0,
+      "mirrored": false,
+      "locked": false
+    },
+    {
+      "id": "cmp-8",
+      "ref": "J1",
+      "value": "PWR",
+      "footprintId": "screw-terminal-2",
+      "anchor": {
+        "col": 26,
+        "row": 2
+      },
+      "rotation": 0,
+      "mirrored": false,
+      "locked": false
+    },
+    {
+      "id": "cmp-9",
+      "ref": "J2",
+      "value": "OUT",
+      "footprintId": "hdr-1x3",
+      "anchor": {
+        "col": 26,
+        "row": 16
+      },
+      "rotation": 0,
+      "mirrored": false,
+      "locked": false
+    }
+  ],
+  "conductors": [
+    {
+      "id": "cond-1",
+      "kind": "solder-trace-wired",
+      "path": [
+        {
+          "col": 4,
+          "row": 20
+        },
+        {
+          "col": 5,
+          "row": 20
+        },
+        {
+          "col": 6,
+          "row": 20
+        },
+        {
+          "col": 7,
+          "row": 20
+        },
+        {
+          "col": 8,
+          "row": 20
+        },
+        {
+          "col": 9,
+          "row": 20
+        },
+        {
+          "col": 10,
+          "row": 20
+        },
+        {
+          "col": 11,
+          "row": 20
+        },
+        {
+          "col": 12,
+          "row": 20
+        },
+        {
+          "col": 13,
+          "row": 20
+        }
+      ],
+      "side": "bottom",
+      "layerZ": 0,
+      "buildup": "heavy",
+      "spine": {
+        "material": "tinned-copper",
+        "gauge": 0.6
+      }
+    },
+    {
+      "id": "cond-2",
+      "kind": "solder-trace",
+      "path": [
+        {
+          "col": 6,
+          "row": 8
+        },
+        {
+          "col": 7,
+          "row": 8
+        },
+        {
+          "col": 8,
+          "row": 8
+        }
+      ],
+      "side": "bottom",
+      "layerZ": 0,
+      "buildup": "normal"
+    },
+    {
+      "id": "cond-3",
+      "kind": "solder-trace",
+      "path": [
+        {
+          "col": 6,
+          "row": 11
+        },
+        {
+          "col": 6,
+          "row": 12
+        },
+        {
+          "col": 6,
+          "row": 13
+        }
+      ],
+      "side": "bottom",
+      "layerZ": 0,
+      "buildup": "normal"
+    },
+    {
+      "id": "cond-4",
+      "kind": "solder-trace",
+      "path": [
+        {
+          "col": 12,
+          "row": 14
+        },
+        {
+          "col": 13,
+          "row": 14
+        },
+        {
+          "col": 14,
+          "row": 14
+        }
+      ],
+      "side": "bottom",
+      "layerZ": 0,
+      "buildup": "light"
+    },
+    {
+      "id": "cond-5",
+      "kind": "bare-wire",
+      "path": [
+        {
+          "col": 9,
+          "row": 8
+        },
+        {
+          "col": 20,
+          "row": 6
+        }
+      ],
+      "side": "bottom",
+      "layerZ": 0,
+      "gaugeAwg": 22
+    },
+    {
+      "id": "cond-6",
+      "kind": "insulated-wire",
+      "path": [
+        {
+          "col": 26,
+          "row": 2
+        },
+        {
+          "col": 6,
+          "row": 8
+        }
+      ],
+      "side": "bottom",
+      "layerZ": 1,
+      "gaugeAwg": 24,
+      "color": "#d32f2f"
+    },
+    {
+      "id": "cond-7",
+      "kind": "insulated-wire",
+      "path": [
+        {
+          "col": 27,
+          "row": 2
+        },
+        {
+          "col": 9,
+          "row": 20
+        }
+      ],
+      "side": "bottom",
+      "layerZ": 1,
+      "gaugeAwg": 24,
+      "color": "#212121"
+    },
+    {
+      "id": "cond-8",
+      "kind": "insulated-wire",
+      "path": [
+        {
+          "col": 9,
+          "row": 11
+        },
+        {
+          "col": 26,
+          "row": 16
+        }
+      ],
+      "side": "bottom",
+      "layerZ": 1,
+      "gaugeAwg": 26,
+      "color": "#1976d2"
+    },
+    {
+      "id": "cond-9",
+      "kind": "top-jumper",
+      "path": [
+        {
+          "col": 3,
+          "row": 4
+        },
+        {
+          "col": 3,
+          "row": 14
+        }
+      ],
+      "side": "top",
+      "layerZ": 0,
+      "gaugeAwg": 24,
+      "color": "#388e3c"
+    }
+  ],
+  "cuts": [],
+  "nets": [
+    {
+      "id": "n1",
+      "name": "GND",
+      "nodes": [
+        {
+          "componentRef": "U1",
+          "pin": "1"
+        },
+        {
+          "componentRef": "C1",
+          "pin": "2"
+        },
+        {
+          "componentRef": "C2",
+          "pin": "2"
+        },
+        {
+          "componentRef": "J1",
+          "pin": "2"
+        },
+        {
+          "componentRef": "J2",
+          "pin": "3"
+        }
+      ],
+      "class": "ground"
+    },
+    {
+      "id": "n2",
+      "name": "VCC",
+      "nodes": [
+        {
+          "componentRef": "U1",
+          "pin": "8"
+        },
+        {
+          "componentRef": "U1",
+          "pin": "4"
+        },
+        {
+          "componentRef": "R1",
+          "pin": "1"
+        },
+        {
+          "componentRef": "J1",
+          "pin": "1"
+        }
+      ],
+      "class": "power"
+    },
+    {
+      "id": "n3",
+      "name": "OUT",
+      "nodes": [
+        {
+          "componentRef": "U1",
+          "pin": "3"
+        },
+        {
+          "componentRef": "R3",
+          "pin": "1"
+        },
+        {
+          "componentRef": "J2",
+          "pin": "1"
+        }
+      ],
+      "class": "signal"
+    },
+    {
+      "id": "n4",
+      "name": "THRESH",
+      "nodes": [
+        {
+          "componentRef": "U1",
+          "pin": "6"
+        },
+        {
+          "componentRef": "U1",
+          "pin": "2"
+        },
+        {
+          "componentRef": "R2",
+          "pin": "2"
+        },
+        {
+          "componentRef": "C1",
+          "pin": "1"
+        }
+      ],
+      "class": "signal"
+    },
+    {
+      "id": "n5",
+      "name": "DISCH",
+      "nodes": [
+        {
+          "componentRef": "U1",
+          "pin": "7"
+        },
+        {
+          "componentRef": "R1",
+          "pin": "2"
+        },
+        {
+          "componentRef": "R2",
+          "pin": "1"
+        }
+      ],
+      "class": "signal"
+    },
+    {
+      "id": "n6",
+      "name": "LEDK",
+      "nodes": [
+        {
+          "componentRef": "R3",
+          "pin": "2"
+        },
+        {
+          "componentRef": "D1",
+          "pin": "1"
+        }
+      ],
+      "class": "signal"
+    }
+  ]
+}
