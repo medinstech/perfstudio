@@ -1,0 +1,16 @@
+{
+  "name": "@perfstudio/mcp",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "description": "MCP server exposing PerfStudio to coding agents (stdio + streamable HTTP)",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": { "perfstudio-mcp": "./dist/stdio.js" },
+  "scripts": { "build": "tsc -b", "test": "vitest run" },
+  "dependencies": {
+    "@perfstudio/core": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  }
+}

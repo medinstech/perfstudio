@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PerfStudio bench-3d — M0 webview risk harness</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #0a0a0c;
+        font-family: ui-monospace, "Cascadia Mono", "Consolas", "SFMono-Regular", Menlo, monospace;
+      }
+      #app {
+        position: fixed;
+        inset: 0;
+      }
+      canvas {
+        display: block;
+        touch-action: none;
+      }
+
+      /* ---- HUD ---------------------------------------------------------- */
+      #hud {
+        position: fixed;
+        top: 10px;
+        left: 10px;
+        z-index: 10;
+        max-width: 420px;
+        padding: 10px 12px;
+        background: rgba(12, 14, 16, 0.82);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 6px;
+        color: #d6f5d6;
+        font-size: 12px;
+        line-height: 1.5;
+        pointer-events: none;
+        user-select: none;
+        white-space: pre;
+      }
+      #hud .title {
+        color: #ffffff;
+        font-weight: 700;
+        margin-bottom: 4px;
+      }
+      #hud .dim {
+        color: #8fae8f;
+      }
+      #hud .warn {
+        color: #ffcf6b;
+      }
+
+      /* ---- Controls panel (bottom-left) --------------------------------- */
+      #panel {
+        position: fixed;
+        left: 10px;
+        bottom: 10px;
+        z-index: 10;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        max-width: 480px;
+      }
+      #panel button {
+        font-family: inherit;
+        font-size: 13px;
+        padding: 8px 14px;
+        background: #1c6b3a;
+        color: #fff;
+        border: 1px solid #2c8f4f;
+        border-radius: 5px;
+        cursor: pointer;
+      }
+      #panel button:disabled {
+        background: #444;
+        border-color: #555;
+        color: #999;
+        cursor: default;
+      }
+      #panel button:not(:disabled):hover {
+        background: #218044;
+      }
+      #benchStatus {
+        color: #d6f5d6;
+        font-size: 12px;
+        min-height: 14px;
+      }
+
+      /* ---- Results ------------------------------------------------------- */
+      #results {
+        display: none;
+        background: rgba(12, 14, 16, 0.9);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 6px;
+        padding: 10px;
+        color: #d6f5d6;
+        font-size: 11px;
+        max-width: 480px;
+      }
+      #results.visible {
+        display: block;
+      }
+      #results h3 {
+        margin: 0 0 6px 0;
+        font-size: 12px;
+        color: #fff;
+      }
+      #resultSummary {
+        margin: 0 0 8px 0;
+        white-space: pre;
+      }
+      #resultJson {
+        margin: 0;
+        max-height: 160px;
+        overflow: auto;
+        padding: 6px;
+        background: rgba(0, 0, 0, 0.4);
+        border-radius: 4px;
+        white-space: pre-wrap;
+        word-break: break-all;
+      }
+      #copyRow {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 6px;
+      }
+      #copyBtn {
+        font-family: inherit;
+        font-size: 12px;
+        padding: 5px 10px;
+        background: #2a3a5a;
+        color: #fff;
+        border: 1px solid #3d5580;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      #copyBtn:hover {
+        background: #34477a;
+      }
+      #copyStatus {
+        font-size: 11px;
+        color: #8fae8f;
+      }
+
+      /* ---- Help ----------------------------------------------------------- */
+      #help {
+        position: fixed;
+        right: 10px;
+        bottom: 10px;
+        z-index: 10;
+        color: #8fae8f;
+        font-size: 11px;
+        text-align: right;
+        pointer-events: none;
+        user-select: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+
+    <div id="hud">
+      <div class="title">PerfStudio bench-3d — M0 webview risk harness</div>
+      <div id="hudBody">initializing…</div>
+    </div>
+
+    <div id="panel">
+      <button id="runBtn" type="button">Run 10s benchmark</button>
+      <div id="benchStatus"></div>
+      <div id="results">
+        <h3>Last benchmark result</h3>
+        <pre id="resultSummary"></pre>
+        <pre id="resultJson"></pre>
+        <div id="copyRow">
+          <button id="copyBtn" type="button">Copy JSON</button>
+          <span id="copyStatus"></span>
+        </div>
+      </div>
+    </div>
+
+    <div id="help">drag: orbit &middot; wheel: zoom &middot; F: flip board</div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

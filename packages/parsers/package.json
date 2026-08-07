@@ -1,0 +1,12 @@
+{
+  "name": "@perfstudio/parsers",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "description": "Netlist and footprint importers (KiCad S-expression, SPICE)",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": { "build": "tsc -b", "test": "vitest run" },
+  "dependencies": { "@perfstudio/core": "workspace:*" }
+}

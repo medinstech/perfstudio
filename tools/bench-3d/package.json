@@ -1,0 +1,15 @@
+{
+  "name": "@perfstudio/bench-3d",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "description": "M0 risk-reduction harness: measures three.js board-scene performance on each platform webview",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": { "three": "^0.180.0" },
+  "devDependencies": { "vite": "^7.0.0", "@types/three": "^0.180.0" }
+}

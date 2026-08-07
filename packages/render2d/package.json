@@ -1,0 +1,12 @@
+{
+  "name": "@perfstudio/render2d",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "description": "Canvas2D renderer for the board view. Host-agnostic: takes a 2D context, never touches window/document.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": { "build": "tsc -b", "test": "vitest run" },
+  "dependencies": { "@perfstudio/core": "workspace:*" }
+}

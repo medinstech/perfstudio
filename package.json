@@ -1,0 +1,23 @@
+{
+  "name": "perfstudio",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Perfboard layout designer with autorouting, LVS verification and detailed soldering guide generation",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -b --noEmit false --emitDeclarationOnly"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.2",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}

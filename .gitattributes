@@ -1,0 +1,14 @@
+# Normalise line endings so a Windows-developed project stays sane for Linux/macOS
+# contributors. Checked-in files are LF; checkout is left to core.autocrlf.
+* text=auto eol=lf
+
+# Binary assets must never be touched.
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.glb binary
+*.step binary
+*.wrl binary
+*.pdf binary
