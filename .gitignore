@@ -17,3 +17,5 @@ Thumbs.db
 prototypes/qt/.venv/
 prototypes/qt/out_*.png
 prototypes/qt/*.pdf
+
+headless_out/

@@ -31,7 +31,7 @@ from dataclasses import dataclass
 from typing import Any, Literal, TypeAlias
 
 from .command import CommandContext, CommandDefinition, CommandError, CommandRegistry
-from .geometry import coord_to_hole_ref, is_inside_board, validate_orthogonal_chain
+from .geometry import format_hole, is_inside_board, validate_orthogonal_chain
 from .model import (
     DOCUMENT_FORMAT_VERSION,
     VALID_ROTATIONS,
@@ -127,7 +127,7 @@ def assert_hole_on_board(hole: HoleCoord, board: Board, what: str) -> None:
     if not is_inside_board(hole, board):
         raise CommandError(
             "off-board",
-            f"{what} {coord_to_hole_ref(hole)} is outside the {board.cols}x{board.rows} board.",
+            f"{what} {format_hole(hole)} is outside the {board.cols}x{board.rows} board.",
         )
 
 
@@ -331,7 +331,7 @@ class _PlaceComponent:
         return dataclasses.replace(doc, components=doc.components + (component,))
 
     def describe(self, p: PlaceComponentPayload, doc: PerfDocument) -> str:
-        return f"Place {p.ref} at {coord_to_hole_ref(p.anchor)}"
+        return f"Place {p.ref} at {format_hole(p.anchor)}"
 
 
 class _MoveComponent:
@@ -350,7 +350,7 @@ class _MoveComponent:
     def describe(self, p: MoveComponentPayload, doc: PerfDocument) -> str:
         c = next((x for x in doc.components if x.id == p.id), None)
         ref = c.ref if c is not None else p.id
-        return f"Move {ref} to {coord_to_hole_ref(p.anchor)}"
+        return f"Move {ref} to {format_hole(p.anchor)}"
 
 
 class _RotateComponent:
@@ -482,7 +482,7 @@ class _AddConductor:
 
     def describe(self, p: AddConductorPayload, doc: PerfDocument) -> str:
         path = p.conductor.path
-        span = f" {coord_to_hole_ref(path[0])} to {coord_to_hole_ref(path[-1])}" if path else ""
+        span = f" {format_hole(path[0])} to {format_hole(path[-1])}" if path else ""
         return f"Add {p.conductor.kind}{span}"
 
 
@@ -548,7 +548,7 @@ class _SetBoard:
         if stranded_component is not None:
             raise CommandError(
                 "would-strand-component",
-                f"{stranded_component.ref} at {coord_to_hole_ref(stranded_component.anchor)} "
+                f"{stranded_component.ref} at {format_hole(stranded_component.anchor)} "
                 f"would fall outside a {b.cols}x{b.rows} board.",
             )
         for cond in doc.conductors:
@@ -556,7 +556,7 @@ class _SetBoard:
             if stranded is not None:
                 raise CommandError(
                     "would-strand-conductor",
-                    f"Conductor {cond.id} passes through {coord_to_hole_ref(stranded)}, "
+                    f"Conductor {cond.id} passes through {format_hole(stranded)}, "
                     f"outside a {b.cols}x{b.rows} board.",
                 )
 
@@ -600,7 +600,7 @@ class _AddCut:
         return dataclasses.replace(doc, cuts=doc.cuts + (cut,))
 
     def describe(self, p: AddCutPayload, doc: PerfDocument) -> str:
-        return f"Cut track at {coord_to_hole_ref(p.at)}"
+        return f"Cut track at {format_hole(p.at)}"
 
 
 class _DeleteCut:

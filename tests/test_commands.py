@@ -536,3 +536,27 @@ def test_journal_survives_a_json_round_trip():
 
     assert replayed.ok is True
     assert replayed.document == bus.document
+
+
+def test_a_negative_off_board_move_is_refused_not_raised() -> None:
+    """dispatch() must never raise for bad input, including at negative coordinates.
+
+    The off-board message names the offending hole, and an earlier version formatted it
+    with the strict `coord_to_hole_ref`, which rejects negative columns by design. So a
+    component dragged off the LEFT edge crashed inside the error formatter instead of
+    being refused -- the checker failing on exactly the case it exists to report.
+
+    `geometry.format_hole` exists for this, and its docstring warns about this mistake.
+    Dragging a part past the left or top edge is an ordinary thing a user does, so this
+    is pinned here for both axes as well as the positive overflow that always worked.
+    """
+    bus = new_bus()
+    place_r1(bus)
+    before = bus.document
+
+    for anchor in (HoleCoord(-1, 5), HoleCoord(5, -3), HoleCoord(-4, -4), HoleCoord(999, 5)):
+        result = bus.dispatch("component.move", MoveComponentPayload(id="cmp-1", anchor=anchor))
+        assert result.ok is False
+        assert result.code == "off-board"
+        assert result.message  # a usable message, not an empty string
+        assert bus.document is before, "a refused move must leave the document untouched"
