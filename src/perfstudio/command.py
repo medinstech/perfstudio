@@ -103,7 +103,16 @@ class CommandError(Exception):
         return self.message
 
 
-TPayload = TypeVar("TPayload")
+# Contravariant: the payload only ever appears as an INPUT to apply/describe, never as
+# a return. Declaring it invariant makes mypy reject the Protocol outright.
+#
+# The consequence is that CommandDefinition[SomePayload] is not assignable to
+# CommandDefinition[object], so the registry and STANDARD_COMMANDS are typed with Any.
+# That is honest rather than lazy: a registry keyed by a runtime string genuinely cannot
+# know its payload types statically, which is why dispatch validates at runtime and
+# returns a result instead of trusting the caller. The TypeScript original solved the
+# same problem by casting to CommandDefinition<never>.
+TPayload = TypeVar("TPayload", contravariant=True)
 
 
 @runtime_checkable

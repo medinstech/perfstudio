@@ -622,7 +622,7 @@ def _parse_rotation(value: object, path: str) -> Rotation:
         raise ValidationError(
             "invalid-value", f'Expected rotation to be one of 0, 90, 180, 270 at "{path}", got {n}.', path
         )
-    return n  # type: ignore[return-value]
+    return n
 
 
 def _parse_meta(raw: object, warnings: list[str]) -> DocumentMeta:

@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import dataclasses
 from dataclasses import dataclass
-from typing import Literal, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 from .command import CommandContext, CommandDefinition, CommandError, CommandRegistry
 from .geometry import coord_to_hole_ref, is_inside_board, validate_orthogonal_chain
@@ -446,7 +446,7 @@ class _DeleteComponent:
             conductors=tuple(
                 c
                 for c in doc.conductors
-                if not (c.kind == "lead-bend" and c.component_id == p.id)  # type: ignore[union-attr]
+                if not (c.kind == "lead-bend" and c.component_id == p.id)
             ),
         )
 
@@ -633,7 +633,10 @@ import_netlist: CommandDefinition[ImportNetlistPayload] = _ImportNetlist()
 add_cut: CommandDefinition[AddCutPayload] = _AddCut()
 delete_cut: CommandDefinition[DeleteCutPayload] = _DeleteCut()
 
-STANDARD_COMMANDS: tuple[CommandDefinition[object], ...] = (
+# Typed with Any because CommandDefinition's payload is contravariant, so a specific
+# command is deliberately NOT assignable to CommandDefinition[object]. See the note on
+# TPayload in command.py.
+STANDARD_COMMANDS: tuple[CommandDefinition[Any], ...] = (
     place_component,
     move_component,
     rotate_component,
