@@ -21,8 +21,17 @@ import vtk  # type: ignore[import-untyped]
 
 from perfstudio.connectivity import FootprintLookup
 from perfstudio.geometry import all_pin_holes, transform_offset
-from perfstudio.model import Board, Conductor, HoleCoord, PerfDocument, contacts_every_path_hole
+from perfstudio.model import (
+    Board,
+    BoardSide,
+    Conductor,
+    HoleCoord,
+    NetClass,
+    PerfDocument,
+    contacts_every_path_hole,
+)
 
+from .boardcolors import scheme_for
 from .bodies import BodyStyle, placement_for, polarity_pin_offset, style_for
 
 SUBSTRATE_RGB = {
@@ -31,8 +40,16 @@ SUBSTRATE_RGB = {
     "FR1": (0.68, 0.55, 0.35),
 }
 PAD_RGB = (0.80, 0.66, 0.32)
-SOLDER_RGB = (0.72, 0.74, 0.77)
-BARE_RGB = (0.85, 0.87, 0.89)
+#: Solder: dull pewter, and rough. Solder is NOT shiny wire, and PLAN.md Sec 8.3 makes
+#: telling the two apart at a glance a requirement of this view rather than a nicety --
+#: these two used to be (0.72,0.74,0.77) and (0.85,0.87,0.89), which is the same grey.
+SOLDER_RGB = (0.62, 0.63, 0.66)
+#: Tinned copper wire: brighter, and specular enough to read as metal.
+BARE_RGB = (0.90, 0.92, 0.95)
+#: An insulated wire with no net colour of its own.
+INSULATED_RGB = (0.45, 0.47, 0.52)
+#: The bore through the board. Near black, unlit: it is a hole.
+DRILL_RGB = (0.06, 0.06, 0.07)
 BODY_RGB = (0.22, 0.22, 0.26)
 #: Tinned component lead.
 LEAD_RGB = (0.78, 0.80, 0.84)
@@ -75,17 +92,95 @@ def build_substrate(board: Board) -> vtk.vtkActor:
     mapper.SetInputConnection(cube.GetOutputPort())
     actor = vtk.vtkActor()
     actor.SetMapper(mapper)
-    actor.GetProperty().SetColor(*SUBSTRATE_RGB.get(board.material, SUBSTRATE_RGB["FR4"]))
+    actor.GetProperty().SetColor(*scheme_for(board.material).rgb)
     return actor
 
 
-def build_pads(board: Board) -> vtk.vtkActor:
-    """Every pad in one instanced actor. This is the scalability claim, tested."""
+def pad_z(board: Board, side: BoardSide) -> float:
+    """Where one face's copper sits, in board z. Pure, so it can be asserted directly."""
+    return 0.05 if side == "top" else -board.thickness - 0.05
+
+
+def conductor_z(cond: Conductor, board: Board, stack: int = 0) -> float:
+    """Where one conductor sits, in board z.
+
+    Split out from ``build_conductor`` because the interesting property is arithmetic and
+    testing it through VTK means reaching into an unexecuted pipeline, which segfaults.
+
+    ``stack`` separates conductors sharing a layer. Everything on the solder side used to
+    sit at one z per ``layer_z``, so two crossing bare wires were drawn INTERSECTING --
+    occupying the same space, which is not a thing wire does and looked like a modelling
+    error because it was one.
+    """
+    if cond.side == "bottom":
+        # The substrate spans z = -thickness .. 0, so solder-side conductors must sit
+        # BELOW -thickness or they end up buried inside the board.
+        return -board.thickness - 0.5 - 0.4 * cond.layer_z - 0.08 * stack
+    return 0.45 + 0.08 * stack
+
+
+def build_drills(board: Board) -> vtk.vtkActor:
+    """The holes, as dark cylinders straight through the board.
+
+    THE BOARD HAD NO HOLES FROM UNDERNEATH. The substrate is one cube and the pads sat
+    only on top, so turning the board over showed a blank green slab -- on the very view
+    whose job is to check the solder side.
+
+    Cut rather than drawn would be the obvious fix and is not affordable: a boolean
+    subtraction per hole is thousands of them on a real board. A near-black cylinder
+    spanning the full thickness and a little beyond reads as a hole from either face, at
+    the cost of one glyphed source -- so the instancing claim survives intact. Nobody
+    looking at a perfboard from 200 mm away can tell the difference, and the alternative
+    is a board with no holes in it.
+    """
     points = vtk.vtkPoints()
     for col in range(board.cols):
         for row in range(board.rows):
             x, y = _xy(board, HoleCoord(col, row))
-            points.InsertNextPoint(x, y, 0.05)
+            points.InsertNextPoint(x, y, -board.thickness / 2)
+    data = vtk.vtkPolyData()
+    data.SetPoints(points)
+
+    bore = vtk.vtkCylinderSource()
+    bore.SetRadius(board.drill_diameter / 2)
+    # Slightly longer than the board so its caps never z-fight with the pads at either
+    # face, which shows up as a flickering speckle across the whole grid.
+    bore.SetHeight(board.thickness + 0.3)
+    bore.SetResolution(12)
+    # vtkCylinderSource stands along Y; the board's thickness is along Z.
+    upright = vtk.vtkTransform()
+    upright.RotateX(90)
+    turn = vtk.vtkTransformPolyDataFilter()
+    turn.SetTransform(upright)
+    turn.SetInputConnection(bore.GetOutputPort())
+
+    glyph = vtk.vtkGlyph3DMapper()
+    glyph.SetInputData(data)
+    glyph.SetSourceConnection(turn.GetOutputPort())
+    glyph.SetOrient(False)
+    glyph.SetScaling(False)
+
+    actor = vtk.vtkActor()
+    actor.SetMapper(glyph)
+    actor.GetProperty().SetColor(*DRILL_RGB)
+    actor.GetProperty().SetSpecular(0.0)
+    actor.GetProperty().SetAmbient(0.25)
+    return actor
+
+
+def build_pads(board: Board, side: BoardSide = "top") -> vtk.vtkActor:
+    """Every pad on one face, in one instanced actor. The scalability claim, tested.
+
+    Called for BOTH faces. The boards this is modelled on are plated through-hole with an
+    annular ring on each side, which is also why the solder side is somewhere you can
+    solder at all -- and until now the underside had no copper on it whatsoever.
+    """
+    z = pad_z(board, side)
+    points = vtk.vtkPoints()
+    for col in range(board.cols):
+        for row in range(board.rows):
+            x, y = _xy(board, HoleCoord(col, row))
+            points.InsertNextPoint(x, y, z)
     data = vtk.vtkPolyData()
     data.SetPoints(points)
 
@@ -698,13 +793,22 @@ def _actor_for(piece: _Piece) -> vtk.vtkActor:
     return actor
 
 
-def build_conductor(cond: Conductor, board: Board) -> list[vtk.vtkActor]:
-    # The substrate spans z = -thickness .. 0, so solder-side conductors must sit BELOW
-    # -thickness or they end up buried inside the board.
-    if cond.side == "bottom":
-        z = -board.thickness - 0.5 - 0.4 * cond.layer_z
-    else:
-        z = 0.45
+def build_conductor(
+    cond: Conductor,
+    board: Board,
+    stack: int = 0,
+    net_class: NetClass | None = None,
+    signal_index: int = 0,
+) -> list[vtk.vtkActor]:
+    """One conductor's solids.
+
+    ``stack`` separates conductors that share a layer. Everything on the solder side used
+    to sit at one z per ``layer_z``, so two bare wires crossing were drawn INTERSECTING --
+    occupying the same space, which is not a thing wire does and looked like a modelling
+    error because it was one. A small per-conductor offset makes one pass over the other,
+    which is what the board actually looks like.
+    """
+    z = conductor_z(cond, board, stack)
     points = vtk.vtkPoints()
     line = vtk.vtkPolyLine()
     line.GetPointIds().SetNumberOfIds(len(cond.path))
@@ -719,7 +823,12 @@ def build_conductor(cond: Conductor, board: Board) -> list[vtk.vtkActor]:
     poly.SetLines(cells)
 
     is_trace = contacts_every_path_hole(cond)
-    radius = 0.55 if is_trace else 0.28
+    insulated = cond.kind in ("insulated-wire", "top-jumper")
+    # A solder trace is a low bulging ridge along the pads; a wire is a round section
+    # standing off the board. Drawn at their real proportions rather than one being a
+    # fatter version of the other, because "which of these is solder" is the question this
+    # view exists to answer (PLAN.md Sec 8.3).
+    radius = 0.34 if is_trace else (0.42 if insulated else 0.30)
     tube = vtk.vtkTubeFilter()
     tube.SetInputData(poly)
     tube.SetRadius(radius)
@@ -730,9 +839,26 @@ def build_conductor(cond: Conductor, board: Board) -> list[vtk.vtkActor]:
     mapper.SetInputConnection(tube.GetOutputPort())
     actor = vtk.vtkActor()
     actor.SetMapper(mapper)
-    rgb = _hex_rgb(getattr(cond, "color", None), SOLDER_RGB if is_trace else BARE_RGB)
+    if is_trace:
+        fallback = SOLDER_RGB
+    elif insulated:
+        fallback = _insulation_rgb(net_class, signal_index)
+    else:
+        fallback = BARE_RGB
+    rgb = _hex_rgb(getattr(cond, "color", None), fallback)
     actor.GetProperty().SetColor(*rgb)
-    actor.GetProperty().SetSpecular(0.6 if is_trace else 0.3)
+    if is_trace:
+        # Solder is dull and slightly rough. Making it shiny is what made it look like
+        # wire, which is the one thing it must not look like.
+        actor.GetProperty().SetSpecular(0.25)
+        actor.GetProperty().SetSpecularPower(8.0)
+        actor.GetProperty().SetDiffuse(0.85)
+    elif insulated:
+        actor.GetProperty().SetSpecular(0.35)
+        actor.GetProperty().SetSpecularPower(25.0)
+    else:
+        actor.GetProperty().SetSpecular(0.9)
+        actor.GetProperty().SetSpecularPower(60.0)
     actors = [actor]
 
     # The distinction that matters: a trace is soldered at EVERY pad it crosses, a wire
@@ -746,7 +872,9 @@ def build_conductor(cond: Conductor, board: Board) -> list[vtk.vtkActor]:
     bead_data = vtk.vtkPolyData()
     bead_data.SetPoints(bead_pts)
     sphere = vtk.vtkSphereSource()
-    sphere.SetRadius(radius * 1.45)
+    # A trace bulges noticeably at every pad -- that chain of beads IS the silhouette of
+    # a solder run. A wire only has a fillet where it is soldered, at its two ends.
+    sphere.SetRadius(radius * (1.9 if is_trace else 1.3))
     sphere.SetThetaResolution(12)
     sphere.SetPhiResolution(12)
     bead_glyph = vtk.vtkGlyph3DMapper()
@@ -757,9 +885,20 @@ def build_conductor(cond: Conductor, board: Board) -> list[vtk.vtkActor]:
     beads = vtk.vtkActor()
     beads.SetMapper(bead_glyph)
     beads.GetProperty().SetColor(*SOLDER_RGB)
-    beads.GetProperty().SetSpecular(0.8)
+    beads.GetProperty().SetSpecular(0.3)
+    beads.GetProperty().SetSpecularPower(10.0)
     actors.append(beads)
     return actors
+
+
+def _insulation_rgb(net_class: NetClass | None, signal_index: int) -> tuple[float, float, float]:
+    """An insulated wire's colour, from the same convention the 2D view and the cut list
+    use -- so a wire is the same colour on screen, in 3D and on the list someone works
+    from."""
+    from .view2d import insulation_color
+
+    colour = insulation_color(net_class, signal_index)
+    return (colour.redF(), colour.greenF(), colour.blueF())
 
 
 # --------------------------------------------------------------------------- scene
@@ -784,12 +923,25 @@ def populate_renderer(
     ren.RemoveAllViewProps()
 
     ren.AddActor(build_substrate(board))
-    ren.AddActor(build_pads(board))
+    ren.AddActor(build_pads(board, "top"))
+    ren.AddActor(build_pads(board, "bottom"))
+    ren.AddActor(build_drills(board))
     for comp in doc.components:
         for actor in build_component(lookup, comp, board):
             ren.AddActor(actor)
-    for cond in doc.conductors:
-        for actor in build_conductor(cond, board):
+    net_class_by_id = {net.id: net.net_class for net in doc.nets}
+    signal_index = {
+        net.id: index
+        for index, net in enumerate(n for n in doc.nets if n.net_class == "signal")
+    }
+    for stack, cond in enumerate(doc.conductors):
+        for actor in build_conductor(
+            cond,
+            board,
+            stack=stack,
+            net_class=net_class_by_id.get(cond.net_id or ""),
+            signal_index=signal_index.get(cond.net_id or "", 0),
+        ):
             ren.AddActor(actor)
 
     ren.ResetCameraClippingRange()

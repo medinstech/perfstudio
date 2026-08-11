@@ -1334,3 +1334,95 @@ def test_the_cursor_hole_readout_tracks_the_pointer() -> None:
     window._on_hovered_hole(-1, 0)
     assert "—" in window.label_hole.text()
     _close(window)
+
+
+# ---------------------------------------------------------------------------
+# The 3D board
+# ---------------------------------------------------------------------------
+
+
+def test_the_board_has_holes_from_underneath() -> None:
+    """The substrate was one solid cube with pads only on top, so turning the board over
+    showed a blank slab -- on the very view whose job is checking the solder side."""
+    from perfstudio.ui import view3d
+
+    doc = _load_dense()
+    # Copper on both faces, at opposite sides of the substrate, and a bore through it.
+    assert view3d.pad_z(doc.board, "top") > 0 > view3d.pad_z(doc.board, "bottom")
+    assert view3d.pad_z(doc.board, "bottom") < -doc.board.thickness
+    assert view3d.build_drills(doc.board) is not None
+    assert view3d.build_pads(doc.board, "bottom") is not None
+
+
+def test_solder_and_wire_are_not_the_same_grey() -> None:
+    """PLAN.md Sec 8.3 makes telling them apart at a glance a requirement of this view.
+    They were (0.72, 0.74, 0.77) and (0.85, 0.87, 0.89) -- the same grey."""
+    from perfstudio.ui.view3d import BARE_RGB, SOLDER_RGB
+
+    difference = sum(abs(a - b) for a, b in zip(SOLDER_RGB, BARE_RGB, strict=True))
+    assert difference > 0.5, "solder and tinned wire are still indistinguishable"
+
+
+def test_conductors_sharing_a_layer_do_not_occupy_the_same_space() -> None:
+    """Two wires crossing were drawn intersecting, which is not a thing wire does."""
+    from perfstudio.ui.view3d import conductor_z
+
+    doc = _load_dense()
+    wire = WireConductor(id="w1", path=(HoleCoord(2, 2), HoleCoord(9, 9)), kind="bare-wire")
+
+    assert conductor_z(wire, doc.board, 0) != conductor_z(wire, doc.board, 1)
+    # Solder-side copper stays clear of the substrate however deep the stack goes.
+    assert conductor_z(wire, doc.board, 12) < -doc.board.thickness
+
+
+# ---------------------------------------------------------------------------
+# Board colour
+# ---------------------------------------------------------------------------
+
+
+def test_both_views_take_their_board_colour_from_one_scheme() -> None:
+    """Green in the editor and blue in 3D would undermine the one job the 3D view has."""
+    from perfstudio.ui import boardcolors
+
+    try:
+        boardcolors.choose("blue")
+        blue = boardcolors.scheme_for("FR4")
+        assert blue.key == "blue"
+        # The 2D hex and the 3D linear RGB describe the same colour.
+        expected = (int(blue.fill[1:3], 16) / 255, int(blue.fill[3:5], 16) / 255,
+                    int(blue.fill[5:7], 16) / 255)
+        assert all(abs(a - b) < 0.06 for a, b in zip(blue.rgb, expected, strict=True))
+    finally:
+        boardcolors.choose(None)
+
+
+def test_the_material_decides_until_someone_chooses() -> None:
+    """FR-2 is the brown phenolic board, and the build guide derates the iron for exactly
+    that material -- the two should agree on sight."""
+    from perfstudio.ui import boardcolors
+
+    boardcolors.choose(None)
+    assert boardcolors.scheme_for("FR4").key == "green"
+    assert boardcolors.scheme_for("FR2").key == "phenolic"
+
+
+def test_every_material_has_a_default_scheme() -> None:
+    from typing import get_args
+
+    from perfstudio.model import BoardMaterial
+    from perfstudio.ui import boardcolors
+
+    for material in get_args(BoardMaterial):
+        assert material in boardcolors.DEFAULT_FOR_MATERIAL
+        assert boardcolors.DEFAULT_FOR_MATERIAL[material] in boardcolors.BY_KEY
+
+
+def test_an_unknown_colour_falls_back_to_the_material() -> None:
+    from perfstudio.ui import boardcolors
+
+    try:
+        boardcolors.choose("chartreuse")
+        assert boardcolors.chosen_key() is None
+        assert boardcolors.scheme_for("FR4").key == "green"
+    finally:
+        boardcolors.choose(None)

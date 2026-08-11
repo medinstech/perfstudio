@@ -118,6 +118,8 @@ from perfstudio.version import __version__
 from perfstudio.version import describe as describe_version
 
 from . import view3d
+from .boardcolors import SCHEMES as BOARD_SCHEMES
+from .boardcolors import choose as choose_board_colour
 from .export_pdf import export_pdf, verify_scale
 from .i18n import set_language, t
 from .theme import ERROR, OK, STYLESHEET, TEXT_DIM, WARNING
@@ -713,6 +715,28 @@ class MainWindow(QMainWindow):
         view_menu.addAction(self.act_3d)
         act_reset_3d = view_menu.addAction(t("Reset 3D &Camera"))
         act_reset_3d.triggered.connect(self.on_reset_3d_camera)
+
+        view_menu.addSeparator()
+        # Solder mask colour changes nothing about the circuit, so it is a view setting
+        # rather than a document field -- see ui/boardcolors.py. Offered because someone
+        # matching what is on screen to the board in their hand should be able to.
+        colour_menu = view_menu.addMenu(t("Board &Colour"))
+        self.act_colour: dict[str, QAction] = {}
+        follow = colour_menu.addAction(t("Follow the &material"))
+        follow.setCheckable(True)
+        follow.setChecked(True)
+        follow.setToolTip(
+            "Green for FR-4 and brown for phenolic, which is what those substrates "
+            "actually look like."
+        )
+        follow.triggered.connect(lambda: self.on_board_colour(None))
+        self.act_colour[""] = follow
+        colour_menu.addSeparator()
+        for scheme in BOARD_SCHEMES:
+            action = colour_menu.addAction(t(scheme.label))
+            action.setCheckable(True)
+            action.triggered.connect(lambda _c, k=scheme.key: self.on_board_colour(k))
+            self.act_colour[scheme.key] = action
 
         help_menu = menu.addMenu(t("&Help"))
         act_about = help_menu.addAction(t("&About PerfStudio"))
@@ -2059,6 +2083,20 @@ class MainWindow(QMainWindow):
         out = self.current_path.with_suffix(".png") if self.current_path else Path.cwd() / "board_3d.png"
         view3d.render_offscreen(self.bus.document, self.lookup, str(out), flipped=(self.side == "bottom"))
         self.statusBar().showMessage(f"Exported {out}")
+
+    def on_board_colour(self, key: str | None) -> None:
+        """Recolour the board in both views at once.
+
+        Both, from one scheme, deliberately: a board that was green in the editor and blue
+        in the 3D view would undermine the one job the 3D view has, which is letting
+        someone check that what they are about to solder is what they meant.
+        """
+        choose_board_colour(key)
+        for name, action in self.act_colour.items():
+            action.setChecked(name == (key or ""))
+        self.scene.set_document(self.bus.document)
+        self._3d_stale = True
+        self._refresh_3d()
 
     def on_export_guide(self) -> None:
         """Write the build guide beside the document, and say what it could not cover.

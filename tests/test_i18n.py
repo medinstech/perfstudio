@@ -46,6 +46,22 @@ def translated_literals() -> set[str]:
     return found
 
 
+def loop_built_labels() -> set[str]:
+    """Labels that reach ``t()`` through a variable, so the literal scan cannot see them.
+
+    Derived from the data that builds them rather than listed by hand: a hand-kept list
+    would be one more thing to drift, which is the exact failure this file exists to
+    catch. The drawing-tool names are the one set with no data structure behind them yet,
+    so they are read out of the source that defines them.
+    """
+    from perfstudio.ui.boardcolors import SCHEMES
+
+    source = (UI_DIR / "main.py").read_text(encoding="utf-8")
+    tools = set(re.findall(r'\(\s*"[a-z-]+",\s*"((?:[^"\\]|\\.)+)",\s*"(?:[^"\\]|\\.)*",\s*$',
+                           source, re.MULTILINE))
+    return {scheme.label for scheme in SCHEMES} | tools
+
+
 @pytest.fixture(autouse=True)
 def _english_again():
     """Language is process-wide state, so no test may leave it changed."""
@@ -63,20 +79,7 @@ def test_the_catalogue_names_no_string_the_interface_no_longer_has() -> None:
     """The load-bearing test. A key for a string that has been reworded or removed is a
     translation that will never appear, and nothing else would ever say so."""
     literals = translated_literals()
-    # Labels built in a loop reach t() through a variable rather than a literal, so they
-    # are named here explicitly. Keep this list honest: a name that is no longer a
-    # drawing tool should fail this test, not be excused by it.
-    from perfstudio.ui.main import MainWindow  # noqa: PLC0415 - Qt import kept local
-
-    del MainWindow
-    loop_built = {
-        "&Solder Trace",
-        "Solder Trace with S&pine",
-        "&Bare Wire",
-        "&Insulated Wire",
-        "Top &Jumper",
-    }
-    stale = sorted(set(TURKISH) - literals - loop_built)
+    stale = sorted(set(TURKISH) - literals - loop_built_labels())
     assert stale == [], f"catalogue keys the interface no longer uses: {stale}"
 
 

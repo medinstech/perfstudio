@@ -82,6 +82,7 @@ from perfstudio.model import (
 )
 from perfstudio.ratsnest import RatsnestLink, all_links, ratsnest
 
+from .boardcolors import scheme_for
 from .bodies import (
     BodyPlacement,
     BodyStyle,
@@ -1399,10 +1400,11 @@ class BoardScene(QGraphicsScene):
         )
         self.setBackgroundBrush(QBrush(BACKGROUND))
 
+        scheme = scheme_for(board.material)
         substrate = self.addRect(
             QRectF(-board.pitch / 2, -board.pitch / 2, w, h),
-            QPen(SUBSTRATE_EDGE, 0.4),
-            QBrush(SUBSTRATE.get(board.material, SUBSTRATE["FR4"])),
+            QPen(QColor(scheme.edge), 0.4),
+            QBrush(QColor(scheme.fill)),
         )
         substrate.setZValue(-100)
 
