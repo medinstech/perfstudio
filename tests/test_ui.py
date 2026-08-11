@@ -740,3 +740,72 @@ def test_version_line_is_pasteable_ascii() -> None:
     """A Windows console at cp1252 turns a typographic separator into a question mark,
     which then travels into a bug report as evidence of a bug that is not there."""
     describe_version().encode("ascii")
+
+
+# ---------------------------------------------------------------------------
+# Auto-place
+# ---------------------------------------------------------------------------
+
+
+def _window_on(doc):
+    from perfstudio.ui.main import MainWindow
+
+    return MainWindow(doc)
+
+
+def test_autoplace_asks_before_moving_the_users_board(monkeypatch) -> None:
+    """Routing adds copper to a board the user arranged; placement MOVES it. So the
+    confirmation is not a formality, and cancelling has to leave the document alone."""
+    window = _window_on(_load_dense())
+    before = window.bus.document
+
+    monkeypatch.setattr(window, "_confirm_placement", lambda plan, ms: False)
+    window.on_autoplace()
+
+    assert window.bus.document is before
+    window.close()
+
+
+def test_autoplace_commits_through_the_bus_as_one_undo_step(monkeypatch) -> None:
+    window = _window_on(_load_dense())
+    before = window.bus.document
+
+    monkeypatch.setattr(window, "_confirm_placement", lambda plan, ms: True)
+    window.on_autoplace()
+
+    assert window.bus.document is not before
+    assert window.bus.document.components != before.components
+    window.bus.undo()
+    assert window.bus.document.components == before.components
+    window.close()
+
+
+def test_reroll_advances_the_seed(monkeypatch) -> None:
+    """Annealing is a random walk, so "try again" has to actually try something else."""
+    window = _window_on(_load_dense())
+    monkeypatch.setattr(window, "_confirm_placement", lambda plan, ms: False)
+
+    window.on_autoplace()
+    assert window._place_seed == 0
+    window.on_autoplace(reroll=True)
+    assert window._place_seed == 1
+    window.close()
+
+
+def test_autoplace_on_an_empty_board_says_so_rather_than_running(monkeypatch) -> None:
+    from perfstudio.commands import create_empty_document
+    from perfstudio.model import DocumentMeta
+
+    window = _window_on(
+        create_empty_document(
+            DocumentMeta(name="t", created="2024-01-01T00:00:00.000Z", modified="2024-01-01T00:00:00.000Z")
+        )
+    )
+    called = []
+    monkeypatch.setattr(window, "_confirm_placement", lambda plan, ms: called.append(1) or True)
+
+    window.on_autoplace()
+
+    assert called == []
+    assert "empty" in window.statusBar().currentMessage()
+    window.close()

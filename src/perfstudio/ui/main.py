@@ -77,6 +77,13 @@ from perfstudio.model import (
     Rotation,
 )
 from perfstudio.parsers.kicad import parse_kicad_netlist
+from perfstudio.placer import (
+    PlacementOptions,
+    PlacementPlan,
+    describe as describe_placement,
+    plan_placement,
+    summarize_changes as summarize_placement,
+)
 from perfstudio.ratsnest import NetRatsnest, ratsnest, summarize
 from perfstudio.version import __version__, describe as describe_version
 
@@ -207,6 +214,10 @@ class MainWindow(QMainWindow):
         #: The document changed while the 3D panel was hidden, so it needs re-actoring
         #: before it is shown again.
         self._3d_stale = False
+        #: Advanced by "Try Another Arrangement". Held on the window rather than passed
+        #: in, so pressing it repeatedly keeps exploring instead of re-running the same
+        #: search and reporting the same answer.
+        self._place_seed = 0
 
         self.setWindowTitle(window_title())
         self.resize(1500, 950)
@@ -427,6 +438,21 @@ class MainWindow(QMainWindow):
         for action in self.selection_actions:
             action.setEnabled(False)
 
+        place_menu = menu.addMenu("&Place")
+        self.act_autoplace = place_menu.addAction("&Auto-place Board")
+        self.act_autoplace.setShortcut(QKeySequence("Ctrl+Shift+A"))
+        self.act_autoplace.setToolTip(
+            "Rearrange the unlocked parts to shorten the connections and make them "
+            "solderable as traces rather than wires. Shows the result before applying it."
+        )
+        self.act_autoplace.triggered.connect(lambda: self.on_autoplace())
+        act_reroll = place_menu.addAction("&Try Another Arrangement")
+        act_reroll.setToolTip(
+            "Search again from a different seed. Annealing is a random walk, so this is "
+            "a real second answer rather than the same one twice."
+        )
+        act_reroll.triggered.connect(lambda: self.on_autoplace(reroll=True))
+
         route_menu = menu.addMenu("&Route")
         self.act_autoroute = route_menu.addAction("&Autoroute All Nets")
         self.act_autoroute.setShortcut(QKeySequence("Ctrl+R"))
@@ -489,6 +515,7 @@ class MainWindow(QMainWindow):
         bar.setMovable(False)
         self.addToolBar(bar)
 
+        bar.addAction(self.act_autoplace)
         bar.addAction(self.act_autoroute)
         bar.addAction(self.act_route_selected)
         bar.addSeparator()
@@ -897,6 +924,84 @@ class MainWindow(QMainWindow):
         locked = sum(1 for c in components if c.locked)
         note = f", {locked} locked" if locked else ""
         self.label_selection.setText(f"<b>{len(components)} parts</b> selected{note}")
+
+    # -- placement ----------------------------------------------------------
+
+    def on_autoplace(self, reroll: bool = False) -> None:
+        """Anneal the placement, show what it found, and commit only if the user accepts.
+
+        Asked rather than applied, unlike autoroute. Routing adds copper to a board the
+        user arranged; this MOVES the board they arranged, which is not a thing to do to
+        someone without showing them the result first and what it bought.
+
+        ``reroll`` advances the seed. Annealing is a random walk and the outcome genuinely
+        varies -- on the NE555 fixture the spread across seeds was 3 to 7 insulated wires
+        for the same circuit -- so "try again" is a real answer and not a placebo.
+        """
+        if not self.bus.document.components:
+            self.statusBar().showMessage("Nothing to place: the board is empty.", 6000)
+            return
+        if reroll:
+            self._place_seed += 1
+
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            t0 = time.perf_counter()
+            plan = plan_placement(
+                self.bus.document, self.lookup, PlacementOptions(seed=self._place_seed)
+            )
+            elapsed = (time.perf_counter() - t0) * 1000
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        if plan.is_empty:
+            self.statusBar().showMessage(
+                f"{describe_placement(plan)} ({elapsed:.0f} ms). "
+                "Place > Try Another Arrangement searches again from a different seed.",
+                8000,
+            )
+            return
+
+        if not self._confirm_placement(plan, elapsed):
+            return
+
+        result = self.bus.dispatch("component.moveMany", plan.payload())
+        if not result.ok:
+            QMessageBox.warning(self, "Placement refused", f"[{result.code}] {result.message}")
+            return
+
+        stale = len(stale_conductor_ids(self.bus.document, self.lookup))
+        note = f"  ·  {stale} conductor(s) are now stale; Ctrl+R clears and re-routes" if stale else ""
+        self.statusBar().showMessage(f"{describe_placement(plan)}{note}", 0)
+
+    def _confirm_placement(self, plan: PlacementPlan, elapsed_ms: float) -> bool:
+        detail = [
+            f"{len(plan.changes)} of {plan.movable} movable part(s) move"
+            + (f", {plan.locked} locked part(s) stay put." if plan.locked else "."),
+            f"Estimated connection length: {plan.before.hpwl_mm:.0f} mm → "
+            f"{plan.after.hpwl_mm:.0f} mm.",
+        ]
+        if plan.route_cost is not None:
+            detail.append(
+                f"Best of {plan.iterations}-move searches, judged by routing each one; "
+                f"router cost {plan.route_cost:.0f} (seed {plan.seed})."
+            )
+        if plan.before.overlap_pairs:
+            detail.append(
+                f"Overlapping bodies: {plan.before.overlap_pairs} → {plan.after.overlap_pairs}."
+            )
+        if plan.before.collisions:
+            detail.append(f"Pins sharing a hole: {plan.before.collisions} → {plan.after.collisions}.")
+        detail.append("")
+        detail.extend(summarize_placement(plan, limit=10))
+
+        box = QMessageBox(self)
+        box.setWindowTitle("Apply this placement?")
+        box.setText(f"<b>{describe_placement(plan)}</b>  <span>({elapsed_ms:.0f} ms)</span>")
+        box.setInformativeText("\n".join(detail))
+        box.setStandardButtons(QMessageBox.StandardButton.Apply | QMessageBox.StandardButton.Cancel)
+        box.setDefaultButton(QMessageBox.StandardButton.Apply)
+        return box.exec() == QMessageBox.StandardButton.Apply
 
     # -- routing ------------------------------------------------------------
 
@@ -1450,6 +1555,24 @@ def headless(argv: list[str]) -> int:
         print(
             f"             would leave LVS at {after.matched_nets}/{after.schematic_nets} matched, "
             f"{after.opens} open, {after.shorts} short"
+        )
+
+    # --- Placement, also a dry run. The number CI should watch is the routing cost
+    # before and after: it is the one that says whether the placer is still earning its
+    # runtime, and it moves when either the placer or the router changes.
+    if doc.components:
+        t0 = time.perf_counter()
+        placement = plan_placement(doc, lookup)
+        t_place = (time.perf_counter() - t0) * 1000
+        print(f"\nauto-place   {t_place:6.1f} ms   (dry run, nothing committed)")
+        print(f"             {describe_placement(placement)}")
+        placed_errors = sum(
+            1 for v in run_drc(placement.document, lookup) if v.severity == "error"
+        )
+        print(
+            f"             HPWL {placement.before.hpwl_mm:.0f} -> {placement.after.hpwl_mm:.0f} mm, "
+            f"overlaps {placement.before.overlap_pairs} -> {placement.after.overlap_pairs}, "
+            f"DRC errors {errors} -> {placed_errors}"
         )
 
     # --- 3D render, offscreen: the build-guide image path ---

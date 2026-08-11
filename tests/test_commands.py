@@ -36,7 +36,9 @@ from perfstudio.commands import (
     DeleteComponentPayload,
     DeleteConductorsPayload,
     MirrorComponentPayload,
+    ComponentPlacement,
     MoveComponentPayload,
+    MoveComponentsPayload,
     NewLeadBendConductor,
     NewSolderTraceConductor,
     NewStripConductor,
@@ -177,6 +179,161 @@ def test_refuses_to_move_a_locked_component():
     result = bus.dispatch("component.move", MoveComponentPayload(id="cmp-1", anchor=HoleCoord(8, 8)))
     assert result.ok is False
     assert result.code == "component-locked"
+
+
+# ---------------------------------------------------------------------------
+# component.moveMany -- the placer's single undo step
+# ---------------------------------------------------------------------------
+
+
+def place_pair(bus: CommandBus):
+    place_r1(bus)
+    bus.dispatch(
+        "component.place",
+        PlaceComponentPayload(ref="R2", value="1k", footprint_id="r-axial-5", anchor=HoleCoord(9, 2)),
+    )
+
+
+def test_moves_several_components_as_one_command():
+    bus = new_bus()
+    place_pair(bus)
+    before = bus.document
+
+    result = bus.dispatch(
+        "component.moveMany",
+        MoveComponentsPayload(
+            placements=(
+                ComponentPlacement(id="cmp-1", anchor=HoleCoord(4, 5), rotation=90),
+                ComponentPlacement(id="cmp-2", anchor=HoleCoord(12, 7)),
+            ),
+            label="Auto-place 2 component(s)",
+        ),
+    )
+
+    assert result.ok, result.message
+    by_id = {c.id: c for c in bus.document.components}
+    assert by_id["cmp-1"].anchor == HoleCoord(4, 5)
+    assert by_id["cmp-1"].rotation == 90
+    assert by_id["cmp-2"].anchor == HoleCoord(12, 7)
+    # Rotation omitted means "leave it", not "reset to zero".
+    assert by_id["cmp-2"].rotation == 0
+
+    bus.undo()
+    assert bus.document is before
+
+
+def test_the_batch_label_is_what_the_undo_stack_shows():
+    bus = new_bus()
+    place_pair(bus)
+    bus.dispatch(
+        "component.moveMany",
+        MoveComponentsPayload(
+            placements=(ComponentPlacement(id="cmp-1", anchor=HoleCoord(4, 5)),),
+            label="Auto-place 1 component(s)",
+        ),
+    )
+    assert bus.history()[-1] == "Auto-place 1 component(s)"
+
+
+def test_falls_back_to_a_count_when_the_batch_has_no_label():
+    bus = new_bus()
+    place_pair(bus)
+    bus.dispatch(
+        "component.moveMany",
+        MoveComponentsPayload(placements=(ComponentPlacement(id="cmp-1", anchor=HoleCoord(4, 5)),)),
+    )
+    assert bus.history()[-1] == "Move 1 component(s)"
+
+
+def test_refuses_an_empty_batch_of_placements():
+    bus = new_bus()
+    place_r1(bus)
+    result = bus.dispatch("component.moveMany", MoveComponentsPayload(placements=()))
+    assert result.ok is False
+    assert result.code == "nothing-to-move"
+
+
+def test_a_locked_member_refuses_the_whole_batch():
+    """All-or-nothing, like the batch conductor commands: a half-applied placement leaves
+    the board in an arrangement the optimiser never proposed and nobody chose."""
+    bus = new_bus()
+    place_pair(bus)
+    bus.dispatch("component.update", UpdateComponentPayload(id="cmp-2", locked=True))
+    before = bus.document
+
+    result = bus.dispatch(
+        "component.moveMany",
+        MoveComponentsPayload(
+            placements=(
+                ComponentPlacement(id="cmp-1", anchor=HoleCoord(4, 5)),
+                ComponentPlacement(id="cmp-2", anchor=HoleCoord(12, 7)),
+            )
+        ),
+    )
+
+    assert result.ok is False
+    assert result.code == "component-locked"
+    assert bus.document is before
+
+
+def test_an_off_board_member_refuses_the_whole_batch():
+    bus = new_bus()
+    place_pair(bus)
+    before = bus.document
+
+    result = bus.dispatch(
+        "component.moveMany",
+        MoveComponentsPayload(
+            placements=(
+                ComponentPlacement(id="cmp-1", anchor=HoleCoord(4, 5)),
+                ComponentPlacement(id="cmp-2", anchor=HoleCoord(-3, 7)),
+            )
+        ),
+    )
+
+    assert result.ok is False
+    assert bus.document is before
+
+
+def test_the_same_component_twice_in_one_batch_is_an_error():
+    """Applying the last one silently would hide a caller bug behind a plausible board."""
+    bus = new_bus()
+    place_pair(bus)
+
+    result = bus.dispatch(
+        "component.moveMany",
+        MoveComponentsPayload(
+            placements=(
+                ComponentPlacement(id="cmp-1", anchor=HoleCoord(4, 5)),
+                ComponentPlacement(id="cmp-1", anchor=HoleCoord(6, 5)),
+            )
+        ),
+    )
+
+    assert result.ok is False
+    assert result.code == "duplicate-component"
+
+
+def test_an_unknown_id_refuses_the_batch_without_raising():
+    bus = new_bus()
+    place_r1(bus)
+    result = bus.dispatch(
+        "component.moveMany",
+        MoveComponentsPayload(placements=(ComponentPlacement(id="cmp-99", anchor=HoleCoord(4, 5)),)),
+    )
+    assert result.ok is False
+
+
+def test_an_invalid_rotation_in_a_batch_is_refused():
+    bus = new_bus()
+    place_r1(bus)
+    result = bus.dispatch(
+        "component.moveMany",
+        MoveComponentsPayload(
+            placements=(ComponentPlacement(id="cmp-1", anchor=HoleCoord(4, 5), rotation=45),)
+        ),
+    )
+    assert result.ok is False
 
 
 def test_deleting_a_component_also_removes_its_lead_bends_but_keeps_other_routing():

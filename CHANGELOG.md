@@ -22,6 +22,25 @@ closed without a bump.
 
 ### Added
 
+- **The placement optimiser** (PLAN.md §6.3, `placer.py`): seeded simulated annealing
+  over translate/rotate/swap, with a cost of HPWL + rail alignability + courtyard
+  overlap + pin collisions + off-board pins + edge-seeking connectors + heat proximity.
+  Deterministic — same document and seed, same board. Reachable from **Place →
+  Auto-place Board** (Ctrl+Shift+A), which shows what it found and what it bought before
+  moving anything, and **Try Another Arrangement**, which advances the seed.
+  - Candidates are chosen by **routing** each one rather than by trusting HPWL. Measuring
+    is what settled it: on NE555 one candidate with 152 mm of HPWL routes for 191 while
+    another with 145 mm routes for 209, because half-perimeter cannot see that a shorter
+    net crosses three others. The cheap heuristic searches, the expensive truth decides.
+  - On the fixtures: NE555 5 → 3 insulated wires (routing cost 202 → 151); the same
+    circuit from a grid import 7 → 3 with 2 unroutable connections becoming 0; `dense`
+    3 → 0 and its 6 courtyard overlaps cleared; `sparse` 2 → 0.
+- `component.moveMany`, so a whole placement is one undo step — the counterpart of
+  `conductor.addMany`. All-or-nothing, and it refuses a locked part, an off-board anchor
+  or the same component twice.
+- Headless mode reports a dry-run placement, so CI has a number that moves when either
+  the placer or the router changes.
+
 - Versioning. `perfstudio.__version__` is single-sourced from `version.py`, the wheel's
   version is derived from it rather than repeated in `pyproject.toml`, and this file
   exists. `perfstudio --version` prints the app version, the document format version and

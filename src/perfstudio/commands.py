@@ -277,6 +277,30 @@ class RotateComponentPayload:
 
 
 @dataclass(frozen=True, slots=True)
+class ComponentPlacement:
+    """Where one component ends up. ``rotation`` of None leaves it as it is."""
+
+    id: ComponentId
+    anchor: HoleCoord
+    rotation: Rotation | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class MoveComponentsPayload:
+    """Several components repositioned as ONE command, so a placer is one undo step.
+
+    The counterpart of ``conductor.addMany`` for placement. An annealing run moves most
+    of the board at once and the result only makes sense as a whole -- dispatched part
+    by part it would bury the undo stack and let a single Ctrl+Z leave the board in a
+    state the optimiser never proposed and nobody chose.
+    """
+
+    placements: tuple[ComponentPlacement, ...]
+    #: Undo-stack label; without it the entry reads as a bare count.
+    label: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class MirrorComponentPayload:
     id: ComponentId
     mirrored: bool
@@ -422,6 +446,55 @@ class _MoveComponent:
         c = next((x for x in doc.components if x.id == p.id), None)
         ref = c.ref if c is not None else p.id
         return f"Move {ref} to {format_hole(p.anchor)}"
+
+
+class _MoveComponents:
+    type = "component.moveMany"
+
+    def apply(
+        self, doc: PerfDocument, p: MoveComponentsPayload, ctx: CommandContext
+    ) -> PerfDocument:
+        if not p.placements:
+            raise CommandError(
+                "nothing-to-move",
+                "component.moveMany needs at least one placement; an empty batch would "
+                "put a no-op on the undo stack.",
+            )
+
+        seen: set[ComponentId] = set()
+        updates: dict[ComponentId, ComponentPlacement] = {}
+        for placement in p.placements:
+            existing = require_component(doc, placement.id)
+            if placement.id in seen:
+                # Two placements for one component is a caller bug, and applying the last
+                # one silently would hide it behind a plausible-looking board.
+                raise CommandError(
+                    "duplicate-component",
+                    f"{existing.ref} appears twice in one component.moveMany.",
+                )
+            seen.add(placement.id)
+            if existing.locked:
+                raise CommandError("component-locked", f"{existing.ref} is locked.")
+            assert_hole_on_board(placement.anchor, doc.board, f"Anchor for {existing.ref}")
+            if placement.rotation is not None:
+                assert_rotation(placement.rotation)
+            updates[placement.id] = placement
+
+        # All-or-nothing, like the batch conductor commands: everything above is checked
+        # before anything below changes, so a bad member leaves the document untouched.
+        def placed(c: ComponentInstance) -> ComponentInstance:
+            update = updates.get(c.id)
+            if update is None:
+                return c
+            rotation = update.rotation if update.rotation is not None else c.rotation
+            return dataclasses.replace(c, anchor=update.anchor, rotation=rotation)
+
+        return dataclasses.replace(doc, components=tuple(placed(c) for c in doc.components))
+
+    def describe(self, p: MoveComponentsPayload, doc: PerfDocument) -> str:
+        if p.label:
+            return p.label
+        return f"Move {len(p.placements)} component(s)"
 
 
 class _RotateComponent:
@@ -777,6 +850,7 @@ class _DeleteCut:
 
 place_component: CommandDefinition[PlaceComponentPayload] = _PlaceComponent()
 move_component: CommandDefinition[MoveComponentPayload] = _MoveComponent()
+move_components: CommandDefinition[MoveComponentsPayload] = _MoveComponents()
 rotate_component: CommandDefinition[RotateComponentPayload] = _RotateComponent()
 mirror_component: CommandDefinition[MirrorComponentPayload] = _MirrorComponent()
 update_component: CommandDefinition[UpdateComponentPayload] = _UpdateComponent()
@@ -797,6 +871,7 @@ delete_cut: CommandDefinition[DeleteCutPayload] = _DeleteCut()
 STANDARD_COMMANDS: tuple[CommandDefinition[Any], ...] = (
     place_component,
     move_component,
+    move_components,
     rotate_component,
     mirror_component,
     update_component,
