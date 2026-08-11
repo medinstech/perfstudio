@@ -9,6 +9,7 @@ document.
 
     python -m perfstudio.ui.main                 launch the app (blank document)
     python -m perfstudio.ui.main path/to.perf     launch the app, opening a document
+    python -m perfstudio.ui.main --version        print the version and exit
     python -m perfstudio.ui.main --headless [path]
         render 2D/3D/PDF to files, run DRC and LVS, print counts and timings, and exit
         non-zero if the pipeline itself failed (bad file, a scale check that doesn't
@@ -77,6 +78,7 @@ from perfstudio.model import (
 )
 from perfstudio.parsers.kicad import parse_kicad_netlist
 from perfstudio.ratsnest import NetRatsnest, ratsnest, summarize
+from perfstudio.version import __version__, describe as describe_version
 
 from . import view3d
 from .export_pdf import export_pdf, verify_scale
@@ -160,6 +162,17 @@ def read_document_text(path: Path) -> tuple[str | None, str | None]:
         return None, f"Cannot open {path}: not UTF-8 text. A .perf document is JSON."
 
 
+def window_title(path: Path | None = None) -> str:
+    """The title bar names the build as well as the document.
+
+    While the version carries a ``.dev`` suffix this is not decoration: pre-release
+    builds get screenshotted into bug reports, and a screenshot that does not say which
+    build it came from costs a round trip to find out.
+    """
+    name = f"PerfStudio {__version__}"
+    return f"{name} — {path.name}" if path is not None else name
+
+
 def _find_repo_root() -> Path:
     """Best-effort discovery of the dev checkout root, for the headless default
     fixture. Falls back to cwd, which is also a perfectly fine place to look when the
@@ -195,7 +208,7 @@ class MainWindow(QMainWindow):
         #: before it is shown again.
         self._3d_stale = False
 
-        self.setWindowTitle("PerfStudio")
+        self.setWindowTitle(window_title())
         self.resize(1500, 950)
         self.setStyleSheet(STYLESHEET)
 
@@ -460,6 +473,10 @@ class MainWindow(QMainWindow):
         view_menu.addAction(self.act_3d)
         act_reset_3d = view_menu.addAction("Reset 3D &Camera")
         act_reset_3d.triggered.connect(self.on_reset_3d_camera)
+
+        help_menu = menu.addMenu("&Help")
+        act_about = help_menu.addAction("&About PerfStudio")
+        act_about.triggered.connect(self.on_about)
 
     def _build_toolbar(self) -> None:
         """The half-dozen actions used constantly, where they can be reached without a menu.
@@ -1126,7 +1143,7 @@ class MainWindow(QMainWindow):
         self.view.fit_board()
         note = f" ({len(result.warnings)} warning(s))" if result.warnings else ""
         self.statusBar().showMessage(f"Loaded {path.name}{note}", 8000)
-        self.setWindowTitle(f"PerfStudio — {path.name}")
+        self.setWindowTitle(window_title(path))
 
     # -- netlist import ------------------------------------------------------
 
@@ -1281,6 +1298,23 @@ class MainWindow(QMainWindow):
         view3d.render_offscreen(self.bus.document, self.lookup, str(out), flipped=(self.side == "bottom"))
         self.statusBar().showMessage(f"Exported {out}")
 
+    def on_about(self) -> None:
+        """The version, in a form someone can copy into a bug report.
+
+        Selectable text rather than a picture: the whole point of the line is that it can be
+        pasted, and QMessageBox renders it unselectable unless asked.
+        """
+        box = QMessageBox(self)
+        box.setWindowTitle("About PerfStudio")
+        box.setText(f"<b>PerfStudio {__version__}</b>")
+        box.setInformativeText(
+            f"{describe_version()}\n\n"
+            "Perfboard layout design, verification and a soldering guide.\n"
+            "Apache-2.0 · github.com/medinstech/perfstudio"
+        )
+        box.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+        box.exec()
+
 
 # ---------------------------------------------------------------------------
 # Headless entry point
@@ -1310,6 +1344,7 @@ def headless(argv: list[str]) -> int:
     out_dir = Path.cwd() / "headless_out"
     out_dir.mkdir(exist_ok=True)
 
+    print(describe_version())
     print(f"document     {perf_path}")
     if not perf_path.exists():
         print(f"LOAD FAILED  no such file: {perf_path}")
@@ -1436,6 +1471,13 @@ def headless(argv: list[str]) -> int:
 
 
 def main() -> int:
+    # Answered before Qt is touched: --version has to work on a machine where the GUI
+    # cannot start, since "it will not launch" is exactly when someone is asked which
+    # version they have.
+    if "--version" in sys.argv or "-V" in sys.argv:
+        print(describe_version())
+        return 0
+
     if "--headless" in sys.argv:
         return headless([a for a in sys.argv[1:] if a != "--headless"])
 

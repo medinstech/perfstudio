@@ -36,8 +36,14 @@ from perfstudio.commands import MoveComponentPayload, create_standard_registry
 from perfstudio.footprints import footprint_lookup
 from perfstudio.model import Board, HoleCoord, PerfDocument, SolderTraceConductor, WireConductor
 from perfstudio.ui import scenetext, view2d
+from perfstudio.version import __version__, describe as describe_version
 from perfstudio.ui.export_pdf import verify_scale
-from perfstudio.ui.main import _rotation_after, guess_footprint_id, read_document_text
+from perfstudio.ui.main import (
+    _rotation_after,
+    guess_footprint_id,
+    read_document_text,
+    window_title,
+)
 from perfstudio.ui.view2d import (
     BoardScene,
     ComponentItem,
@@ -699,3 +705,38 @@ def test_footprint_guesses_from_a_netlist_reference(ref: str, pins: int, expecte
     registry -- so the reference letter and the pin count the netlist reveals are all there is
     to go on. Enough to be useful, and stated as a guess."""
     assert guess_footprint_id(ref, pins) == expected
+
+
+# ---------------------------------------------------------------------------
+# Version reporting
+# ---------------------------------------------------------------------------
+
+
+def test_window_title_names_the_build_and_the_document() -> None:
+    assert window_title() == f"PerfStudio {__version__}"
+    assert window_title(pathlib.Path("a/b/ne555.perf")) == f"PerfStudio {__version__} — ne555.perf"
+
+
+def test_version_flag_answers_without_starting_qt(monkeypatch, capsys) -> None:
+    """--version has to work on a machine where the GUI cannot start.
+
+    That is precisely when someone is asked which version they have, so main() answers it
+    before touching QApplication -- and this test proves the ordering by making any attempt
+    to construct one fail loudly.
+    """
+    import perfstudio.ui.main as main_module
+
+    def refuse(*args, **kwargs):
+        raise AssertionError("--version must not construct a QApplication")
+
+    monkeypatch.setattr(main_module, "QApplication", refuse)
+    monkeypatch.setattr(sys, "argv", ["perfstudio", "--version"])
+
+    assert main_module.main() == 0
+    assert __version__ in capsys.readouterr().out
+
+
+def test_version_line_is_pasteable_ascii() -> None:
+    """A Windows console at cp1252 turns a typographic separator into a question mark,
+    which then travels into a bug report as evidence of a bug that is not there."""
+    describe_version().encode("ascii")
