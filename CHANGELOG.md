@@ -102,6 +102,16 @@ closed without a bump.
   be removed by undoing the whole autoroute or re-routing the entire board.
 - The hole under the cursor is in the status bar. Every DRC message, guide step and MCP
   argument says "C7", and there was no way to tell which hole the pointer was on.
+- **A Turkish interface** (`ui/i18n.py`): `perfstudio --lang tr`, `PERFSTUDIO_LANG=tr`,
+  or the system locale. A dict rather than Qt Linguist, so there is no build step and no
+  binary catalogue, and every key is the English string — a translation cannot attach to
+  the wrong message and English is never "missing". `tests/test_i18n.py` fails if the
+  catalogue names a string the interface no longer has (the way translation files
+  normally rot), if a translation drops its `&` accelerator, or if two items in one menu
+  claim the same one — which is how it caught **Aç** and **Ayarları** both claiming `A`
+  in the File menu. Hole addresses, rule ids and every engine message stay untranslated
+  on purpose: the addresses are the tool's vocabulary, and the engine's strings are
+  compared byte for byte against the reference implementation.
 
 ### Changed
 

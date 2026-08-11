@@ -9,6 +9,7 @@ document.
 
     python -m perfstudio.ui.main                 launch the app (blank document)
     python -m perfstudio.ui.main path/to.perf     launch the app, opening a document
+    python -m perfstudio.ui.main --lang tr        launch in Turkish (or PERFSTUDIO_LANG=tr)
     python -m perfstudio.ui.main --version        print the version and exit
     python -m perfstudio.ui.main --headless [path]
         render 2D/3D/PDF to files, run DRC and LVS, print counts and timings, and exit
@@ -116,6 +117,7 @@ from perfstudio.version import describe as describe_version
 
 from . import view3d
 from .export_pdf import export_pdf, verify_scale
+from .i18n import set_language, t
 from .theme import ERROR, OK, STYLESHEET, TEXT_DIM, WARNING
 from .view2d import RULER_MARGIN_MM, BoardScene, BoardView, next_reference
 
@@ -236,9 +238,9 @@ class BoardSetupDialog(QDialog):
         self._update_note()
 
         form = QFormLayout()
-        form.addRow("Columns", self.cols)
-        form.addRow("Rows", self.rows)
-        form.addRow("Material", self.material)
+        form.addRow(t("Columns"), self.cols)
+        form.addRow(t("Rows"), self.rows)
+        form.addRow(t("Material"), self.material)
         form.addRow("", self._size_note)
 
         buttons = QDialogButtonBox(
@@ -404,7 +406,7 @@ class MainWindow(QMainWindow):
         Now the widget is built on first open, and refreshes are skipped while hidden and
         deferred until it is shown again -- see _refresh_3d.
         """
-        self.dock_3d = QDockWidget("3D View", self)
+        self.dock_3d = QDockWidget(t("3D View"), self)
         self.dock_3d.setObjectName("dock3d")
         self._3d_placeholder = QLabel("Opening the 3D view builds it — this takes a moment.")
         self._3d_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -489,51 +491,51 @@ class MainWindow(QMainWindow):
     def _build_menu(self) -> None:
         menu = self.menuBar()
 
-        file_menu = menu.addMenu("&File")
-        act_new = file_menu.addAction("&New Board…")
+        file_menu = menu.addMenu(t("&File"))
+        act_new = file_menu.addAction(t("&New Board…"))
         act_new.setShortcut(QKeySequence.StandardKey.New)
         act_new.triggered.connect(self.on_new)
-        act_open = file_menu.addAction("&Open…")
+        act_open = file_menu.addAction(t("&Open…"))
         act_open.setShortcut(QKeySequence.StandardKey.Open)
         act_open.triggered.connect(self.on_open)
-        act_save = file_menu.addAction("&Save")
+        act_save = file_menu.addAction(t("&Save"))
         act_save.setShortcut(QKeySequence.StandardKey.Save)
         act_save.triggered.connect(self.on_save)
-        act_save_as = file_menu.addAction("Save &As…")
+        act_save_as = file_menu.addAction(t("Save &As…"))
         act_save_as.setShortcut(QKeySequence.StandardKey.SaveAs)
         act_save_as.triggered.connect(self.on_save_as)
         file_menu.addSeparator()
-        act_board = file_menu.addAction("&Board Setup…")
+        act_board = file_menu.addAction(t("&Board Setup…"))
         act_board.setToolTip(
             "Grid size and substrate. The material is not cosmetic: it decides the iron "
             "temperature the build guide gives and whether the pad-lifting rule applies."
         )
         act_board.triggered.connect(self.on_board_setup)
-        act_import = file_menu.addAction("&Import KiCad Netlist…")
+        act_import = file_menu.addAction(t("&Import KiCad Netlist…"))
         act_import.setShortcut(QKeySequence("Ctrl+I"))
         act_import.triggered.connect(self.on_import_netlist)
         file_menu.addSeparator()
-        act_guide = file_menu.addAction("Export &Build Guide…")
+        act_guide = file_menu.addAction(t("Export &Build Guide…"))
         act_guide.setShortcut(QKeySequence("Ctrl+B"))
         act_guide.setToolTip(
             "Write the step-by-step soldering guide: one offline HTML file, the wire cut "
             "list and BOM as CSV, and the whole thing as JSON."
         )
         act_guide.triggered.connect(self.on_export_guide)
-        act_pdf = file_menu.addAction("Export 1:1 PDF (component + solder side)…")
+        act_pdf = file_menu.addAction(t("Export 1:1 PDF (component + solder side)…"))
         act_pdf.triggered.connect(self.on_export_pdf)
-        act_png = file_menu.addAction("Export 3D Snapshot PNG…")
+        act_png = file_menu.addAction(t("Export 3D Snapshot PNG…"))
         act_png.triggered.connect(self.on_export_3d_png)
         file_menu.addSeparator()
-        act_quit = file_menu.addAction("&Quit")
+        act_quit = file_menu.addAction(t("&Quit"))
         act_quit.setShortcut(QKeySequence.StandardKey.Quit)
         act_quit.triggered.connect(self.close)
 
-        edit_menu = menu.addMenu("&Edit")
-        act_undo = edit_menu.addAction("&Undo")
+        edit_menu = menu.addMenu(t("&Edit"))
+        act_undo = edit_menu.addAction(t("&Undo"))
         act_undo.setShortcut(QKeySequence.StandardKey.Undo)
         act_undo.triggered.connect(self.on_undo)
-        act_redo = edit_menu.addAction("&Redo")
+        act_redo = edit_menu.addAction(t("&Redo"))
         act_redo.setShortcut(QKeySequence("Ctrl+Shift+Z"))
         act_redo.triggered.connect(self.on_redo)
         edit_menu.addSeparator()
@@ -542,19 +544,19 @@ class MainWindow(QMainWindow):
         # and nothing in the window could reach them, so a part could only ever be placed
         # in the orientation it arrived in. Placing a DIP or an electrolytic without turning
         # it is not a real workflow.
-        self.act_rotate_cw = edit_menu.addAction("Rotate &Clockwise")
+        self.act_rotate_cw = edit_menu.addAction(t("Rotate &Clockwise"))
         self.act_rotate_cw.setShortcut(QKeySequence("R"))
         self.act_rotate_cw.triggered.connect(lambda: self.on_rotate_selection(90))
-        self.act_rotate_ccw = edit_menu.addAction("Rotate Counter-clock&wise")
+        self.act_rotate_ccw = edit_menu.addAction(t("Rotate Counter-clock&wise"))
         self.act_rotate_ccw.setShortcut(QKeySequence("Shift+R"))
         self.act_rotate_ccw.triggered.connect(lambda: self.on_rotate_selection(-90))
-        self.act_mirror = edit_menu.addAction("&Mirror")
+        self.act_mirror = edit_menu.addAction(t("&Mirror"))
         self.act_mirror.setShortcut(QKeySequence("M"))
         self.act_mirror.triggered.connect(self.on_mirror_selection)
-        self.act_lock = edit_menu.addAction("Toggle &Lock")
+        self.act_lock = edit_menu.addAction(t("Toggle &Lock"))
         self.act_lock.setShortcut(QKeySequence("L"))
         self.act_lock.triggered.connect(self.on_toggle_lock_selection)
-        self.act_delete = edit_menu.addAction("&Delete")
+        self.act_delete = edit_menu.addAction(t("&Delete"))
         self.act_delete.setShortcut(QKeySequence.StandardKey.Delete)
         self.act_delete.triggered.connect(self.on_delete_selection)
 
@@ -570,7 +572,7 @@ class MainWindow(QMainWindow):
         for action in self.selection_actions:
             action.setEnabled(False)
 
-        draw_menu = menu.addMenu("&Draw")
+        draw_menu = menu.addMenu(t("&Draw"))
         draw_menu.setToolTipsVisible(True)
         # The engine has had conductor.add since the first commit with nothing able to
         # reach it, so on a perfboard tool there was no way to run a wire or lay a solder
@@ -591,7 +593,7 @@ class MainWindow(QMainWindow):
             ("top-jumper", "Top &Jumper", "",
              "Insulated, routed over the component side. Occupies body space."),
         ):
-            action = draw_menu.addAction(label)
+            action = draw_menu.addAction(t(label))
             action.setCheckable(True)
             if shortcut:
                 action.setShortcut(QKeySequence(shortcut))
@@ -599,88 +601,88 @@ class MainWindow(QMainWindow):
             action.triggered.connect(lambda checked, k=kind: self.on_draw_mode(k, checked))
             self.act_draw[kind] = action
         draw_menu.addSeparator()
-        act_stop_draw = draw_menu.addAction("&Stop Drawing")
+        act_stop_draw = draw_menu.addAction(t("&Stop Drawing"))
         act_stop_draw.setShortcut(QKeySequence("Escape"))
         act_stop_draw.triggered.connect(lambda: self.on_draw_mode("", False))
 
-        place_menu = menu.addMenu("&Place")
-        self.act_autoplace = place_menu.addAction("&Auto-place Board")
+        place_menu = menu.addMenu(t("&Place"))
+        self.act_autoplace = place_menu.addAction(t("&Auto-place Board"))
         self.act_autoplace.setShortcut(QKeySequence("Ctrl+Shift+A"))
         self.act_autoplace.setToolTip(
             "Rearrange the unlocked parts to shorten the connections and make them "
             "solderable as traces rather than wires. Shows the result before applying it."
         )
         self.act_autoplace.triggered.connect(lambda: self.on_autoplace())
-        act_reroll = place_menu.addAction("&Try Another Arrangement")
+        act_reroll = place_menu.addAction(t("&Try Another Arrangement"))
         act_reroll.setToolTip(
             "Search again from a different seed. Annealing is a random walk, so this is "
             "a real second answer rather than the same one twice."
         )
         act_reroll.triggered.connect(lambda: self.on_autoplace(reroll=True))
 
-        route_menu = menu.addMenu("&Route")
-        self.act_autoroute = route_menu.addAction("&Autoroute All Nets")
+        route_menu = menu.addMenu(t("&Route"))
+        self.act_autoroute = route_menu.addAction(t("&Autoroute All Nets"))
         self.act_autoroute.setShortcut(QKeySequence("Ctrl+R"))
         self.act_autoroute.triggered.connect(self.on_autoroute_all)
-        self.act_route_selected = route_menu.addAction("Route Nets of &Selection")
+        self.act_route_selected = route_menu.addAction(t("Route Nets of &Selection"))
         self.act_route_selected.setShortcut(QKeySequence("Ctrl+Shift+R"))
         self.act_route_selected.triggered.connect(self.on_route_selection)
         route_menu.addSeparator()
         # Rip-up and re-route is a SEPARATE verb from autoroute, and deliberately not what
         # Ctrl+R does: autoroute completes a board, this one discards work to rebuild it.
         # See autoroute.ReroutePlan for the measurement that made it necessary.
-        self.act_reroute_all = route_menu.addAction("Re-route &Everything")
+        self.act_reroute_all = route_menu.addAction(t("Re-route &Everything"))
         self.act_reroute_all.setToolTip(
             "Rip up the existing routing and plan it again from nothing. Use this after "
             "moving parts: autoroute only adds, so it leaves the copper laid out for "
             "where things used to be. Hand-drawn copper with no net is never touched."
         )
         self.act_reroute_all.triggered.connect(lambda: self.on_reroute(None))
-        self.act_reroute_selected = route_menu.addAction("Re-route Nets of Se&lection")
+        self.act_reroute_selected = route_menu.addAction(t("Re-route Nets of Se&lection"))
         self.act_reroute_selected.setShortcut(QKeySequence("Ctrl+Alt+R"))
         self.act_reroute_selected.triggered.connect(self.on_reroute_selection)
         route_menu.addSeparator()
-        self.act_clear_strays = route_menu.addAction("Remove S&tale Conductors")
+        self.act_clear_strays = route_menu.addAction(t("Remove S&tale Conductors"))
         self.act_clear_strays.triggered.connect(self.on_clear_strays)
 
-        view_menu = menu.addMenu("&View")
-        act_flip = view_menu.addAction("Flip Board (component / solder side)")
+        view_menu = menu.addMenu(t("&View"))
+        act_flip = view_menu.addAction(t("Flip Board (component / solder side)"))
         act_flip.setShortcut(QKeySequence("Ctrl+F"))
         act_flip.triggered.connect(self.on_flip_board)
         view_menu.addSeparator()
-        act_fit: QAction = view_menu.addAction("&Fit Board")
+        act_fit: QAction = view_menu.addAction(t("&Fit Board"))
         act_fit.setShortcut(QKeySequence("Ctrl+0"))
         act_fit.triggered.connect(self.view.fit_board)
-        act_zoom_in = view_menu.addAction("Zoom &In")
+        act_zoom_in = view_menu.addAction(t("Zoom &In"))
         act_zoom_in.setShortcut(QKeySequence.StandardKey.ZoomIn)
         act_zoom_in.triggered.connect(lambda: self.view.zoom_by(1.25))
-        act_zoom_out = view_menu.addAction("Zoom &Out")
+        act_zoom_out = view_menu.addAction(t("Zoom &Out"))
         act_zoom_out.setShortcut(QKeySequence.StandardKey.ZoomOut)
         act_zoom_out.triggered.connect(lambda: self.view.zoom_by(1 / 1.25))
         view_menu.addSeparator()
 
-        self.act_ratsnest = view_menu.addAction("Show &Ratsnest")
+        self.act_ratsnest = view_menu.addAction(t("Show &Ratsnest"))
         self.act_ratsnest.setCheckable(True)
         self.act_ratsnest.setChecked(True)
         self.act_ratsnest.setShortcut(QKeySequence("Ctrl+E"))
         self.act_ratsnest.toggled.connect(self.scene.set_show_ratsnest)
-        self.act_rulers = view_menu.addAction("Show Hole &Addresses")
+        self.act_rulers = view_menu.addAction(t("Show Hole &Addresses"))
         self.act_rulers.setCheckable(True)
         self.act_rulers.setChecked(True)
         self.act_rulers.toggled.connect(self.scene.set_show_rulers)
         view_menu.addSeparator()
 
         self.act_3d = self.dock_3d.toggleViewAction()
-        self.act_3d.setText("Show &3D View")
+        self.act_3d.setText(t("Show &3D View"))
         self.act_3d.setShortcut(QKeySequence("Ctrl+3"))
         self.act_3d.setToolTip("Open the 3D board view (Ctrl+3). Closed by default: it is the "
                               "most expensive thing in the window to keep up to date.")
         view_menu.addAction(self.act_3d)
-        act_reset_3d = view_menu.addAction("Reset 3D &Camera")
+        act_reset_3d = view_menu.addAction(t("Reset 3D &Camera"))
         act_reset_3d.triggered.connect(self.on_reset_3d_camera)
 
-        help_menu = menu.addMenu("&Help")
-        act_about = help_menu.addAction("&About PerfStudio")
+        help_menu = menu.addMenu(t("&Help"))
+        act_about = help_menu.addAction(t("&About PerfStudio"))
         act_about.triggered.connect(self.on_about)
 
     def _build_toolbar(self) -> None:
@@ -698,20 +700,20 @@ class MainWindow(QMainWindow):
         bar.addAction(self.act_autoroute)
         bar.addAction(self.act_route_selected)
         bar.addSeparator()
-        rotate = bar.addAction("Rotate")
+        rotate = bar.addAction(t("Rotate"))
         rotate.setToolTip("Rotate the selected part(s) 90° clockwise (R; Shift+R for the other way)")
         rotate.triggered.connect(lambda: self.on_rotate_selection(90))
-        mirror = bar.addAction("Mirror")
+        mirror = bar.addAction(t("Mirror"))
         mirror.setToolTip("Mirror the selected part(s) (M)")
         mirror.triggered.connect(self.on_mirror_selection)
         bar.addSeparator()
-        flip = bar.addAction("Flip Side")
+        flip = bar.addAction(t("Flip Side"))
         flip.setToolTip("Switch between the component side and the mirrored solder side (Ctrl+F)")
         flip.triggered.connect(self.on_flip_board)
         bar.addAction(self.act_ratsnest)
         bar.addAction(self.act_3d)
         bar.addSeparator()
-        fit = bar.addAction("Fit")
+        fit = bar.addAction(t("Fit"))
         fit.triggered.connect(self.view.fit_board)
         bar.addAction("Zoom +").triggered.connect(lambda: self.view.zoom_by(1.25))
         bar.addAction("Zoom −").triggered.connect(lambda: self.view.zoom_by(1 / 1.25))
@@ -750,7 +752,7 @@ class MainWindow(QMainWindow):
         self.label_place_hint.setStyleSheet(f"color: {TEXT_DIM};")
         layout.addWidget(self.label_place_hint)
 
-        dock = QDockWidget("Parts", self)
+        dock = QDockWidget(t("Parts"), self)
         dock.setWidget(panel)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
         self.dock_library = dock
@@ -837,7 +839,7 @@ class MainWindow(QMainWindow):
             header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
         self.nets_tree.itemSelectionChanged.connect(self._on_net_selection_changed)
         self.nets_tree.itemDoubleClicked.connect(self._on_net_double_clicked)
-        dock = QDockWidget("Nets", self)
+        dock = QDockWidget(t("Nets"), self)
         dock.setWidget(self.nets_tree)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
         self.resizeDocks([dock], [300], Qt.Orientation.Horizontal)
@@ -847,7 +849,7 @@ class MainWindow(QMainWindow):
         self.drc_tree.setHeaderLabels(["Rule / Kind", "Message"])
         self.drc_tree.setColumnWidth(0, 260)
         self.drc_tree.itemClicked.connect(self._on_drc_item_clicked)
-        dock = QDockWidget("DRC / LVS", self)
+        dock = QDockWidget(t("DRC / LVS"), self)
         dock.setWidget(self.drc_tree)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, dock)
 
@@ -950,7 +952,9 @@ class MainWindow(QMainWindow):
         board = self.bus.document.board
         inside = 0 <= col < board.cols and 0 <= row < board.rows
         text = format_hole(HoleCoord(col, row)) if inside else "—"
-        self.label_hole.setText(f'<span style="color:{TEXT_DIM}">hole</span> <b>{text}</b>')
+        self.label_hole.setText(
+            f'<span style="color:{TEXT_DIM}">{t("hole")}</span> <b>{text}</b>'
+        )
 
     def _refresh_status(self) -> None:
         errors = sum(1 for v in self._last_violations if v.severity == "error")
@@ -979,7 +983,7 @@ class MainWindow(QMainWindow):
         else:
             self.label_ratsnest.setText(f'<span style="color:{TEXT_DIM}">no netlist</span>')
 
-        side = "component side" if self.side == "top" else "solder side (mirrored)"
+        side = t("component side") if self.side == "top" else f'{t("solder side")} ({t("mirrored")})'
         self.label_side.setText(f'<span style="color:{TEXT_DIM}">{side}</span>')
 
     def on_move_committed(self, results: list[DispatchResult]) -> None:
@@ -1204,8 +1208,8 @@ class MainWindow(QMainWindow):
                 if progress is None and time.perf_counter() - started > self.PLANNER_GRACE_S:
                     # Only now, so a run that finishes quickly never flashes a dialog: a
                     # window that blinks is worse than one that pauses imperceptibly.
-                    progress = QProgressDialog(label, "Cancel", 0, 0, self)
-                    progress.setWindowTitle("Working")
+                    progress = QProgressDialog(label, t("Cancel"), 0, 0, self)
+                    progress.setWindowTitle(t("Working"))
                     progress.setWindowModality(Qt.WindowModality.WindowModal)
                     progress.setMinimumDuration(0)
                     progress.setAutoClose(False)
@@ -1280,7 +1284,9 @@ class MainWindow(QMainWindow):
 
         result = self.bus.dispatch("component.moveMany", plan.payload())
         if not result.ok:
-            QMessageBox.warning(self, "Placement refused", f"[{result.code}] {result.message}")
+            QMessageBox.warning(
+                self,
+                t("Placement refused"), f"[{result.code}] {result.message}")
             return
 
         stale = len(stale_conductor_ids(self.bus.document, self.lookup))
@@ -1309,7 +1315,7 @@ class MainWindow(QMainWindow):
         detail.extend(summarize_placement(plan, limit=10))
 
         box = QMessageBox(self)
-        box.setWindowTitle("Apply this placement?")
+        box.setWindowTitle(t("Apply this placement?"))
         box.setText(f"<b>{describe_placement(plan)}</b>  <span>({elapsed_ms:.0f} ms)</span>")
         box.setInformativeText("\n".join(detail))
         box.setStandardButtons(QMessageBox.StandardButton.Apply | QMessageBox.StandardButton.Cancel)
@@ -1388,7 +1394,7 @@ class MainWindow(QMainWindow):
         if plan.remove_ids:
             answer = QMessageBox.question(
                 self,
-                "Re-route?",
+                t("Re-route?"),
                 f"<b>{describe_reroute(plan)}</b>"
                 f"<p>{len(plan.remove_ids)} existing conductor(s) will be removed and "
                 f"{len(plan.conductors)} planned in their place. Copper with no net "
@@ -1402,7 +1408,9 @@ class MainWindow(QMainWindow):
 
         result = self.bus.dispatch("conductor.replace", plan.payload())
         if not result.ok:
-            QMessageBox.warning(self, "Re-route refused", f"[{result.code}] {result.message}")
+            QMessageBox.warning(
+                self,
+                t("Re-route refused"), f"[{result.code}] {result.message}")
             return
 
         rerouted = set(only_net_ids) if only_net_ids else {n.id for n in self.bus.document.nets}
@@ -1502,7 +1510,8 @@ class MainWindow(QMainWindow):
         result = self.bus.dispatch("conductor.addMany", plan.payload())
         if not result.ok:
             QMessageBox.warning(
-                self, "Routing refused", f"[{result.code}] {result.message}"
+                self,
+                t("Routing refused"), f"[{result.code}] {result.message}"
             )
             return
 
@@ -1634,7 +1643,9 @@ class MainWindow(QMainWindow):
         if conductor_ids and not components:
             label = f"Delete {len(conductor_ids)} conductor(s)"
             if (
-                QMessageBox.question(self, "Delete conductors", f"{label}?")
+                QMessageBox.question(
+                self,
+                t("Delete conductors"), f"{label}?")
                 != QMessageBox.StandardButton.Yes
             ):
                 return
@@ -1653,7 +1664,7 @@ class MainWindow(QMainWindow):
         if (
             QMessageBox.question(
                 self,
-                "Delete parts",
+                t("Delete parts"),
                 f"Delete {refs}?\n\nWires and traces are left in place -- DRC and LVS will "
                 "point at anything left dangling.",
             )
@@ -1693,7 +1704,7 @@ class MainWindow(QMainWindow):
         """Start a blank board, after asking about anything unsaved."""
         if not self._offer_to_save():
             return
-        dialog = BoardSetupDialog(DEFAULT_BOARD, self, title="New Board")
+        dialog = BoardSetupDialog(DEFAULT_BOARD, self, title=t("New Board"))
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         document = create_empty_document(
@@ -1719,7 +1730,7 @@ class MainWindow(QMainWindow):
         part hanging off the new edge comes back as a refusal naming the part, rather
         than silently stranding it.
         """
-        dialog = BoardSetupDialog(self.bus.document.board, self, title="Board Setup")
+        dialog = BoardSetupDialog(self.bus.document.board, self, title=t("Board Setup"))
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         board = dialog.board()
@@ -1729,7 +1740,7 @@ class MainWindow(QMainWindow):
         if not result.ok:
             QMessageBox.warning(
                 self,
-                "Board not changed",
+                t("Board not changed"),
                 f"[{result.code}] {result.message}\n\nMove or delete whatever is in the way "
                 "and try again.",
             )
@@ -1751,12 +1762,16 @@ class MainWindow(QMainWindow):
         # unhandled read error here would take the whole window down over a bad pick.
         text, problem = read_document_text(path)
         if text is None:
-            QMessageBox.critical(self, "Open failed", problem or "Could not read the file.")
+            QMessageBox.critical(
+                self,
+                t("Open failed"), problem or "Could not read the file.")
             return
         result = persist.deserialize_document(text)
         if not result.ok:
             location = f" (at {result.path})" if result.path else ""
-            QMessageBox.critical(self, "Open failed", f"[{result.code}] {result.message}{location}")
+            QMessageBox.critical(
+                self,
+                t("Open failed"), f"[{result.code}] {result.message}{location}")
             return
         self.current_path = path
         self.bus = self._new_bus(result.document)
@@ -1787,17 +1802,23 @@ class MainWindow(QMainWindow):
         path = Path(path_str)
         text, problem = read_document_text(path)
         if text is None:
-            QMessageBox.critical(self, "Import failed", problem or "Could not read the file.")
+            QMessageBox.critical(
+                self,
+                t("Import failed"), problem or "Could not read the file.")
             return
         try:
             imported = parse_kicad_netlist(text)
         except ValueError as err:
-            QMessageBox.critical(self, "Import failed", f"{path.name}: {err}")
+            QMessageBox.critical(
+                self,
+                t("Import failed"), f"{path.name}: {err}")
             return
 
         result = self.bus.dispatch("netlist.import", ImportNetlistPayload(nets=imported.nets))
         if not result.ok:
-            QMessageBox.critical(self, "Import failed", f"[{result.code}] {result.message}")
+            QMessageBox.critical(
+                self,
+                t("Import failed"), f"[{result.code}] {result.message}")
             return
 
         note = f"Imported {len(imported.nets)} net(s) from {path.name}"
@@ -1927,7 +1948,7 @@ class MainWindow(QMainWindow):
         name = self.current_path.name if self.current_path else "this board"
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Icon.Warning)
-        box.setWindowTitle("Unsaved changes")
+        box.setWindowTitle(t("Unsaved changes"))
         box.setText(f"<b>{name} has changes that are not saved.</b>")
         box.setInformativeText("Saving keeps them; discarding loses them for good.")
         box.setStandardButtons(
@@ -2002,7 +2023,9 @@ class MainWindow(QMainWindow):
                 path.write_text(text, encoding="utf-8")
                 written.append(path)
         except OSError as err:
-            QMessageBox.critical(self, "Export failed", f"Could not write the guide: {err}")
+            QMessageBox.critical(
+                self,
+                t("Export failed"), f"Could not write the guide: {err}")
             return
 
         self.statusBar().showMessage(
@@ -2015,7 +2038,7 @@ class MainWindow(QMainWindow):
             lines = "\n".join(f"  • {w.message}" for w in guide.warnings)
             QMessageBox.warning(
                 self,
-                "The guide has gaps",
+                t("The guide has gaps"),
                 f"Written to {written[0].parent}, with {len(guide.warnings)} thing(s) it "
                 f"could not cover:\n\n{lines}",
             )
@@ -2027,7 +2050,7 @@ class MainWindow(QMainWindow):
         pasted, and QMessageBox renders it unselectable unless asked.
         """
         box = QMessageBox(self)
-        box.setWindowTitle("About PerfStudio")
+        box.setWindowTitle(t("About PerfStudio"))
         box.setText(f"<b>PerfStudio {__version__}</b>")
         box.setInformativeText(
             f"{describe_version()}\n\n"
@@ -2224,6 +2247,16 @@ def headless(argv: list[str]) -> int:
     return 0 if check.ok else 1
 
 
+def _language_argument(argv: list[str]) -> str | None:
+    """``--lang tr`` or ``--lang=tr``, or None to work it out from the environment."""
+    for index, arg in enumerate(argv):
+        if arg.startswith("--lang="):
+            return arg.split("=", 1)[1]
+        if arg == "--lang" and index + 1 < len(argv):
+            return argv[index + 1]
+    return None
+
+
 def main() -> int:
     # Answered before Qt is touched: --version has to work on a machine where the GUI
     # cannot start, since "it will not launch" is exactly when someone is asked which
@@ -2231,6 +2264,10 @@ def main() -> int:
     if "--version" in sys.argv or "-V" in sys.argv:
         print(describe_version())
         return 0
+
+    # Chosen before the window is built, because every menu label is translated once at
+    # construction. --lang wins over PERFSTUDIO_LANG, which wins over the system locale.
+    set_language(_language_argument(sys.argv))
 
     if "--headless" in sys.argv:
         return headless([a for a in sys.argv[1:] if a != "--headless"])
