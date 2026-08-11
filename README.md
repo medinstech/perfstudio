@@ -3,10 +3,12 @@
 Design circuits on perfboard the way you would on a PCB — then get a soldering guide
 you can actually build from.
 
-> **Status: pre-alpha.** The engine is real and tested — placement, connectivity,
-> routing, DRC, LVS, save/load, a 2D editor with a 3D view and an exact 1:1 PDF export.
-> The soldering guide, the MCP server and the placement optimiser are not written yet,
-> so this is not something to build a board with today. See [PLAN.md](./PLAN.md).
+> **Status: pre-alpha, and now end to end.** A netlist can go in and a soldering guide
+> can come out: 2D editor, 3D view, placement optimiser, autorouter, DRC, LVS, the build
+> guide, an exact 1:1 PDF export and an MCP server. What is missing is the dogfood test
+> — nobody has yet built a real board by following a generated guide, and PLAN.md §11
+> says M5 does not close until somebody has. See [PLAN.md](./PLAN.md) and
+> [CHANGELOG.md](./CHANGELOG.md).
 
 ---
 
@@ -53,11 +55,26 @@ turns every flagged spot into a measurement step in the build guide.
 Requires Python 3.12+. The desktop app is PySide6 (Qt 6) with a VTK viewport.
 
 ```sh
-pip install -e ".[dev]"
-pytest                       # the engine's test suite
+pip install -e ".[dev,mcp]"
+pytest                       # the test suite
 perfstudio                   # launch the app on a blank board
 perfstudio some/board.perf   # ...or open a document
+perfstudio --version
 ```
+
+A board from nothing, in the app: **File → Import KiCad Netlist** on
+`examples/ne555-astable.net`, accept the offered placement, **Place → Auto-place Board**
+(Ctrl+Shift+A), **Ctrl+R** to route, then **File → Export Build Guide** (Ctrl+B).
+
+The same thing from an agent — the MCP server drives the identical command bus, so undo
+works across both:
+
+```sh
+pip install -e ".[mcp]"
+claude mcp add perfstudio -- python -m perfstudio.mcp
+```
+
+See [docs/MCP.md](./docs/MCP.md) for the tool list and the rest of the setup.
 
 There is also a headless mode, which renders 2D/3D/PDF to files, runs DRC and LVS and
 prints timings — it is how the visual output is exercised in CI, with no display:
@@ -70,16 +87,20 @@ python -m perfstudio.ui.main --headless tools/diffcheck/golden/dense.perf
 
 ```
 src/perfstudio/            the engine: document model, command bus, connectivity,
-                           router, autorouter, DRC, LVS, persistence
+                           router, autorouter, placer, DRC, LVS, persistence
+src/perfstudio/guide.py    the soldering guide, and guide_export.py for HTML/CSV/JSON
 src/perfstudio/parsers/    KiCad netlist importer
 src/perfstudio/ui/         Qt application: 2D editor, VTK 3D view, 1:1 PDF export
-tests/                     360+ tests; the engine is mypy --strict clean
+src/perfstudio/mcp/        the MCP server (docs/MCP.md)
+examples/                  a netlist to import
+tests/                     850+ tests; the engine is mypy --strict clean
 packages/                  the original TypeScript engine, kept as the reference the
                            Python port is proved against (golden fixtures in tools/)
 ```
 
-The MCP server and the soldering-guide generator are the next two pieces; see
-[PLAN.md](./PLAN.md) sections 7 and 9.
+Still to come, in the order PLAN.md puts them: assembly animation and per-step rendered
+images for the guide (§7.2, M4), i18n and packaging (M7), and the dogfood build that
+closes M5.
 
 ## Licence
 

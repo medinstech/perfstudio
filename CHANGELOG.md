@@ -61,6 +61,19 @@ closed without a bump.
     DRC error — is reported as a warning rather than producing a quietly shorter guide.
 - `drc.trace_electrical` is public, so the guide and DRC rule 9 quote one resistance
   model rather than two.
+- **The MCP server** (PLAN.md §9, milestone M6, `perfstudio.mcp`): 31 tools over stdio or
+  streamable HTTP, driving the same command bus the GUI does, so an agent's edits undo
+  the same way and land in the same journal. `python -m perfstudio.mcp`, or
+  `perfstudio-mcp`. Setup and the full tool list are in [docs/MCP.md](./docs/MCP.md).
+  - Holes are addressed as `C7` everywhere — there are no raw coordinates in the API,
+    and a test enforces it.
+  - A refused command comes back as data with a code, not as an exception; only
+    malformed input raises, and the message names what would have worked.
+  - `BoardSession` holds every operation and imports no MCP at all, so the tools are
+    tested by calling them — a test that stands up a stdio server tests the transport.
+  - `examples/ne555-astable.net` ships as something to import, and the end-to-end test
+    takes a blank board through import → place → optimise → route → verify → guide with
+    7/7 nets matched, 0 opens, 0 shorts, 0 DRC errors and no guide warnings.
 
 ### Fixed
 
