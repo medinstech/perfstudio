@@ -3,6 +3,15 @@ dist/
 build/
 target/
 coverage/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
 *.tsbuildinfo
 .DS_Store
 Thumbs.db

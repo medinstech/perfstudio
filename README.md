@@ -3,8 +3,10 @@
 Design circuits on perfboard the way you would on a PCB — then get a soldering guide
 you can actually build from.
 
-> **Status: pre-alpha.** The architecture is settled and the engine is being built.
-> Nothing here is usable yet. See [PLAN.md](./PLAN.md) for the full design.
+> **Status: pre-alpha.** The engine is real and tested — placement, connectivity,
+> routing, DRC, LVS, save/load, a 2D editor with a 3D view and an exact 1:1 PDF export.
+> The soldering guide, the MCP server and the placement optimiser are not written yet,
+> so this is not something to build a board with today. See [PLAN.md](./PLAN.md).
 
 ---
 
@@ -46,27 +48,38 @@ The 0.6 mm gap to the neighbouring pad is why solder traces are both so useful a
 easy to get wrong. PerfStudio scores that risk into the router's cost function, and
 turns every flagged spot into a measurement step in the build guide.
 
-## Building
+## Running it
 
-Requires Node 22+ and pnpm.
+Requires Python 3.12+. The desktop app is PySide6 (Qt 6) with a VTK viewport.
 
 ```sh
-pnpm install
-pnpm build
-pnpm test
+pip install -e ".[dev]"
+pytest                       # the engine's test suite
+perfstudio                   # launch the app on a blank board
+perfstudio some/board.perf   # ...or open a document
 ```
 
-The desktop shell (Tauri v2) additionally needs a Rust toolchain; it is not wired up yet.
+There is also a headless mode, which renders 2D/3D/PDF to files, runs DRC and LVS and
+prints timings — it is how the visual output is exercised in CI, with no display:
+
+```sh
+python -m perfstudio.ui.main --headless tools/diffcheck/golden/dense.perf
+```
 
 ## Repository layout
 
 ```
-packages/core        document model, command bus, connectivity, DRC, LVS, router
-packages/parsers     KiCad netlist and footprint importers
-packages/render2d    Canvas2D board renderer (host-agnostic, runs headless too)
-packages/mcp         MCP server for coding agents
-tools/bench-3d       three.js performance harness for the M0 webview decision
+src/perfstudio/            the engine: document model, command bus, connectivity,
+                           router, autorouter, DRC, LVS, persistence
+src/perfstudio/parsers/    KiCad netlist importer
+src/perfstudio/ui/         Qt application: 2D editor, VTK 3D view, 1:1 PDF export
+tests/                     360+ tests; the engine is mypy --strict clean
+packages/                  the original TypeScript engine, kept as the reference the
+                           Python port is proved against (golden fixtures in tools/)
 ```
+
+The MCP server and the soldering-guide generator are the next two pieces; see
+[PLAN.md](./PLAN.md) sections 7 and 9.
 
 ## Licence
 

@@ -29,6 +29,7 @@ nothing outside this test file should depend on it.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from pathlib import Path
 from typing import Any
@@ -44,8 +45,10 @@ from perfstudio.lvs import (
     LvsResult,
     LvsSummary,
     continuity_checks,
+    floating_conductor_ids,
     isolation_checks,
     run_lvs,
+    stale_conductor_ids,
 )
 from perfstudio.model import (
     Board,
@@ -660,3 +663,82 @@ def test_isolation_checks_are_capped_at_forty() -> None:
     checks = isolation_checks(doc)
 
     assert len(checks) == 40
+
+
+# ---------------------------------------------------------------------------
+# Copper whose own claim has stopped being true
+# ---------------------------------------------------------------------------
+
+
+def test_stale_conductor_is_found_after_the_part_it_served_moves() -> None:
+    """The complaint this exists for: move a part and its old connections stay on the board,
+    then autoroute adds new ones beside them.
+
+    Note the old trace is NOT floating -- it is still soldered to R2's pin. What makes it stale
+    is its own net_id claim: it says it implements SIG while reaching only one of SIG's pins.
+    """
+    lookup = make_lookup((one_pin_footprint("fp1"),))
+    r1 = make_component("c1", "R1", "fp1", hole(0, 0))
+    r2 = make_component("c2", "R2", "fp1", hole(4, 0))
+    joined = dataclasses.replace(
+        solder_trace("t1", tuple(hole(col, 0) for col in range(0, 5))), net_id="n1"
+    )
+    nets = (net("n1", "SIG", "signal", (net_node("R1", "1"), net_node("R2", "1"))),)
+
+    before = make_doc(components=(r1, r2), conductors=(joined,), nets=nets)
+    assert stale_conductor_ids(before, lookup) == ()
+
+    # R1 moves away; the trace still reaches R2 and nothing else.
+    moved = make_doc(
+        components=(dataclasses.replace(r1, anchor=hole(0, 6)), r2), conductors=(joined,), nets=nets
+    )
+
+    assert stale_conductor_ids(moved, lookup) == ("t1",)
+
+
+def test_hand_drawn_copper_is_never_called_stale() -> None:
+    """A conductor with no net_id makes no claim that could be found false, and deleting
+    someone's own wiring because a checker cannot account for it is the wrong behaviour."""
+    lookup = make_lookup((one_pin_footprint("fp1"),))
+    untagged = solder_trace("t1", (hole(0, 0), hole(1, 0), hole(2, 0)))
+    doc = make_doc(components=(make_component("c1", "R1", "fp1", hole(0, 0)),), conductors=(untagged,))
+
+    assert untagged.net_id is None
+    assert stale_conductor_ids(doc, lookup) == ()
+
+
+def test_a_partly_routed_net_is_not_stale() -> None:
+    """Two of three pins joined is work in progress, not rubbish: the copper does connect two
+    pins of the net it claims."""
+    lookup = make_lookup((one_pin_footprint("fp1"),))
+    components = (
+        make_component("c1", "R1", "fp1", hole(0, 0)),
+        make_component("c2", "R2", "fp1", hole(4, 0)),
+        make_component("c3", "R3", "fp1", hole(9, 0)),
+    )
+    joined = dataclasses.replace(
+        solder_trace("t1", tuple(hole(col, 0) for col in range(0, 5))), net_id="n1"
+    )
+    nets = (
+        net(
+            "n1",
+            "SIG",
+            "signal",
+            (net_node("R1", "1"), net_node("R2", "1"), net_node("R3", "1")),
+        ),
+    )
+    doc = make_doc(components=components, conductors=(joined,), nets=nets)
+
+    assert stale_conductor_ids(doc, lookup) == ()
+
+
+def test_a_floating_conductor_is_also_stale_when_it_claims_a_net() -> None:
+    lookup = make_lookup((one_pin_footprint("fp1"),))
+    orphan = dataclasses.replace(solder_trace("t1", (hole(7, 7), hole(8, 7))), net_id="n1")
+    nets = (net("n1", "SIG", "signal", (net_node("R1", "1"), net_node("R2", "1"))),)
+    doc = make_doc(
+        components=(make_component("c1", "R1", "fp1", hole(0, 0)),), conductors=(orphan,), nets=nets
+    )
+
+    assert stale_conductor_ids(doc, lookup) == ("t1",)
+    assert floating_conductor_ids(doc, lookup) == ("t1",)

@@ -15,7 +15,6 @@ mcp = ["mcp>=1.0"]
 
 [project.scripts]
 perfstudio = "perfstudio.ui.main:main"
-perfstudio-mcp = "perfstudio.mcp.stdio:main"
 
 [build-system]
 requires = ["setuptools>=68"]

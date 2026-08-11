@@ -30,7 +30,14 @@ import dataclasses
 from dataclasses import dataclass
 from typing import Any, Literal, TypeAlias
 
-from .command import CommandContext, CommandDefinition, CommandError, CommandRegistry
+from .command import (
+    CommandContext,
+    CommandDefinition,
+    CommandError,
+    CommandRegistry,
+    NextId,
+    create_id_generator,
+)
 from .geometry import format_hole, is_inside_board, validate_orthogonal_chain
 from .model import (
     DOCUMENT_FORMAT_VERSION,
@@ -70,6 +77,35 @@ DEFAULT_BOARD = Board(
     pad_diameter=1.9,
     drill_diameter=1.0,
 )
+
+
+def create_document_id_generator(doc: PerfDocument) -> NextId:
+    """An id source that cannot collide with ids already present in ``doc``.
+
+    A bare ``create_id_generator()`` restarts every counter at zero, which is correct for
+    a blank document and WRONG for a loaded one: a file whose conductors are already
+    ``cond-1``..``cond-40`` would make the very next ``conductor.add`` fail with
+    ``duplicate-id``. Any host that opens a document and then edits it needs this instead.
+
+    Only ids of the shape ``prefix-<digits>`` are read, since those are the ones this
+    generator can collide with. Ids from elsewhere -- a netlist's own net names, a
+    hand-written id in a project file -- are left alone rather than guessed at.
+    """
+    highest: dict[str, int] = {}
+
+    def note(id_: str) -> None:
+        prefix, separator, suffix = id_.rpartition("-")
+        if separator and prefix and suffix.isdigit():
+            highest[prefix] = max(highest.get(prefix, 0), int(suffix))
+
+    for component in doc.components:
+        note(component.id)
+    for conductor in doc.conductors:
+        note(conductor.id)
+    for cut in doc.cuts:
+        note(cut.id)
+
+    return create_id_generator(initial=highest)
 
 
 def create_empty_document(meta: DocumentMeta, board: Board = DEFAULT_BOARD) -> PerfDocument:
@@ -266,6 +302,27 @@ class AddConductorPayload:
 
 
 @dataclass(frozen=True, slots=True)
+class AddConductorsPayload:
+    """Several conductors as ONE command, so a planner's output is one undo step.
+
+    Autorouting a board produces dozens of conductors that only make sense together;
+    dispatched one at a time they would bury the undo stack and let a user tear the
+    result in half with a single Ctrl+Z. Each conductor is still validated exactly as
+    ``conductor.add`` validates it, and the whole batch is refused if any member is
+    invalid -- a half-applied plan is worse than a rejected one.
+    """
+
+    conductors: tuple[NewConductor, ...]
+    #: Optional explicit ids, one per conductor, for reproducible replay. Generated when
+    #: omitted; supplying the wrong number is an error rather than a silent partial map.
+    ids: tuple[ConductorId, ...] | None = None
+    #: Undo-stack label. A batch command cannot tell what it is from its contents, and
+    #: "Autoroute 6 nets" is a far better thing to read on the undo stack than
+    #: "Add 14 conductors", so the caller that knows says so.
+    label: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class SetConductorPathPayload:
     id: ConductorId
     path: tuple[HoleCoord, ...]
@@ -274,6 +331,20 @@ class SetConductorPathPayload:
 @dataclass(frozen=True, slots=True)
 class DeleteConductorPayload:
     id: ConductorId
+
+
+@dataclass(frozen=True, slots=True)
+class DeleteConductorsPayload:
+    """Several conductors as ONE command, so a cleanup is one undo step.
+
+    Counterpart to ``AddConductorsPayload``. Clearing the copper a moved part left behind is a
+    single decision to the user, and dispatching it one conductor at a time would take as many
+    Ctrl+Z presses to reverse as there were conductors.
+    """
+
+    ids: tuple[ConductorId, ...]
+    #: Undo-stack label; without it the entry reads as a bare count.
+    label: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -461,29 +532,83 @@ class _DeleteComponent:
 # ---------------------------------------------------------------------------
 
 
+def _prepare_conductor(
+    doc: PerfDocument,
+    spec: NewConductor,
+    id_: ConductorId,
+    taken_ids: set[ConductorId],
+) -> Conductor:
+    """Validate one new-conductor spec against the document and give it its id.
+
+    Shared by ``conductor.add`` and ``conductor.addMany`` so a batch cannot drift into a
+    weaker set of checks than a single add -- the batch exists to save undo entries, not
+    to skip validation. ``taken_ids`` accumulates across a batch, which is what catches a
+    caller supplying the same id twice within one payload.
+    """
+    assert_valid_path(spec.path, spec.kind, doc.board)
+
+    if isinstance(spec, NewLeadBendConductor):
+        require_component(doc, spec.component_id)
+    if spec.kind in ("solder-trace", "solder-trace-wired") and spec.side != "bottom":
+        raise CommandError("invalid-side", "Solder traces exist on the solder side only.")
+
+    if id_ in taken_ids:
+        raise CommandError("duplicate-id", f'A conductor with id "{id_}" already exists.')
+    taken_ids.add(id_)
+
+    return _finalize_conductor(spec, id_)
+
+
+def _existing_conductor_ids(doc: PerfDocument) -> set[ConductorId]:
+    return {c.id for c in doc.conductors}
+
+
 class _AddConductor:
     type = "conductor.add"
 
     def apply(self, doc: PerfDocument, p: AddConductorPayload, ctx: CommandContext) -> PerfDocument:
-        spec = p.conductor
-        assert_valid_path(spec.path, spec.kind, doc.board)
-
-        if isinstance(spec, NewLeadBendConductor):
-            require_component(doc, spec.component_id)
-        if spec.kind in ("solder-trace", "solder-trace-wired") and spec.side != "bottom":
-            raise CommandError("invalid-side", "Solder traces exist on the solder side only.")
-
         id_ = p.id if p.id is not None else ctx.next_id("cond")
-        if any(c.id == id_ for c in doc.conductors):
-            raise CommandError("duplicate-id", f'A conductor with id "{id_}" already exists.')
-
-        conductor = _finalize_conductor(spec, id_)
+        conductor = _prepare_conductor(doc, p.conductor, id_, _existing_conductor_ids(doc))
         return dataclasses.replace(doc, conductors=doc.conductors + (conductor,))
 
     def describe(self, p: AddConductorPayload, doc: PerfDocument) -> str:
         path = p.conductor.path
         span = f" {format_hole(path[0])} to {format_hole(path[-1])}" if path else ""
         return f"Add {p.conductor.kind}{span}"
+
+
+class _AddConductors:
+    type = "conductor.addMany"
+
+    def apply(
+        self, doc: PerfDocument, p: AddConductorsPayload, ctx: CommandContext
+    ) -> PerfDocument:
+        if not p.conductors:
+            raise CommandError(
+                "nothing-to-add",
+                "conductor.addMany needs at least one conductor; an empty batch would "
+                "put a no-op on the undo stack.",
+            )
+        if p.ids is not None and len(p.ids) != len(p.conductors):
+            raise CommandError(
+                "id-count-mismatch",
+                f"Got {len(p.ids)} id(s) for {len(p.conductors)} conductor(s).",
+            )
+
+        taken = _existing_conductor_ids(doc)
+        prepared: list[Conductor] = []
+        for index, spec in enumerate(p.conductors):
+            id_ = p.ids[index] if p.ids is not None else ctx.next_id("cond")
+            prepared.append(_prepare_conductor(doc, spec, id_, taken))
+
+        # All-or-nothing: every spec is validated above before the document changes, so a
+        # bad member raises out of the loop and the caller's document is untouched.
+        return dataclasses.replace(doc, conductors=doc.conductors + tuple(prepared))
+
+    def describe(self, p: AddConductorsPayload, doc: PerfDocument) -> str:
+        if p.label:
+            return p.label
+        return f"Add {len(p.conductors)} conductor(s)"
 
 
 class _SetConductorPath:
@@ -518,6 +643,37 @@ class _DeleteConductor:
         c = next((x for x in doc.conductors if x.id == p.id), None)
         kind = c.kind if c is not None else "conductor"
         return f"Delete {kind} {p.id}"
+
+
+class _DeleteConductors:
+    type = "conductor.deleteMany"
+
+    def apply(
+        self, doc: PerfDocument, p: DeleteConductorsPayload, ctx: CommandContext
+    ) -> PerfDocument:
+        if not p.ids:
+            raise CommandError(
+                "nothing-to-delete",
+                "conductor.deleteMany needs at least one id; an empty batch would put a no-op "
+                "on the undo stack.",
+            )
+        present = {c.id for c in doc.conductors}
+        missing = [id_ for id_ in p.ids if id_ not in present]
+        if missing:
+            # All or nothing, like the batch add: a partly-applied cleanup leaves the user
+            # unable to tell what was removed.
+            raise CommandError(
+                "conductor-not-found", f"No conductor with id(s) {', '.join(sorted(missing))}."
+            )
+        doomed = set(p.ids)
+        return dataclasses.replace(
+            doc, conductors=tuple(c for c in doc.conductors if c.id not in doomed)
+        )
+
+    def describe(self, p: DeleteConductorsPayload, doc: PerfDocument) -> str:
+        if p.label:
+            return p.label
+        return f"Delete {len(p.ids)} conductor(s)"
 
 
 # ---------------------------------------------------------------------------
@@ -626,8 +782,10 @@ mirror_component: CommandDefinition[MirrorComponentPayload] = _MirrorComponent()
 update_component: CommandDefinition[UpdateComponentPayload] = _UpdateComponent()
 delete_component: CommandDefinition[DeleteComponentPayload] = _DeleteComponent()
 add_conductor: CommandDefinition[AddConductorPayload] = _AddConductor()
+add_conductors: CommandDefinition[AddConductorsPayload] = _AddConductors()
 set_conductor_path: CommandDefinition[SetConductorPathPayload] = _SetConductorPath()
 delete_conductor: CommandDefinition[DeleteConductorPayload] = _DeleteConductor()
+delete_conductors: CommandDefinition[DeleteConductorsPayload] = _DeleteConductors()
 set_board: CommandDefinition[SetBoardPayload] = _SetBoard()
 import_netlist: CommandDefinition[ImportNetlistPayload] = _ImportNetlist()
 add_cut: CommandDefinition[AddCutPayload] = _AddCut()
@@ -644,8 +802,10 @@ STANDARD_COMMANDS: tuple[CommandDefinition[Any], ...] = (
     update_component,
     delete_component,
     add_conductor,
+    add_conductors,
     set_conductor_path,
     delete_conductor,
+    delete_conductors,
     set_board,
     import_netlist,
     add_cut,

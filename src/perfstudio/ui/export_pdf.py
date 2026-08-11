@@ -45,7 +45,14 @@ class ScaleCheck:
 
 
 def _draw_scale_bar(painter: QPainter, origin: QPointF) -> None:
-    """A 50 mm ruler drawn in scene units. The end-user's 1:1 verification."""
+    """A 50 mm ruler drawn in scene units. The end-user's 1:1 verification.
+
+    The small point sizes used here and below are correct for THIS paint device and would
+    not be for a screen. A point is 1/72 inch of the device, so at the writer's 600 dpi a
+    2.2 pt font is about 18 device pixels -- ample. The same 2.2 pt on a 96 dpi screen
+    would be three pixels, which some platforms' font engines decline to draw at all; that
+    is why the editor's own labels are sized in screen pixels instead (ui/scenetext.py).
+    """
     painter.save()
     pen = QPen(QColor("#000000"), 0.25)
     painter.setPen(pen)

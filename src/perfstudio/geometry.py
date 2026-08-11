@@ -74,6 +74,23 @@ def coord_to_hole_ref(c: HoleCoord) -> HoleRef:
     return f"{_column_letters(c.col)}{c.row + 1}"
 
 
+def column_label(col: int) -> str:
+    """The column half of a hole address, e.g. 0 -> "A", 28 -> "AC".
+
+    Exposed for the editor's rulers, which label an axis rather than a hole. They must
+    read the same as every address in the build guide, so the encoding is shared rather
+    than re-derived -- a ruler that disagreed with the guide would be worse than no ruler.
+    """
+    return _column_letters(col)
+
+
+def row_label(row: int) -> str:
+    """The row half of a hole address: 0-indexed in, 1-indexed out."""
+    if not isinstance(row, int) or isinstance(row, bool) or row < 0:
+        raise ValueError(f"Invalid hole row index: {row!r} (must be a non-negative integer).")
+    return str(row + 1)
+
+
 def hole_ref_to_coord(ref: HoleRef) -> HoleCoord:
     """Parse a human-facing hole address back into a 0-indexed coordinate.
 
@@ -290,6 +307,130 @@ def validate_orthogonal_chain(path: tuple[HoleCoord, ...]) -> OrthogonalChainRes
             )
         seen.add(key)
     return OrthogonalChainResult(ok=True)
+
+
+# ---------------------------------------------------------------------------
+# Which holes a straight run passes over
+# ---------------------------------------------------------------------------
+
+
+def js_round(x: float) -> int:
+    """Replicates JavaScript's ``Math.round`` (round half towards +Infinity).
+
+    Python's builtin ``round()`` uses round-half-to-even, which disagrees with JavaScript
+    exactly at ``.5`` boundaries -- and :func:`holes_under_line`'s sampled ``t`` values land
+    there often enough (any axis-aligned or 45-degree run) that the divergence is not
+    academic. ``floor(x + 0.5)`` matches the ECMAScript specification's algorithm, and since
+    both sides are IEEE-754 doubles doing the same ``+`` and ``floor``, it matches bit for bit.
+
+    Lives here rather than in router.py because occupancy.py needs the same sampling, and two
+    copies of a rounding rule this load-bearing would eventually drift apart.
+    """
+    return math.floor(x + 0.5)
+
+
+def holes_under_line(from_: HoleCoord, to: HoleCoord) -> list[HoleCoord]:
+    """Holes a straight run physically passes over, endpoints included.
+
+    Sampled along the segment at a quarter of a pitch, which is dense enough that no hole on
+    the line is missed. This is the PHYSICAL footprint of a wire, which is not the same as the
+    two holes its ``path`` records: a wire contacts only its ends but lies across everything
+    between them.
+    """
+    steps = max(abs(to.col - from_.col), abs(to.row - from_.row)) * 4
+    seen: set[str] = set()
+    result: list[HoleCoord] = []
+    for i in range(steps + 1):
+        t = 0.0 if steps == 0 else i / steps
+        hole = HoleCoord(
+            col=js_round(from_.col + (to.col - from_.col) * t),
+            row=js_round(from_.row + (to.row - from_.row) * t),
+        )
+        key = hole_key(hole)
+        if key not in seen:
+            seen.add(key)
+            result.append(hole)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Do two runs of conductor physically cross?
+# ---------------------------------------------------------------------------
+
+
+def _orientation(a: HoleCoord, b: HoleCoord, c: HoleCoord) -> int:
+    """Sign of the cross product (b-a) x (c-a): +1 left, -1 right, 0 collinear.
+
+    Exact integer arithmetic. Hole coordinates are whole numbers, so there is no tolerance
+    to choose and no near-miss to get wrong.
+    """
+    value = (b.col - a.col) * (c.row - a.row) - (b.row - a.row) * (c.col - a.col)
+    return (value > 0) - (value < 0)
+
+
+def _on_segment(a: HoleCoord, b: HoleCoord, point: HoleCoord) -> bool:
+    """Is ``point`` on segment a-b, given it is already known to be collinear with it?"""
+    return (
+        min(a.col, b.col) <= point.col <= max(a.col, b.col)
+        and min(a.row, b.row) <= point.row <= max(a.row, b.row)
+    )
+
+
+def segments_touch(a1: HoleCoord, a2: HoleCoord, b1: HoleCoord, b2: HoleCoord) -> bool:
+    """True when two straight runs meet anywhere other than at a shared endpoint.
+
+    This is what "crossing" means physically, and it is NOT the same as "sharing a hole".
+    Two wires running diagonally across a board can cross in the middle of a cell, touching
+    no common hole at all -- which is the ordinary case for point-to-point wiring, and was
+    invisible to a check that only compared hole lists. A board can therefore be routed with
+    two bare wires lying across each other and be reported clean.
+
+    A shared ENDPOINT is not a crossing: that is a deliberate junction, two conductors
+    meeting at a pad. Everything else counts, including a T (one run ending part-way along
+    another) and collinear overlap, because in both the copper genuinely touches.
+    """
+    shared_endpoints = {(a1.col, a1.row), (a2.col, a2.row)} & {
+        (b1.col, b1.row),
+        (b2.col, b2.row),
+    }
+    if shared_endpoints:
+        # Meeting at a pad is a junction. Two runs sharing BOTH endpoints are duplicates
+        # lying on top of each other, which is a genuine overlap rather than a junction.
+        if len(shared_endpoints) < 2:
+            return False
+
+    o1 = _orientation(a1, a2, b1)
+    o2 = _orientation(a1, a2, b2)
+    o3 = _orientation(b1, b2, a1)
+    o4 = _orientation(b1, b2, a2)
+
+    if o1 != o2 and o3 != o4:
+        return True  # Proper crossing, or a T touching the interior of the other run.
+
+    # Collinear and overlapping: same line, and at least one endpoint inside the other run.
+    if o1 == o2 == o3 == o4 == 0:
+        return (
+            _on_segment(a1, a2, b1)
+            or _on_segment(a1, a2, b2)
+            or _on_segment(b1, b2, a1)
+            or _on_segment(b1, b2, a2)
+        )
+    return False
+
+
+def paths_cross(a: tuple[HoleCoord, ...], b: tuple[HoleCoord, ...]) -> HoleCoord | None:
+    """The first segment pair of two paths that touch, reported as the crossing's start hole.
+
+    Returns None when the two paths are geometrically clear of each other. A hole rather than
+    a point because every message and every measurement step in this system is addressed by
+    hole (PLAN.md Sec 4.1) -- naming the segment's start is what lets a violation say "near
+    C7" instead of quoting a coordinate nobody can find on the board.
+    """
+    for index in range(len(a) - 1):
+        for other in range(len(b) - 1):
+            if segments_touch(a[index], a[index + 1], b[other], b[other + 1]):
+                return a[index]
+    return None
 
 
 def path_length_mm(path: tuple[HoleCoord, ...], board: Board) -> Mm:

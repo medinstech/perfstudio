@@ -44,6 +44,7 @@ from .geometry import (
     manhattan,
     neighbors4,
     path_length_mm,
+    paths_cross,
     pin_hole,
     transform_offset,
     validate_orthogonal_chain,
@@ -445,6 +446,67 @@ def _check_crossing_conductors(
                     conductor_ids=tuple(sorted((a.id, b.id))),
                 )
             )
+    return violations
+
+
+# ---------------------------------------------------------------------------
+# Rule 4' -- conductors that physically cross between holes (error)
+# ---------------------------------------------------------------------------
+
+
+def _check_conductor_geometry_crossings(
+    doc: PerfDocument,
+    conductor_net_index: Mapping[ConductorId, str],
+) -> list[DrcViolation]:
+    """Two conductors that cannot cross, and geometrically do.
+
+    Rule 4 above compares HOLE LISTS, which only catches a crossing that happens to land on a
+    shared hole. Two wires running diagonally cross in the middle of a cell and share no hole
+    at all -- the ordinary case for point-to-point wiring -- so a board could be routed with
+    bare wires lying across each other and reported perfectly clean. That is the failure this
+    rule exists for, and it is a hard error: on the solder side there is nothing between the
+    two conductors but air, and they will short as soon as either is pressed down.
+
+    PORT NOTE. The TypeScript engine had only the shared-hole check, so this rule reports
+    violations its golden fixtures do not contain (two of the fifteen). The fixtures are the
+    proof that the port REPRODUCES the original, which cannot also mean the port may never
+    improve on it -- see PYTHON_ONLY_RULES in tests/test_drc.py, where the divergence is
+    recorded rather than hidden, and pinned by its own test.
+    """
+    violations: list[DrcViolation] = []
+    blocked = [c for c in doc.conductors if is_crossing_blocked(c)]
+
+    for a, b in itertools.combinations(blocked, 2):
+        if a.side != b.side:
+            continue  # Opposite faces of the board: no contact.
+
+        net_a = conductor_net_index.get(a.id)
+        net_b = conductor_net_index.get(b.id)
+        if net_a is not None and net_a == net_b:
+            continue  # Same physical net: touching is harmless.
+
+        # A shared hole is rule 4's business, and reporting both would name one defect twice.
+        if {hole_key(h) for h in a.path} & {hole_key(h) for h in b.path}:
+            continue
+
+        at = paths_cross(a.path, b.path)
+        if at is None:
+            continue
+        violations.append(
+            DrcViolation(
+                rule="conductor-crossing",
+                severity="error",
+                message=(
+                    f"Conductor {a.id} ({a.kind}) and conductor {b.id} ({b.kind}) cross each "
+                    f"other near {_safe_hole(at)} on the {a.side} side, between holes rather "
+                    f"than at one. Neither kind can cross: on perfboard they would touch and "
+                    f"short. Reroute one of them, or make it an insulated wire — which may "
+                    f"cross — or let the router lay an insulated hop just over the crossing."
+                ),
+                holes=(at,),
+                conductor_ids=tuple(sorted((a.id, b.id))),
+            )
+        )
     return violations
 
 
@@ -900,6 +962,7 @@ def run_drc(
         *_check_components_off_board(doc, lookup),
         *_check_duplicate_pin_holes(doc, lookup),
         *_check_crossing_conductors(doc, conductor_net_index),
+        *_check_conductor_geometry_crossings(doc, conductor_net_index),
         *_check_solder_trace_paths(doc),
         *_check_solder_trace_proximity(doc, node_index),
         *_check_pad_lifting_risk(doc, options),

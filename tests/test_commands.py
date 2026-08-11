@@ -31,8 +31,10 @@ from perfstudio.commands import (
     DEFAULT_BOARD,
     STANDARD_COMMANDS,
     AddConductorPayload,
+    AddConductorsPayload,
     AddCutPayload,
     DeleteComponentPayload,
+    DeleteConductorsPayload,
     MirrorComponentPayload,
     MoveComponentPayload,
     NewLeadBendConductor,
@@ -43,6 +45,7 @@ from perfstudio.commands import (
     RotateComponentPayload,
     SetBoardPayload,
     UpdateComponentPayload,
+    create_document_id_generator,
     create_empty_document,
     create_standard_registry,
 )
@@ -288,6 +291,175 @@ def test_refuses_a_path_that_leaves_the_board():
     )
     assert result.ok is False
     assert result.code == "off-board"
+
+
+# ---------------------------------------------------------------------------
+# conductor.addMany
+# ---------------------------------------------------------------------------
+
+
+def two_traces() -> tuple[NewSolderTraceConductor, NewSolderTraceConductor]:
+    return (
+        NewSolderTraceConductor(path=(HoleCoord(2, 2), HoleCoord(3, 2), HoleCoord(4, 2))),
+        NewSolderTraceConductor(path=(HoleCoord(2, 6), HoleCoord(3, 6))),
+    )
+
+
+def test_adds_every_conductor_as_a_single_undo_step():
+    """The reason this command exists: a planner's output is one thing the user accepted,
+    so it has to be one thing they can take back."""
+    bus = new_bus()
+
+    result = bus.dispatch("conductor.addMany", AddConductorsPayload(conductors=two_traces()))
+
+    assert result.ok is True
+    assert len(bus.document.conductors) == 2
+    assert len(bus.journal()) == 1
+
+    bus.undo()
+
+    assert bus.document.conductors == ()
+
+
+def test_uses_the_supplied_label_as_the_undo_description():
+    bus = new_bus()
+
+    result = bus.dispatch(
+        "conductor.addMany",
+        AddConductorsPayload(conductors=two_traces(), label="Autoroute 2 nets"),
+    )
+
+    assert result.description == "Autoroute 2 nets"
+    assert bus.history() == ("Autoroute 2 nets",)
+
+
+def test_falls_back_to_a_count_when_no_label_is_given():
+    bus = new_bus()
+
+    result = bus.dispatch("conductor.addMany", AddConductorsPayload(conductors=two_traces()))
+
+    assert result.description == "Add 2 conductor(s)"
+
+
+def test_refuses_an_empty_batch_rather_than_putting_a_no_op_on_the_undo_stack():
+    bus = new_bus()
+
+    result = bus.dispatch("conductor.addMany", AddConductorsPayload(conductors=()))
+
+    assert result.ok is False
+    assert result.code == "nothing-to-add"
+    assert bus.journal() == ()
+
+
+def test_a_bad_member_refuses_the_whole_batch_and_leaves_nothing_behind():
+    """All or nothing. A half-applied plan is worse than a rejected one, because the user
+    cannot tell which half they got."""
+    bus = new_bus()
+    good, _ = two_traces()
+    diagonal = NewSolderTraceConductor(path=(HoleCoord(2, 2), HoleCoord(3, 3)))
+
+    result = bus.dispatch("conductor.addMany", AddConductorsPayload(conductors=(good, diagonal)))
+
+    assert result.ok is False
+    assert result.code == "non-orthogonal-path"
+    assert bus.document.conductors == ()
+
+
+def test_supplied_ids_are_used_so_a_batch_replays_reproducibly():
+    bus = new_bus()
+
+    result = bus.dispatch(
+        "conductor.addMany",
+        AddConductorsPayload(conductors=two_traces(), ids=("rail-1", "rail-2")),
+    )
+
+    assert result.ok is True
+    assert [c.id for c in bus.document.conductors] == ["rail-1", "rail-2"]
+
+
+def test_the_wrong_number_of_ids_is_an_error_not_a_partial_mapping():
+    bus = new_bus()
+
+    result = bus.dispatch(
+        "conductor.addMany", AddConductorsPayload(conductors=two_traces(), ids=("only-one",))
+    )
+
+    assert result.ok is False
+    assert result.code == "id-count-mismatch"
+
+
+def test_a_duplicate_id_within_one_batch_is_caught():
+    bus = new_bus()
+
+    result = bus.dispatch(
+        "conductor.addMany", AddConductorsPayload(conductors=two_traces(), ids=("same", "same"))
+    )
+
+    assert result.ok is False
+    assert result.code == "duplicate-id"
+
+
+def test_a_batch_is_validated_exactly_as_a_single_add_is():
+    """The batch exists to save undo entries, not to skip checks -- so a path that
+    conductor.add refuses must be refused here with the same code."""
+    off_board = NewSolderTraceConductor(path=(HoleCoord(0, 0), HoleCoord(-1, 0)))
+    single = new_bus().dispatch("conductor.add", AddConductorPayload(conductor=off_board))
+    batch = new_bus().dispatch("conductor.addMany", AddConductorsPayload(conductors=(off_board,)))
+
+    assert single.ok is batch.ok is False
+    assert single.code == batch.code
+
+
+# ---------------------------------------------------------------------------
+# Id generation against a document that already has ids
+# ---------------------------------------------------------------------------
+
+
+def test_a_loaded_document_can_be_edited_without_colliding_with_its_own_ids():
+    """A bare create_id_generator() restarts at zero, so the next conductor.add on a
+    document whose conductors are already cond-1.. would be refused as a duplicate. Any
+    host that opens a file and then edits it needs create_document_id_generator."""
+    loaded = new_bus()
+    loaded.dispatch("conductor.addMany", AddConductorsPayload(conductors=two_traces()))
+    document = loaded.document
+    assert [c.id for c in document.conductors] == ["cond-1", "cond-2"]
+
+    naive = CommandBus(
+        document, create_standard_registry(), CommandContext(next_id=create_id_generator())
+    )
+    seeded = CommandBus(
+        document,
+        create_standard_registry(),
+        CommandContext(next_id=create_document_id_generator(document)),
+    )
+    another = NewSolderTraceConductor(path=(HoleCoord(2, 9), HoleCoord(3, 9)))
+
+    assert naive.dispatch("conductor.add", AddConductorPayload(conductor=another)).code == "duplicate-id"
+    assert seeded.dispatch("conductor.add", AddConductorPayload(conductor=another)).ok is True
+    assert seeded.document.conductors[-1].id == "cond-3"
+
+
+def test_the_seeded_generator_counts_each_prefix_separately():
+    bus = new_bus()
+    place_r1(bus)
+    bus.dispatch("conductor.addMany", AddConductorsPayload(conductors=two_traces()))
+    next_id = create_document_id_generator(bus.document)
+
+    assert next_id("cond") == "cond-3"
+    assert next_id("cmp") == "cmp-2"
+    assert next_id("cut") == "cut-1"  # No cuts in the document, so this prefix starts fresh.
+
+
+def test_the_seeded_generator_ignores_ids_it_could_not_have_produced():
+    """Only `prefix-<digits>` ids can collide with the generator. A hand-written or
+    imported id is left alone rather than guessed at."""
+    bus = new_bus()
+    bus.dispatch(
+        "conductor.addMany",
+        AddConductorsPayload(conductors=two_traces(), ids=("gnd-rail", "vcc-rail")),
+    )
+
+    assert create_document_id_generator(bus.document)("cond") == "cond-1"
 
 
 # ---------------------------------------------------------------------------
@@ -560,3 +732,52 @@ def test_a_negative_off_board_move_is_refused_not_raised() -> None:
         assert result.code == "off-board"
         assert result.message  # a usable message, not an empty string
         assert bus.document is before, "a refused move must leave the document untouched"
+
+
+# ---------------------------------------------------------------------------
+# conductor.deleteMany
+# ---------------------------------------------------------------------------
+
+
+def test_deletes_every_conductor_as_a_single_undo_step():
+    """Clearing the copper a moved part left behind is one decision to the user; it should take
+    one Ctrl+Z, not one per conductor."""
+    bus = new_bus()
+    bus.dispatch("conductor.addMany", AddConductorsPayload(conductors=two_traces()))
+    ids = tuple(c.id for c in bus.document.conductors)
+
+    result = bus.dispatch(
+        "conductor.deleteMany", DeleteConductorsPayload(ids=ids, label="Remove 2 stale conductor(s)")
+    )
+
+    assert result.ok is True
+    assert result.description == "Remove 2 stale conductor(s)"
+    assert bus.document.conductors == ()
+
+    bus.undo()
+
+    assert len(bus.document.conductors) == 2
+
+
+def test_an_unknown_id_refuses_the_whole_batch():
+    """All or nothing: a partly-applied cleanup leaves the user unable to tell what went."""
+    bus = new_bus()
+    bus.dispatch("conductor.addMany", AddConductorsPayload(conductors=two_traces()))
+
+    result = bus.dispatch(
+        "conductor.deleteMany", DeleteConductorsPayload(ids=("cond-1", "nope"))
+    )
+
+    assert result.ok is False
+    assert result.code == "conductor-not-found"
+    assert len(bus.document.conductors) == 2
+
+
+def test_an_empty_delete_batch_is_refused():
+    bus = new_bus()
+
+    result = bus.dispatch("conductor.deleteMany", DeleteConductorsPayload(ids=()))
+
+    assert result.ok is False
+    assert result.code == "nothing-to-delete"
+    assert bus.journal() == ()

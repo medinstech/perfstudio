@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -34,7 +35,13 @@ import pytest
 
 from perfstudio.commands import DEFAULT_BOARD, create_empty_document
 from perfstudio.footprints import footprint_lookup
-from perfstudio.geometry import coord_to_hole_ref, hole_key
+from perfstudio.geometry import (
+    coord_to_hole_ref,
+    hole_key,
+    hole_ref_to_coord,
+    segments_touch,
+    validate_orthogonal_chain,
+)
 from perfstudio.model import (
     Board,
     BodySpec,
@@ -189,6 +196,70 @@ _FOOTPRINT_LOOKUP = footprint_lookup()
 # THE deliverable: exact match against the TypeScript engine's output.
 # ---------------------------------------------------------------------------
 
+#: Strategies the Python router can offer and the TypeScript engine could not, filtered out of
+#: the `alternatives` comparison below so a new option does not read as a changed answer.
+#:
+#: `solder-trace-hopped` is solder trace with short insulated jumpers where it has to cross
+#: something -- the way a board is actually built when two connections meet, which the original
+#: had no way to express. Pinned by test_a_hopped_route_is_offered_over_an_obstacle.
+PYTHON_ONLY_STRATEGIES = frozenset({"solder-trace-hopped"})
+
+
+@dataclass(frozen=True)
+class _Divergence:
+    """One golden route the Python router deliberately answers differently.
+
+    The new answer is stated in full rather than as a delta, so reading this table tells you
+    what the router does now, and any drift from it fails.
+    """
+
+    #: New best strategy, or None when only the alternatives changed.
+    strategy: str | None
+    #: The whole new alternatives list, with PYTHON_ONLY_STRATEGIES already excluded.
+    alternatives: tuple[str, ...]
+    why: str
+
+
+#: The three golden routes where this router no longer agrees with the TypeScript engine, each
+#: recorded with its reason and asserted individually. Listed rather than filtered: the proof
+#: stays strict everywhere else, and a divergence appearing anywhere NOT in this table fails.
+#:
+#: All three come from one fix. The original engine indexed a wire by its two END holes, so it
+#: could not see that the wire lies across everything between them -- and would route a solder
+#: trace straight through the middle of one, or offer a bare wire lying on top of one. Those
+#: boards cannot be built: on the solder side there is nothing between the two conductors but
+#: air. DRC's conductor-crossing rule reports exactly this, and a router must not produce what
+#: the checker rejects.
+INTENTIONAL_ROUTE_DIVERGENCES: dict[tuple[str, str, str], _Divergence] = {
+    ("sparse", "B2", "F2"): _Divergence(
+        strategy="solder-trace-hopped",
+        alternatives=("insulated-wire", "solder-trace-wired"),
+        why=(
+            "A bare wire crosses the direct path. The original could only answer with an "
+            "insulated wire for the whole run (cost 20.03); this lays solder trace with one "
+            "short jumper over the wire (12.03) -- less wire, less work, and what a person "
+            "building it would do."
+        ),
+    ),
+    ("random-05", "A1", "AD20"): _Divergence(
+        strategy=None,
+        alternatives=("insulated-wire",),
+        why=(
+            "The trace the original also offered ran through holes an existing bare wire lies "
+            "across, so it is no longer offered. The chosen route is unchanged."
+        ),
+    ),
+    ("random-06", "C5", "J9"): _Divergence(
+        strategy="insulated-wire",
+        alternatives=("insulated-wire", "solder-trace-wired"),
+        why=(
+            "The original's winning 16-hole trace passed straight through the bare wire from "
+            "(8,5) to (27,2) -- a short. A legal trace still exists and is still offered, but "
+            "it has to detour, so an insulated wire is now the cheapest option."
+        ),
+    ),
+}
+
 
 @pytest.mark.parametrize("case_name", GOLDEN_CASE_NAMES)
 def test_matches_typescript_golden_routes(case_name: str) -> None:
@@ -200,31 +271,76 @@ def test_matches_typescript_golden_routes(case_name: str) -> None:
         request = RouteRequest(from_=from_hole, to=to_hole)
         result = route_connection(doc, _FOOTPRINT_LOOKUP, request)
 
-        where = f"{case_name}: {coord_to_hole_ref(from_hole)} -> {coord_to_hole_ref(to_hole)}"
+        from_ref = coord_to_hole_ref(from_hole)
+        to_ref = coord_to_hole_ref(to_hole)
+        where = f"{case_name}: {from_ref} -> {to_ref}"
+        divergence = INTENTIONAL_ROUTE_DIVERGENCES.get((case_name, from_ref, to_ref))
+
         assert result.ok == expected["ok"], f"{where}: ok mismatch"
         if not expected["ok"]:
             assert result.alternatives == (), f"{where}: expected no alternatives on failure"
             continue
 
         assert result.best is not None, f"{where}: expected a best candidate"
-        assert result.best.strategy == expected["strategy"], (
+        want_strategy = (
+            divergence.strategy
+            if divergence is not None and divergence.strategy is not None
+            else expected["strategy"]
+        )
+        assert result.best.strategy == want_strategy, (
             f"{where}: strategy mismatch: got {result.best.strategy!r}, "
-            f"expected {expected['strategy']!r}"
-        )
-        assert round(result.best.cost, 6) == expected["cost"], (
-            f"{where}: cost mismatch: got {result.best.cost!r} (rounded "
-            f"{round(result.best.cost, 6)!r}), expected {expected['cost']!r}"
+            f"expected {want_strategy!r}"
+            + (f"\n  intentional divergence: {divergence.why}" if divergence else "")
         )
 
-        path = result.best.conductors[0].path
-        actual_path = [{"col": p.col, "row": p.row} for p in path]
-        assert actual_path == expected["path"], f"{where}: path mismatch"
+        # Cost, path and risk holes describe the ORIGINAL's chosen route, so they are only
+        # comparable where that route is still the one chosen.
+        if want_strategy == expected["strategy"]:
+            assert round(result.best.cost, 6) == expected["cost"], (
+                f"{where}: cost mismatch: got {result.best.cost!r} (rounded "
+                f"{round(result.best.cost, 6)!r}), expected {expected['cost']!r}"
+            )
+            path = result.best.conductors[0].path
+            actual_path = [{"col": p.col, "row": p.row} for p in path]
+            assert actual_path == expected["path"], f"{where}: path mismatch"
 
-        actual_risk_holes = [{"col": p.col, "row": p.row} for p in result.best.risk_holes]
-        assert actual_risk_holes == expected["riskHoles"], f"{where}: riskHoles mismatch"
+            actual_risk_holes = [{"col": p.col, "row": p.row} for p in result.best.risk_holes]
+            assert actual_risk_holes == expected["riskHoles"], f"{where}: riskHoles mismatch"
 
-        actual_alternatives = [a.strategy for a in result.alternatives]
-        assert actual_alternatives == expected["alternatives"], f"{where}: alternatives mismatch"
+        actual_alternatives = [
+            a.strategy for a in result.alternatives if a.strategy not in PYTHON_ONLY_STRATEGIES
+        ]
+        want_alternatives = (
+            list(divergence.alternatives) if divergence is not None else expected["alternatives"]
+        )
+        assert actual_alternatives == want_alternatives, (
+            f"{where}: alternatives mismatch: got {actual_alternatives}, "
+            f"expected {want_alternatives}"
+            + (f"\n  intentional divergence: {divergence.why}" if divergence else "")
+        )
+
+
+def test_every_recorded_divergence_still_happens() -> None:
+    """A divergence that stopped happening means the table is stale and the proof has quietly
+    loosened. Each entry has to still be earning its exemption."""
+    for (case_name, from_ref, to_ref), divergence in INTENTIONAL_ROUTE_DIVERGENCES.items():
+        doc, _routes = _load_golden_routes(case_name)
+        result = route_connection(
+            doc,
+            _FOOTPRINT_LOOKUP,
+            RouteRequest(from_=hole_ref_to_coord(from_ref), to=hole_ref_to_coord(to_ref)),
+        )
+        assert result.ok, f"{case_name} {from_ref}->{to_ref} no longer routes at all"
+        assert result.best is not None
+        if divergence.strategy is not None:
+            assert result.best.strategy == divergence.strategy, (
+                f"{case_name} {from_ref}->{to_ref} no longer diverges; remove it from "
+                "INTENTIONAL_ROUTE_DIVERGENCES"
+            )
+        offered = [
+            a.strategy for a in result.alternatives if a.strategy not in PYTHON_ONLY_STRATEGIES
+        ]
+        assert offered == list(divergence.alternatives)
 
 
 def test_golden_case_count_is_fifteen() -> None:
@@ -295,6 +411,16 @@ def trace(id_: str, path: tuple[HoleCoord, ...]) -> SolderTraceConductor:
 
 def wire(id_: str, path: tuple[HoleCoord, ...]) -> WireConductor:
     return WireConductor(id=id_, path=path, kind="bare-wire", side="bottom")
+
+
+def crossing_wire(id_: str, col: int) -> WireConductor:
+    """A bare wire straight down a column, spanning the board: another connection in the way.
+
+    This, not a rail of solder, is what a crossing is made of. A solder-trace obstacle would
+    also charge the hop R5' proximity risk on both sides -- correct, and it would mask whether
+    the hop itself works.
+    """
+    return wire(id_, (h(col, 0), h(col, DEFAULT_BOARD.rows - 1)))
 
 
 def doc(
@@ -510,3 +636,146 @@ def test_steps_around_a_pin_sitting_in_the_direct_path() -> None:
     if r.best is not None and r.best.strategy.startswith("solder-trace"):
         keys = {hole_key(p) for p in r.best.conductors[0].path}
         assert hole_key(h(4, 4)) not in keys
+
+
+# ---------------------------------------------------------------------------
+# Crossings: the router must not make a board that cannot exist
+# ---------------------------------------------------------------------------
+
+
+def test_a_bare_wire_is_refused_when_it_would_lie_across_another() -> None:
+    """The hole checks alone missed this. Two runs at an angle cross BETWEEN holes, sharing
+    none, so the router used to produce boards with bare wires resting on each other -- a
+    short, and exactly what DRC's conductor-crossing rule reports."""
+    existing = wire("w-existing", (h(2, 8), h(12, 2)))
+    board = doc((comp("c1", "A", h(2, 2)), comp("c2", "B", h(12, 8))), (existing,))
+
+    result = route_connection(board, _FOOTPRINT_LOOKUP, RouteRequest(from_=h(2, 2), to=h(12, 8)))
+
+    assert result.ok
+    assert "bare-wire" not in [a.strategy for a in result.alternatives]
+
+
+def test_a_bare_wire_is_still_offered_when_it_crosses_nothing() -> None:
+    board = doc((comp("c1", "A", h(2, 2)), comp("c2", "B", h(12, 8))))
+
+    result = route_connection(board, _FOOTPRINT_LOOKUP, RouteRequest(from_=h(2, 2), to=h(12, 8)))
+
+    assert "bare-wire" in [a.strategy for a in result.alternatives]
+
+
+def test_a_hopped_route_is_offered_over_an_obstacle() -> None:
+    """A wall of foreign copper across the direct path, with clear board either side. A solder
+    trace cannot pass through it and a whole insulated wire is more wire than the job needs;
+    the hop is trace up to the obstacle, a jumper over it, trace onwards."""
+    wall = crossing_wire("t-wall", 6)
+    board = doc((comp("c1", "A", h(2, 4)), comp("c2", "B", h(10, 4))), (wall,))
+
+    result = route_connection(board, _FOOTPRINT_LOOKUP, RouteRequest(from_=h(2, 4), to=h(10, 4)))
+
+    hopped = next((a for a in result.alternatives if a.strategy == "solder-trace-hopped"), None)
+    assert hopped is not None
+    kinds = [c.kind for c in hopped.conductors]
+    assert "insulated-wire" in kinds, kinds
+    assert any(k.startswith("solder-trace") for k in kinds), kinds
+    # The jumper is short: it steps over the wall, it does not span the connection.
+    jumper = next(c for c in hopped.conductors if c.kind == "insulated-wire")
+    assert len(jumper.path) == 2
+    assert abs(jumper.path[0].col - jumper.path[1].col) <= 4
+
+
+def test_the_hop_beats_a_whole_wire_on_a_short_run() -> None:
+    """Mostly solder with one jumper has to actually win sometimes, or the router would never
+    choose the thing a builder would.
+
+    Short runs, specifically. A solder trace costs about 0.39 per mm against insulated wire's
+    0.20, so past roughly ten holes one clean wire really is less work than a long trace plus a
+    jumper -- and the router says so. CrossingPolicy is there for anyone who disagrees.
+    """
+    wall = crossing_wire("t-wall", 6)
+    board = doc((comp("c1", "A", h(2, 4)), comp("c2", "B", h(10, 4))), (wall,))
+
+    result = route_connection(board, _FOOTPRINT_LOOKUP, RouteRequest(from_=h(2, 4), to=h(10, 4)))
+
+    assert result.best is not None
+    assert result.best.strategy == "solder-trace-hopped"
+    # Cheaper than running wire the whole way, which is the claim.
+    whole_wire = next(a for a in result.alternatives if a.strategy == "insulated-wire")
+    assert result.best.cost < whole_wire.cost
+
+
+def test_the_wire_policy_offers_no_hop() -> None:
+    """For a builder who would rather run one clean wire than solder up to a jumper."""
+    wall = crossing_wire("t-wall", 6)
+    board = doc((comp("c1", "A", h(2, 4)), comp("c2", "B", h(10, 4))), (wall,))
+
+    result = route_connection(
+        board,
+        _FOOTPRINT_LOOKUP,
+        RouteRequest(from_=h(2, 4), to=h(10, 4)),
+        RouterOptions(crossing_policy="wire"),
+    )
+
+    assert "solder-trace-hopped" not in [a.strategy for a in result.alternatives]
+    assert result.best is not None
+    assert result.best.strategy == "insulated-wire"
+
+
+def test_the_refuse_policy_uses_no_wire_at_all_and_says_so() -> None:
+    """"I don't want wire on my board" has to be answerable. An unroutable connection is
+    reported, never quietly made with wire the user declined."""
+    wall = crossing_wire("t-wall", 6)
+    board = doc((comp("c1", "A", h(2, 4)), comp("c2", "B", h(10, 4))), (wall,))
+
+    result = route_connection(
+        board,
+        _FOOTPRINT_LOOKUP,
+        RouteRequest(from_=h(2, 4), to=h(10, 4)),
+        RouterOptions(crossing_policy="refuse"),
+    )
+
+    assert result.ok is False
+    assert result.reason is not None
+    assert "policy" in result.reason
+
+
+def test_the_refuse_policy_still_routes_what_solder_can_reach() -> None:
+    board = doc((comp("c1", "A", h(2, 4)), comp("c2", "B", h(6, 4))))
+
+    result = route_connection(
+        board,
+        _FOOTPRINT_LOOKUP,
+        RouteRequest(from_=h(2, 4), to=h(6, 4)),
+        RouterOptions(crossing_policy="refuse"),
+    )
+
+    assert result.ok
+    assert result.best is not None
+    assert result.best.strategy == "solder-trace"
+
+
+def test_a_hopped_route_does_not_itself_cross_anything() -> None:
+    """The whole point. Every solder-trace run it lays must be clear of the obstacle, only the
+    insulated jumpers may pass over it, and each trace must still be a legal adjacent chain.
+
+    That last one is not decoration: an earlier version placed the hop one step too early, so
+    the trace after it inherited the jump and came out with a hole missing from its chain -- a
+    "solder trace" that solder could not actually follow.
+    """
+    wall = crossing_wire("t-wall", 6)
+    board = doc((comp("c1", "A", h(2, 4)), comp("c2", "B", h(14, 4))), (wall,))
+    result = route_connection(board, _FOOTPRINT_LOOKUP, RouteRequest(from_=h(2, 4), to=h(14, 4)))
+    hopped = next(a for a in result.alternatives if a.strategy == "solder-trace-hopped")
+
+    wall_segments = [(wall.path[i], wall.path[i + 1]) for i in range(len(wall.path) - 1)]
+    for conductor in hopped.conductors:
+        if conductor.kind == "insulated-wire":
+            continue  # Insulation is what lets it cross.
+        assert validate_orthogonal_chain(conductor.path).ok, (
+            f"{conductor.kind} path is not an adjacent chain: {conductor.path}"
+        )
+        for i in range(len(conductor.path) - 1):
+            a, b = conductor.path[i], conductor.path[i + 1]
+            assert not any(segments_touch(a, b, s, e) for s, e in wall_segments), (
+                f"{conductor.kind} run {a} -> {b} crosses the wall"
+            )

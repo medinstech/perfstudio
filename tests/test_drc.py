@@ -231,11 +231,32 @@ def _violation_to_jsonable(v: DrcViolation) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+#: Rules the Python engine reports and the TypeScript engine never had, excluded from the
+#: differential comparison below.
+#:
+#: The golden fixtures prove the port REPRODUCES the original. That cannot also mean the port
+#: may never improve on it: `conductor-crossing` catches two conductors that cross BETWEEN
+#: holes, which the original's hole-list comparison could not see at all -- so a board could
+#: be routed with two bare wires lying across each other and come back reported clean. Two of
+#: the fifteen fixtures (random-01, random-04) contain exactly that.
+#:
+#: Excluded here rather than pasted into the .expected.json files, because those are dumps
+#: from the TypeScript engine and editing them by hand would make the next regeneration
+#: silently disagree. The divergence is deliberate, recorded, and pinned by
+#: test_the_python_only_crossing_rule_fires_where_typescript_was_blind below -- never merely
+#: filtered away.
+PYTHON_ONLY_RULES = frozenset({"conductor-crossing"})
+
+
 @pytest.mark.parametrize("case_name", GOLDEN_CASE_NAMES)
 def test_matches_typescript_golden_drc(case_name: str) -> None:
     doc, expected_violations = _load_golden(case_name)
 
-    actual_violations = [_violation_to_jsonable(v) for v in run_drc(doc, _FOOTPRINT_LOOKUP)]
+    actual_violations = [
+        _violation_to_jsonable(v)
+        for v in run_drc(doc, _FOOTPRINT_LOOKUP)
+        if v.rule not in PYTHON_ONLY_RULES
+    ]
 
     if actual_violations != expected_violations:
         actual_rules = [v["rule"] for v in actual_violations]
@@ -717,3 +738,80 @@ def test_default_drc_options_is_a_stable_fully_populated_defaults_object() -> No
     assert DEFAULT_DRC_OPTIONS.creepage_voltage_threshold_v == 300
     assert DEFAULT_DRC_OPTIONS.max_lead_bend_holes == 4
     assert isinstance(DEFAULT_DRC_OPTIONS, DrcOptions)
+
+
+# ---------------------------------------------------------------------------
+# The one place the port deliberately reports more than the original
+# ---------------------------------------------------------------------------
+
+
+def test_the_python_only_crossing_rule_fires_where_typescript_was_blind() -> None:
+    """Pins the divergence PYTHON_ONLY_RULES excludes, so it stays an improvement rather than
+    becoming a hole in the proof.
+
+    random-01 and random-04 each contain two conductors that cross between holes. The
+    TypeScript engine compared hole lists, so it saw nothing; both fixtures record a clean
+    result for that rule. Whichever way this test fails -- the rule stopping firing, or firing
+    somewhere new -- is something to look at.
+    """
+    fired: dict[str, int] = {}
+    for case_name in GOLDEN_CASE_NAMES:
+        doc, _expected = _load_golden(case_name)
+        count = sum(
+            1 for v in run_drc(doc, _FOOTPRINT_LOOKUP) if v.rule == "conductor-crossing"
+        )
+        if count:
+            fired[case_name] = count
+
+    assert fired == {"random-01": 1, "random-04": 1}
+
+
+def test_a_geometric_crossing_is_reported_as_an_error() -> None:
+    """Two bare wires crossing mid-cell, sharing no hole. This is the shape the hole-list rule
+    cannot see, and on the solder side there is nothing between them but air."""
+    doc = make_doc(
+        conductors=(
+            bare_wire("w1", (hole(1, 1), hole(9, 5))),
+            bare_wire("w2", (hole(8, 1), hole(2, 6))),
+        )
+    )
+
+    violations = by_rule(run_drc(doc, _FOOTPRINT_LOOKUP), "conductor-crossing")
+
+    assert len(violations) == 1
+    assert violations[0].severity == "error"
+    assert violations[0].conductor_ids == ("w1", "w2")
+
+
+def test_an_insulated_wire_may_cross_anything() -> None:
+    """That is what insulation is for, and what makes it worth its extra cost in the router."""
+    insulated = WireConductor(
+        id="w2", path=(hole(8, 1), hole(2, 6)), kind="insulated-wire", side="bottom"
+    )
+    doc = make_doc(conductors=(bare_wire("w1", (hole(1, 1), hole(9, 5))), insulated))
+
+    assert by_rule(run_drc(doc, _FOOTPRINT_LOOKUP), "conductor-crossing") == []
+
+
+def test_conductors_on_opposite_faces_do_not_cross() -> None:
+    doc = make_doc(
+        conductors=(
+            bare_wire("w1", (hole(1, 1), hole(9, 5)), side="bottom"),
+            bare_wire("w2", (hole(8, 1), hole(2, 6)), side="top"),
+        )
+    )
+
+    assert by_rule(run_drc(doc, _FOOTPRINT_LOOKUP), "conductor-crossing") == []
+
+
+def test_two_conductors_meeting_at_a_pad_are_a_junction_not_a_crossing() -> None:
+    """A shared endpoint is how two runs are deliberately joined. Reporting it would flag
+    every routed net."""
+    doc = make_doc(
+        conductors=(
+            bare_wire("w1", (hole(1, 1), hole(5, 5))),
+            bare_wire("w2", (hole(5, 5), hole(9, 1))),
+        )
+    )
+
+    assert by_rule(run_drc(doc, _FOOTPRINT_LOOKUP), "conductor-crossing") == []

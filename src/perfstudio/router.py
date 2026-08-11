@@ -38,6 +38,22 @@ would have a better asymptotic constant, but it would also change which of sever
 equal-f nodes is popped first, and that can silently pick a different (still optimal,
 but different) path -- which would break byte-for-byte agreement with the golden
 fixtures dumped from the TypeScript engine. Keep the linear scan.
+
+KNOWN COST-MODEL LIMITATION, kept for the same reason. The spine surcharge is applied
+AFTER the search, once the path length is known (see ``_solder_trace_candidate``), so it
+is not part of what A* minimises. A long detour that avoids proximity risk can therefore
+be chosen over a shorter risky path and only then pick up the surcharge that makes it the
+more expensive of the two -- e.g. a 12-step clear detour (12, then +6 spine = 18) beating
+a 2-step path with one risk hole (14). Both routes are legal and buildable and the
+difference is small, so this is a quality wart rather than a defect.
+
+Expressing it properly means running the search twice -- once bounded to a pure trace's
+maximum length, once unbounded -- and comparing the finished candidates. That is a real
+improvement and it would change which path some existing routes take, which is exactly
+what the golden fixtures exist to detect. It is deliberately NOT done here: the
+differential proof against the TypeScript engine is worth more than the last few percent
+of route quality, and a caller who needs the shorter route can already pick it out of
+``RouteResult.alternatives``.
 """
 
 from __future__ import annotations
@@ -50,7 +66,6 @@ from typing import Literal, TypeAlias
 from .commands import NewConductor, NewSolderTraceConductor, NewWireConductor
 from .connectivity import FootprintLookup, PhysicalNet, extract_physical_nets
 from .geometry import (
-    coord_to_hole_ref,
     format_hole,
     hole_key,
     hole_to_mm,
@@ -58,9 +73,19 @@ from .geometry import (
     manhattan,
     neighbors4,
     path_length_mm,
+    holes_under_line,
     same_hole,
+    segments_touch,
 )
-from .model import Board, HoleCoord, NetId, PerfDocument, SolderBuildup, SpineSpec
+from .model import (
+    Board,
+    HoleCoord,
+    NetId,
+    PerfDocument,
+    SolderBuildup,
+    SpineSpec,
+    is_crossing_blocked,
+)
 from .occupancy import OccupancyIndex, build_occupancy
 
 # ---------------------------------------------------------------------------
@@ -93,9 +118,29 @@ class RouterCosts:
     #: This is DRC rule R5' expressed as money instead of a warning, so the search
     #: steers around risky ground instead of merely reporting it afterwards.
     proximity_risk: float = 12
+    #: One short insulated jumper carrying a solder trace over something it may not cross.
+    #: Cheaper than ``insulated_wire_fixed`` because that prices a whole run -- measuring,
+    #: cutting, stripping and dressing a wire across the board -- whereas a hop is a
+    #: two-or-three-hole offcut. Pricing them the same would mean a run needing one crossing
+    #: might as well be wire end to end, which is the opposite of what a builder wants.
+    insulated_hop_fixed: float = 10
 
 
 DEFAULT_ROUTER_COSTS = RouterCosts()
+
+
+#: What the router may do when a connection cannot be made without crossing something that
+#: must not be crossed. This is a judgement about the builder, not about the board, so it is
+#: theirs to make:
+#:
+#:   "hop"    Solder trace as far as it goes, and one short insulated jumper over each
+#:            obstacle. The default, because it is what someone building by hand does: most
+#:            of the run is solder and only the crossing costs a piece of wire.
+#:   "wire"   A crossing means a single insulated wire for the whole connection, end to end.
+#:            For anyone who would rather run one clean wire than solder up to a jumper.
+#:   "refuse" No wire of any kind. Solder traces only, and a connection that needs more is
+#:            reported unrouted rather than made with wire the user did not ask for.
+CrossingPolicy: TypeAlias = Literal["hop", "wire", "refuse"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,6 +152,12 @@ class RouterOptions:
     allow_top_jumper: bool = False
     #: Search ceiling, so a hopeless request fails fast instead of scanning the board.
     max_expanded_nodes: int = 20000
+    #: See :data:`CrossingPolicy`.
+    crossing_policy: CrossingPolicy = "hop"
+    #: How many blocked holes one insulated hop may span. A wire crossing occupies about one
+    #: hole and a trace two or three; past that the obstacle is a wall, not something to step
+    #: over, and the search should go round it instead.
+    max_hop_holes: int = 3
 
 
 DEFAULT_ROUTER_OPTIONS = RouterOptions()
@@ -116,7 +167,15 @@ DEFAULT_ROUTER_OPTIONS = RouterOptions()
 # ---------------------------------------------------------------------------
 
 RouteStrategy: TypeAlias = Literal[
-    "solder-trace", "solder-trace-wired", "bare-wire", "insulated-wire", "top-jumper"
+    "solder-trace",
+    "solder-trace-wired",
+    "bare-wire",
+    "insulated-wire",
+    "top-jumper",
+    #: Solder trace with one or more short insulated jumpers where it has to cross something.
+    #: Several conductors in one candidate -- which RouteCandidate.conductors has always been
+    #: a tuple for.
+    "solder-trace-hopped",
 ]
 
 
@@ -149,6 +208,19 @@ class RouteRequest:
     #: Net being routed. Holes already on this net are free to pass through.
     net_id: NetId | None = None
     buildup: SolderBuildup | None = None
+    #: Holes the SCHEMATIC intends to be this same net, whether or not the board joins
+    #: them yet -- normally every pin hole of the net (``ratsnest.NetRatsnest.pin_holes``).
+    #:
+    #: Without this, the router can only see PHYSICAL nets, so every unrouted pin of the
+    #: very net being routed looks like foreign copper: passing beside one is charged R5'
+    #: proximity risk and passing through one is forbidden outright. Both are wrong, and
+    #: together they rule out the standard perfboard technique -- run a rail along the row
+    #: and let it pick up each pin on the way (PLAN.md Sec 6.2). Supplying these holes
+    #: says "this ground is mine", which makes the rail both legal and cheap.
+    #:
+    #: Empty by default, so a caller that does not supply it gets exactly the
+    #: point-to-point behaviour the golden fixtures pin down.
+    net_holes: tuple[HoleCoord, ...] = ()
 
 
 # ---------------------------------------------------------------------------
@@ -173,7 +245,17 @@ def route_connection(
     occupancy = build_occupancy(doc, lookup)
     net_at = _build_net_index(doc, lookup)
     ctx = _RouteContext(
-        doc=doc, occupancy=occupancy, net_at=net_at, opts=options, own_net_id=request.net_id
+        doc=doc,
+        occupancy=occupancy,
+        net_at=net_at,
+        opts=options,
+        own_net_id=request.net_id,
+        net_holes=frozenset(hole_key(hole) for hole in request.net_holes),
+        declared_own_nets=frozenset(
+            net_id for net_id in (net_at(hole) for hole in request.net_holes) if net_id is not None
+        ),
+        blocked_segments=_blocked_segments(doc),
+        swept_blocked_holes=_trace_blocked_holes(doc),
     )
 
     candidates: list[RouteCandidate] = []
@@ -181,26 +263,38 @@ def route_connection(
     trace = _solder_trace_candidate(ctx, from_, to, buildup)
     if trace is not None:
         candidates.append(trace)
-    bare = _straight_wire_candidate(ctx, from_, to, "bare-wire")
-    if bare is not None:
-        candidates.append(bare)
-    insulated = _straight_wire_candidate(ctx, from_, to, "insulated-wire")
-    if insulated is not None:
-        candidates.append(insulated)
-    if options.allow_top_jumper:
-        jumper = _straight_wire_candidate(ctx, from_, to, "top-jumper")
-        if jumper is not None:
-            candidates.append(jumper)
+
+    # What may be used when solder alone cannot get there is the BUILDER's decision, so it is
+    # read from the options rather than assumed -- see CrossingPolicy.
+    policy = options.crossing_policy
+    if policy == "hop":
+        hopped = _hopping_trace_candidate(ctx, from_, to, buildup)
+        if hopped is not None:
+            candidates.append(hopped)
+    if policy != "refuse":
+        bare = _straight_wire_candidate(ctx, from_, to, "bare-wire")
+        if bare is not None:
+            candidates.append(bare)
+        insulated = _straight_wire_candidate(ctx, from_, to, "insulated-wire")
+        if insulated is not None:
+            candidates.append(insulated)
+        if options.allow_top_jumper:
+            jumper = _straight_wire_candidate(ctx, from_, to, "top-jumper")
+            if jumper is not None:
+                candidates.append(jumper)
 
     candidates.sort(key=lambda c: (c.cost, c.strategy))
     if not candidates:
+        refused = (
+            " No wire is allowed by the current crossing policy, so only a solder trace was "
+            "tried."
+            if policy == "refuse"
+            else " Every strategy was blocked — try moving a part, or allow a top jumper."
+        )
         return RouteResult(
             ok=False,
             alternatives=(),
-            reason=(
-                f"No route found from {format_hole(from_)} to {format_hole(to)}. "
-                "Every strategy was blocked — try moving a part, or allow a top jumper."
-            ),
+            reason=f"No route found from {format_hole(from_)} to {format_hole(to)}.{refused}",
         )
     best = candidates[0]
     return RouteResult(ok=True, best=best, alternatives=tuple(candidates))
@@ -219,6 +313,56 @@ class _RouteContext:
     net_at: Callable[[HoleCoord], str | None]
     opts: RouterOptions
     own_net_id: NetId | None
+    #: Hole keys of ``RouteRequest.net_holes``. Empty for a plain point-to-point request.
+    net_holes: frozenset[str] = frozenset()
+    #: Segments of existing conductors that may not be crossed, on the solder side.
+    #: Checked geometrically, because occupancy is per HOLE and two runs cross between holes
+    #: (see geometry.segments_touch) -- which is how the router used to produce boards with
+    #: bare wires lying across each other that DRC then reported as clean.
+    blocked_segments: tuple[tuple[HoleCoord, HoleCoord], ...] = ()
+    #: Hole keys those segments sweep across, including the ones a wire merely passes over.
+    #: Precomputed so the trace search can reject them in constant time.
+    swept_blocked_holes: frozenset[str] = frozenset()
+    #: Physical net ids those declared holes already sit in -- precomputed here rather
+    #: than rediscovered per neighbour, since the set is fixed for the whole search.
+    declared_own_nets: frozenset[str] = frozenset()
+
+
+def _blocked_segments(doc: PerfDocument) -> tuple[tuple[HoleCoord, HoleCoord], ...]:
+    """Every solder-side run of existing conductor that a new one may not cross."""
+    segments: list[tuple[HoleCoord, HoleCoord]] = []
+    for conductor in doc.conductors:
+        if conductor.side != "bottom" or not is_crossing_blocked(conductor):
+            continue
+        for index in range(len(conductor.path) - 1):
+            segments.append((conductor.path[index], conductor.path[index + 1]))
+    return tuple(segments)
+
+
+def _trace_blocked_holes(doc: PerfDocument) -> frozenset[str]:
+    """Holes a new solder trace may not use because existing copper lies across them.
+
+    The holes a conductor's `path` LISTS are already blocked by the occupancy index; these are
+    the ones it only passes over, which for a wire is everything between its two ends. Kept
+    here rather than folded into occupancy because that index's golden output is part of the
+    differential proof against the TypeScript engine, and widening it moves three suites at
+    once -- see the note in occupancy.build_occupancy.
+    """
+    keys: set[str] = set()
+    for conductor in doc.conductors:
+        if conductor.side != "bottom" or not is_crossing_blocked(conductor):
+            continue
+        for index in range(len(conductor.path) - 1):
+            for hole in holes_under_line(conductor.path[index], conductor.path[index + 1]):
+                keys.add(hole_key(hole))
+    return frozenset(keys)
+
+
+def _crosses_existing(ctx: _RouteContext, a: HoleCoord, b: HoleCoord) -> bool:
+    """Would a straight run from ``a`` to ``b`` lie across existing uncrossable copper?"""
+    return any(
+        segments_touch(a, b, start, end) for start, end in ctx.blocked_segments
+    )
 
 
 def _build_net_index(doc: PerfDocument, lookup: FootprintLookup) -> Callable[[HoleCoord], str | None]:
@@ -269,7 +413,7 @@ def _solder_trace_candidate(
     )
 
     parts: list[str] = [
-        f"{len(path)} pads from {coord_to_hole_ref(from_)} to {coord_to_hole_ref(to)}"
+        f"{len(path)} pads from {format_hole(from_)} to {format_hole(to)}"
     ]
     if needs_spine:
         parts.append(
@@ -291,6 +435,257 @@ def _solder_trace_candidate(
         explanation=f"Solder trace: {'; '.join(parts)}.",
         risk_holes=risk_holes,
     )
+
+
+# ---------------------------------------------------------------------------
+# Strategy 1b: solder trace that hops what it may not cross
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class _Step:
+    """One step of a hopping path: where it lands, and whether it got there over an obstacle."""
+
+    hole: HoleCoord
+    hopped: bool
+
+
+def _hopping_trace_candidate(
+    ctx: _RouteContext, from_: HoleCoord, to: HoleCoord, buildup: SolderBuildup
+) -> RouteCandidate | None:
+    """Solder trace most of the way, with a short insulated jumper over each blockage.
+
+    This is how a perfboard actually gets built when two connections have to cross. You do not
+    run wire the whole way and you cannot run solder through another net's copper; you solder
+    up to the obstacle, bridge it with a scrap of insulated wire, and carry on soldering. The
+    result is several conductors for one connection, which ``RouteCandidate.conductors`` has
+    always been a tuple to allow.
+
+    Only offered under ``CrossingPolicy`` "hop". Under "wire" the whole run becomes one
+    insulated wire instead, and under "refuse" neither is offered and the connection is
+    reported unrouted -- the user's call, not the router's.
+    """
+    steps = _find_hopping_path(ctx, from_, to)
+    if steps is None:
+        return None
+    if not any(step.hopped for step in steps):
+        return None  # No obstacle: the plain solder-trace candidate already covers this.
+
+    costs = ctx.opts.costs
+    conductors: list[NewConductor] = []
+    risk_holes: list[HoleCoord] = []
+    cost = 0.0
+    hops = 0
+
+    run: list[HoleCoord] = [steps[0].hole]
+    for step in steps[1:]:
+        if not step.hopped:
+            run.append(step.hole)
+            continue
+        # A hop closes the trace run before it, then jumps.
+        cost += _emit_trace_run(ctx, run, buildup, conductors, risk_holes, from_, to)
+        hop_from, hop_to = run[-1], step.hole
+        conductors.append(
+            NewWireConductor(
+                path=(hop_from, hop_to),
+                kind="insulated-wire",
+                side="bottom",
+                net_id=ctx.own_net_id,
+                # Above the copper it steps over, so the 3D view stacks it correctly.
+                layer_z=1,
+            )
+        )
+        cost += costs.insulated_hop_fixed + path_length_mm((hop_from, hop_to), ctx.doc.board) * (
+            costs.insulated_wire_per_mm
+        )
+        hops += 1
+        run = [step.hole]
+    cost += _emit_trace_run(ctx, run, buildup, conductors, risk_holes, from_, to)
+
+    if not conductors:
+        return None
+
+    trace_count = sum(1 for c in conductors if c.kind in ("solder-trace", "solder-trace-wired"))
+    parts = [
+        f"solder trace from {format_hole(from_)} to {format_hole(to)} in {trace_count} run(s), "
+        f"with {hops} insulated hop(s) over conductors it may not cross"
+    ]
+    if risk_holes:
+        holes_text = ", ".join(format_hole(hole) for hole in risk_holes)
+        parts.append(
+            f"{len(risk_holes)} pad(s) sit next to a different net ({holes_text}) — check "
+            "isolation there after soldering"
+        )
+    return RouteCandidate(
+        strategy="solder-trace-hopped",
+        conductors=tuple(conductors),
+        cost=cost,
+        explanation=f"Hopped solder trace: {'; '.join(parts)}.",
+        risk_holes=tuple(risk_holes),
+    )
+
+
+def _emit_trace_run(
+    ctx: _RouteContext,
+    run: list[HoleCoord],
+    buildup: SolderBuildup,
+    conductors: list[NewConductor],
+    risk_holes: list[HoleCoord],
+    from_: HoleCoord,
+    to: HoleCoord,
+) -> float:
+    """Append one solder-trace conductor for ``run`` and return its cost.
+
+    A run of a single hole is not a conductor -- it is the landing pad of one hop and the
+    take-off of the next, which happens when two obstacles sit two holes apart. The pad is
+    still joined, by the two wires that meet on it.
+    """
+    if len(run) < 2:
+        return 0.0
+    costs = ctx.opts.costs
+    risky = [hole for hole in run if _has_foreign_neighbour(ctx, hole, from_, to)]
+    risk_holes.extend(risky)
+    needs_spine = len(run) > ctx.opts.max_pure_solder_trace_pads
+    conductors.append(
+        NewSolderTraceConductor(
+            path=tuple(run),
+            buildup=buildup,
+            spine=SpineSpec(material="tinned-copper", gauge=0.6) if needs_spine else None,
+            net_id=ctx.own_net_id,
+            layer_z=0,
+            kind="solder-trace-wired" if needs_spine else "solder-trace",
+            side="bottom",
+        )
+    )
+    return (
+        (len(run) - 1) * costs.solder_trace_step
+        + len(risky) * costs.proximity_risk
+        + (costs.solder_trace_spine_fixed if needs_spine else 0.0)
+    )
+
+
+def _find_hopping_path(
+    ctx: _RouteContext, from_: HoleCoord, to: HoleCoord
+) -> list[_Step] | None:
+    """A* over holes where, as well as stepping to a free neighbour, the search may JUMP over
+    up to ``max_hop_holes`` blocked ones in a straight line and land on a free hole.
+
+    Separate from ``_find_solder_trace_path`` rather than a flag on it, because that function
+    reproduces the TypeScript engine's search exactly and forty-five golden routes depend on
+    it doing so. A hop is a different move with a different cost, and bolting it on would put
+    the differential proof at risk for no gain.
+    """
+    costs = ctx.opts.costs
+    start_key = hole_key(from_)
+    goal_key = hole_key(to)
+
+    g_score: dict[str, float] = {start_key: 0.0}
+    came_from: dict[str, tuple[HoleCoord, bool]] = {}
+    open_list: list[_OpenEntry] = [
+        _OpenEntry(hole=from_, f=manhattan(from_, to) * costs.solder_trace_step)
+    ]
+    closed: set[str] = set()
+    expanded = 0
+
+    while open_list:
+        best_index = 0
+        for i in range(1, len(open_list)):
+            if open_list[i].f < open_list[best_index].f:
+                best_index = i
+        current = open_list.pop(best_index)
+        current_key = hole_key(current.hole)
+        if current_key == goal_key:
+            return _reconstruct_steps(came_from, current.hole, from_)
+        if current_key in closed:
+            continue
+        closed.add(current_key)
+
+        expanded += 1
+        if expanded > ctx.opts.max_expanded_nodes:
+            return None
+
+        g = g_score.get(current_key, math.inf)
+        for move_to, hopped, step_cost in _moves_from(ctx, current.hole, from_, to):
+            next_key = hole_key(move_to)
+            if next_key in closed:
+                continue
+            tentative = g + step_cost
+            if tentative >= g_score.get(next_key, math.inf):
+                continue
+            g_score[next_key] = tentative
+            came_from[next_key] = (current.hole, hopped)
+            open_list.append(
+                _OpenEntry(
+                    hole=move_to,
+                    f=tentative + manhattan(move_to, to) * costs.solder_trace_step,
+                )
+            )
+    return None
+
+
+def _moves_from(
+    ctx: _RouteContext, hole: HoleCoord, from_: HoleCoord, to: HoleCoord
+) -> list[tuple[HoleCoord, bool, float]]:
+    """Legal moves out of a hole: (destination, was it a hop, cost)."""
+    costs = ctx.opts.costs
+    goal_key = hole_key(to)
+    moves: list[tuple[HoleCoord, bool, float]] = []
+
+    for direction_col, direction_row in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+        step = HoleCoord(col=hole.col + direction_col, row=hole.row + direction_row)
+        if not is_inside_board(step, ctx.doc.board):
+            continue
+        is_goal = hole_key(step) == goal_key
+        if is_goal or _is_traversable_by_trace(ctx, step):
+            cost = costs.solder_trace_step
+            if _has_foreign_neighbour(ctx, step, from_, to):
+                cost += costs.proximity_risk
+            moves.append((step, False, cost))
+            continue
+
+        # Blocked. Try to jump over it and land on clear ground beyond, which is what a short
+        # insulated jumper does. The landing hole must be free (or the goal); the holes flown
+        # over need not be, since the wire is insulated.
+        for span in range(2, ctx.opts.max_hop_holes + 2):
+            landing = HoleCoord(
+                col=hole.col + direction_col * span, row=hole.row + direction_row * span
+            )
+            if not is_inside_board(landing, ctx.doc.board):
+                break
+            landing_is_goal = hole_key(landing) == goal_key
+            if not landing_is_goal and not _is_traversable_by_trace(ctx, landing):
+                continue
+            moves.append(
+                (
+                    landing,
+                    True,
+                    costs.insulated_hop_fixed
+                    + path_length_mm((hole, landing), ctx.doc.board) * costs.insulated_wire_per_mm,
+                )
+            )
+            break
+    return moves
+
+
+def _reconstruct_steps(
+    came_from: dict[str, tuple[HoleCoord, bool]], goal: HoleCoord, start: HoleCoord
+) -> list[_Step]:
+    # Each entry records how the search ARRIVED at that hole, so a hole's flag must be read
+    # from its own entry. Carrying the flag over to the predecessor instead shifts every hop
+    # one step back along the path: the jumper gets placed before the obstacle, and the trace
+    # after it inherits the jump -- producing a "solder trace" with a hole missing from its
+    # chain, which is not a solder trace at all.
+    steps: list[_Step] = []
+    cursor = goal
+    while not same_hole(cursor, start):
+        entry = came_from.get(hole_key(cursor))
+        steps.append(_Step(hole=cursor, hopped=entry is not None and entry[1]))
+        if entry is None:
+            break
+        cursor = entry[0]
+    steps.append(_Step(hole=start, hopped=False))
+    steps.reverse()
+    return steps
 
 
 @dataclass(frozen=True, slots=True)
@@ -375,9 +770,19 @@ def _is_traversable_by_trace(ctx: _RouteContext, hole: HoleCoord) -> bool:
     """A trace may pass through a hole that is empty, or already on the net being routed."""
     if ctx.occupancy.is_copper_blocked(hole, "bottom"):
         return False
+    # Also refuse holes an existing WIRE lies across. Occupancy indexes a wire by its two
+    # ends only (a documented gap it keeps for its own differential proof), so without this
+    # the search would run a solder trace straight through the middle of an existing wire --
+    # which DRC's conductor-crossing rule then, correctly, calls an error. A router must not
+    # produce what the checker rejects.
+    if hole_key(hole) in ctx.swept_blocked_holes:
+        return False
     pin = ctx.occupancy.pin_at(hole)
-    # A foreign pin in the way is a hard stop: soldering across it would short it in.
-    if pin:
+    # A foreign pin in the way is a hard stop: soldering across it would short it in. A pin
+    # the caller has declared part of this same net is the opposite -- running the trace
+    # through it is how a rail collects its pins (see RouteRequest.net_holes), and doing so
+    # is what makes one long rail cheaper than a fan of separate hops.
+    if pin and hole_key(hole) not in ctx.net_holes:
         return False
     return True
 
@@ -390,14 +795,21 @@ def _has_foreign_neighbour(
     At 2.54 mm pitch the pad-edge gap is well under a millimetre, so this is where a
     dragged bead of solder ends up somewhere it should not. DRC rule R5', priced into
     the search.
+
+    "Different" is judged against the physical nets of the two endpoints AND against any
+    holes the caller declared as this net's own (``RouteRequest.net_holes``): a bridge to
+    a pad that is supposed to be on this net is not a defect, so charging risk for it
+    would price the router out of the rails it should be building.
     """
-    own_nets: set[str] = set()
+    own_nets: set[str] = set(ctx.declared_own_nets)
     for endpoint in (from_, to):
         net_id = ctx.net_at(endpoint)
         if net_id is not None:
             own_nets.add(net_id)
     for neighbour in neighbors4(hole, ctx.doc.board):
         if same_hole(neighbour, from_) or same_hole(neighbour, to):
+            continue
+        if hole_key(neighbour) in ctx.net_holes:
             continue
         net_id = ctx.net_at(neighbour)
         if net_id is not None and net_id not in own_nets:
@@ -432,7 +844,7 @@ def _straight_wire_candidate(
     kind: Literal["bare-wire", "insulated-wire", "top-jumper"],
 ) -> RouteCandidate | None:
     costs = ctx.opts.costs
-    crossed = _holes_under_straight_line(from_, to)
+    crossed = holes_under_line(from_, to)
 
     if kind == "bare-wire":
         # Bare wire cannot cross another conductor's copper or sit on a foreign pad.
@@ -443,6 +855,13 @@ def _straight_wire_candidate(
                 return None
             if ctx.occupancy.pin_at(hole):
                 return None
+        # ...and it cannot lie ACROSS one either. The hole checks above only see copper the
+        # line lands on; two runs at an angle cross between holes, touching none in common.
+        # Without this the router happily produced boards with bare wires resting on each
+        # other -- physically a short, and the exact defect DRC's conductor-crossing rule
+        # reports (see geometry.segments_touch).
+        if _crosses_existing(ctx, from_, to):
+            return None
     if kind == "top-jumper":
         # A top jumper must not have to run underneath a component body.
         for hole in crossed:
@@ -486,7 +905,7 @@ def _straight_wire_candidate(
 
     explanation = (
         f"{kind.replace('-', ' ', 1)}: {length_mm:.1f} mm from "
-        f"{coord_to_hole_ref(from_)} to {coord_to_hole_ref(to)} — {note}."
+        f"{format_hole(from_)} to {format_hole(to)} — {note}."
     )
 
     return RouteCandidate(
@@ -496,41 +915,6 @@ def _straight_wire_candidate(
         explanation=explanation,
         risk_holes=(),
     )
-
-
-def _js_math_round(x: float) -> int:
-    """Replicates JavaScript's ``Math.round`` (round half towards +Infinity).
-
-    Python's builtin ``round()`` uses round-half-to-even, which disagrees with
-    JavaScript exactly at ``.5`` boundaries -- and ``_holes_under_straight_line``'s
-    sampled ``t`` values land there often enough (any axis-aligned or 45-degree run)
-    that the divergence is not academic. ``floor(x + 0.5)`` matches the ECMAScript
-    specification's algorithm, and since both sides are IEEE-754 doubles doing the
-    same ``+`` and ``floor``, it matches bit for bit.
-    """
-    return math.floor(x + 0.5)
-
-
-def _holes_under_straight_line(from_: HoleCoord, to: HoleCoord) -> list[HoleCoord]:
-    """Holes a straight wire physically passes over, so occupancy can be checked.
-
-    Sampled along the segment at a fraction of the pitch, which is dense enough that
-    no hole on the line is missed.
-    """
-    steps = max(abs(to.col - from_.col), abs(to.row - from_.row)) * 4
-    seen: set[str] = set()
-    result: list[HoleCoord] = []
-    for i in range(steps + 1):
-        t = 0.0 if steps == 0 else i / steps
-        hole = HoleCoord(
-            col=_js_math_round(from_.col + (to.col - from_.col) * t),
-            row=_js_math_round(from_.row + (to.row - from_.row) * t),
-        )
-        k = hole_key(hole)
-        if k not in seen:
-            seen.add(k)
-            result.append(hole)
-    return result
 
 
 # ---------------------------------------------------------------------------

@@ -34,7 +34,12 @@ from itertools import pairwise
 from typing import Literal, TypeAlias
 
 from .connectivity import FootprintLookup, PhysicalNet, PhysicalPinRef, extract_physical_nets
-from .geometry import coord_to_hole_ref
+# format_hole, not coord_to_hole_ref: everything below is building a MESSAGE, and the
+# strict encoder raises on a negative column by design. A board can legally hold a part
+# whose pins fall outside it -- rotating a part near an edge does exactly that, and DRC's
+# job is to report it -- so a strict encoder here means LVS crashes while describing the
+# very defect it exists to describe. See the note on geometry.format_hole.
+from .geometry import format_hole
 from .model import ComponentInstance, ConductorId, Net, NetClass, NetId, NetNode, PerfDocument
 
 # ---------------------------------------------------------------------------
@@ -140,7 +145,7 @@ def _physical_net_label(id_: str | None, physical_net_by_id: dict[str, PhysicalN
         return "not connected to any other pin in this net"
     pn = physical_net_by_id.get(id_)
     lowest = pn.nodes[0] if pn is not None and pn.nodes else None
-    return f"physical net {id_}" if lowest is None else f"near {coord_to_hole_ref(lowest.hole)}"
+    return f"physical net {id_}" if lowest is None else f"near {format_hole(lowest.hole)}"
 
 
 # ---------------------------------------------------------------------------
@@ -200,7 +205,7 @@ def run_lvs(doc: PerfDocument, lookup: FootprintLookup) -> LvsResult:
         if pn.pins:
             continue
 
-        hole_refs = sorted({coord_to_hole_ref(n.hole) for n in pn.nodes})
+        hole_refs = sorted({format_hole(n.hole) for n in pn.nodes})
         issues.append(
             LvsIssue(
                 kind="floating-conductor",
@@ -243,7 +248,7 @@ def run_lvs(doc: PerfDocument, lookup: FootprintLookup) -> LvsResult:
         )
 
         lowest = pn.nodes[0] if pn.nodes else None
-        hole_ref = pn.id if lowest is None else coord_to_hole_ref(lowest.hole)
+        hole_ref = pn.id if lowest is None else format_hole(lowest.hole)
         prefix = "CRITICAL SHORT (power tied to ground): " if is_power_ground_short else "SHORT: "
         quoted_net_names = " and ".join(f"'{n}'" for n in net_names)
 
@@ -440,6 +445,61 @@ def run_lvs(doc: PerfDocument, lookup: FootprintLookup) -> LvsResult:
 # ---------------------------------------------------------------------------
 # Soldering-guide helpers -- the payoff of modelling schematic intent as data.
 # ---------------------------------------------------------------------------
+
+
+def floating_conductor_ids(doc: PerfDocument, lookup: FootprintLookup) -> tuple[ConductorId, ...]:
+    """Conductors on islands with no component pin attached, sorted.
+
+    The same condition the 'floating-conductor' issue reports, exposed on its own so a host can
+    offer to clear them. This is what moving a part leaves behind: the trace that ran to its old
+    pin hole is still there, now joined to nothing, while the router adds a fresh one to the
+    pin's new home. Nothing electrical is lost by removing them -- by definition they connect
+    nothing -- but they are still the user's copper, so the decision to delete belongs to a
+    command they can see and undo, never to a silent cleanup.
+    """
+    ids: list[ConductorId] = []
+    for physical_net in extract_physical_nets(doc, lookup):
+        if physical_net.pins:
+            continue
+        ids.extend(physical_net.conductor_ids)
+    return tuple(sorted(set(ids)))
+
+
+def stale_conductor_ids(doc: PerfDocument, lookup: FootprintLookup) -> tuple[ConductorId, ...]:
+    """Conductors whose own ``net_id`` claim has stopped being true, sorted.
+
+    This is what moving a part actually leaves behind, and it is a wider condition than
+    "floating". Move a chip and the trace that ran from its pin to a resistor is still soldered
+    to the resistor, so it is not floating at all -- it is a piece of copper that says it
+    implements net N while joining only ONE of net N's pins to an empty hole. The router then
+    adds a fresh conductor to where the pin went, and the old one just accumulates.
+
+    So the test is the conductor's own claim: it must reach at least two pins of the net it says
+    it belongs to. Two is the point at which copper connects something; one or none connects
+    nothing, whatever it is soldered to.
+
+    A conductor with NO ``net_id`` is never reported. That is hand-drawn copper, which makes no
+    claim this function could find false, and deleting someone's own wiring because a checker
+    could not account for it would be exactly the wrong behaviour.
+    """
+    pins_by_net: dict[NetId, set[_PinKey]] = {}
+    for net in doc.nets:
+        pins_by_net[net.id] = {_pin_key(node.component_ref, node.pin) for node in net.nodes}
+
+    stale: list[ConductorId] = []
+    by_id = {c.id: c for c in doc.conductors}
+    for physical_net in extract_physical_nets(doc, lookup):
+        island_pins = {_pin_key(p.component_ref, p.pin) for p in physical_net.pins}
+        for conductor_id in physical_net.conductor_ids:
+            conductor = by_id.get(conductor_id)
+            if conductor is None or conductor.net_id is None:
+                continue
+            declared = pins_by_net.get(conductor.net_id)
+            if declared is None:
+                continue  # Claims a net the document no longer has; not ours to judge.
+            if len(island_pins & declared) < 2:
+                stale.append(conductor_id)
+    return tuple(sorted(set(stale)))
 
 
 def continuity_checks(doc: PerfDocument) -> tuple[ContinuityCheck, ...]:

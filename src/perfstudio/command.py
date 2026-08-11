@@ -29,7 +29,7 @@ it is *why* this bus exists rather than a validation-in-the-UI approach):
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar, runtime_checkable
 
@@ -56,15 +56,20 @@ class CommandContext:
     next_id: NextId
 
 
-def create_id_generator(start: int = 0) -> NextId:
+def create_id_generator(start: int = 0, initial: Mapping[str, int] | None = None) -> NextId:
     """Deterministic, monotonically increasing id source.
 
     Each prefix gets its own counter (``cmp-1``, ``cmp-2``, ``cond-1``, ...). The
     counter lives in a closure, never a module global -- two independent generators
     (e.g. one per replay) must not see each other's state, which is what makes
     replay reproducible rather than merely "usually correct".
+
+    ``initial`` seeds individual prefixes above where they would otherwise start, which
+    is how a generator is made safe for a document that already contains generated ids:
+    see ``commands.create_document_id_generator``. Prefixes absent from it fall back to
+    ``start``.
     """
-    counters: dict[str, int] = {}
+    counters: dict[str, int] = dict(initial) if initial is not None else {}
 
     def next_id(prefix: str) -> str:
         n = counters.get(prefix, start) + 1

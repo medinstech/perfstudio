@@ -123,7 +123,20 @@ def build_occupancy(doc: PerfDocument, lookup: FootprintLookup) -> OccupancyInde
             remember(hole)
             body_by_hole[hole_key(hole)] = component.id
 
-    # --- Conductors: EVERY hole on the path is physically occupied, contact or not. ---
+    # --- Conductors: every hole on the path is physically occupied, contact or not. ---
+    #
+    # KNOWN GAP, deliberately preserved -- see
+    # tests/test_occupancy_golden.py::test_known_gap_occupancy_does_not_model_a_straight_run_geometrically.
+    # A wire's `path` is its two ENDS, while the wire itself lies across every hole between
+    # them, so those holes are missing from this index. The module docstring above describes
+    # the swept behaviour, and only solder traces get it, because their paths already list
+    # every hole.
+    #
+    # Filling it in here is the natural fix and it moves the golden output of this index, of
+    # the router and of DRC all at once -- three differential suites against the TypeScript
+    # engine. The router therefore handles it locally instead (router._trace_blocked_holes),
+    # which fixes the routing defect without touching what this index promises. Widening it
+    # properly is a decision to take on its own, not a side effect of a bug fix.
     for conductor in doc.conductors:
         blocks = is_crossing_blocked(conductor)
         for hole in conductor.path:
