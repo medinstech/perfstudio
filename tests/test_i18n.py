@@ -28,7 +28,12 @@ UI_DIR = Path(__file__).resolve().parents[1] / "src" / "perfstudio" / "ui"
 #: The lookbehind matters more than it looks: without it this also matches the tail of
 #: ``by_number.get("1")``, and the engine-purity test below then reports guide.py as
 #: translating a string. Caught by that test failing on a file that does no such thing.
-_TRANSLATED = re.compile(r'(?<![\w.])t\(\s*"((?:[^"\\]|\\.)*)"\s*\)')
+#: Both quote styles, because inside an f-string the inner literal has to be the other
+#: one -- and a scanner that only saw double quotes reported those strings as stale
+#: catalogue entries when they were in use two lines away.
+_TRANSLATED = re.compile(
+    r"""(?<![\w.])t\(\s*(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)')\s*\)"""
+)
 
 
 def translated_literals() -> set[str]:
@@ -36,7 +41,8 @@ def translated_literals() -> set[str]:
     for source in UI_DIR.glob("*.py"):
         if source.name == "i18n.py":
             continue
-        found |= set(_TRANSLATED.findall(source.read_text(encoding="utf-8")))
+        for double, single in _TRANSLATED.findall(source.read_text(encoding="utf-8")):
+            found.add(double or single)
     return found
 
 

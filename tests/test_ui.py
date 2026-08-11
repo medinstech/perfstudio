@@ -37,7 +37,6 @@ from perfstudio.commands import MoveComponentPayload, create_standard_registry
 from perfstudio.footprints import footprint_lookup
 from perfstudio.model import Board, HoleCoord, PerfDocument, SolderTraceConductor, WireConductor
 from perfstudio.ui import scenetext, view2d
-from perfstudio.version import __version__, describe as describe_version
 from perfstudio.ui.export_pdf import verify_scale
 from perfstudio.ui.main import (
     _rotation_after,
@@ -53,6 +52,8 @@ from perfstudio.ui.view2d import (
     next_reference,
     screen_to_hole,
 )
+from perfstudio.version import __version__
+from perfstudio.version import describe as describe_version
 
 GOLDEN = pathlib.Path(__file__).resolve().parent.parent / "tools" / "diffcheck" / "golden" / "dense.perf"
 
@@ -1060,9 +1061,10 @@ def test_board_setup_dialog_round_trips_a_board() -> None:
 def test_every_board_material_is_offered() -> None:
     """FR-2 in particular: it is the board most perfboard is actually sold as, and the
     only one where the pad-lifting rule and the derated iron temperature apply."""
+    from typing import get_args
+
     from perfstudio.model import BoardMaterial
     from perfstudio.ui.main import BoardSetupDialog
-    from typing import get_args
 
     offered = {value for value, _label in BoardSetupDialog.MATERIALS}
     assert offered == set(get_args(BoardMaterial))

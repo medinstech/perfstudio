@@ -64,7 +64,13 @@ from perfstudio.model import (
     WireConductor,
 )
 from perfstudio.ratsnest import ratsnest, summarize
-from perfstudio.router import RouterCosts, RouterOptions
+from perfstudio.router import (
+    DEFAULT_ROUTER_COSTS,
+    DEFAULT_ROUTER_OPTIONS,
+    RouterCosts,
+    RouterOptions,
+    options_for_style,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -822,3 +828,108 @@ def _load_golden_document(name: str) -> PerfDocument:
 
 
 LOOKUP_STD: FootprintLookup = footprint_lookup()
+
+
+# ---------------------------------------------------------------------------
+# Routing styles -- which primitive the builder wants
+# ---------------------------------------------------------------------------
+
+
+def _style_mix(doc: PerfDocument, lookup: FootprintLookup, style: str) -> dict[str, int]:
+    from collections import Counter
+
+    plan = plan_autoroute(doc, lookup, AutorouteOptions(router=options_for_style(style)))
+    assert plan.summary.links_unrouted == 0, f"{style} left connections unrouted"
+    counted = Counter(link.strategy for outcome in plan.nets for link in outcome.routed)
+    return dict(counted)
+
+
+def _kinds(mix: dict[str, int]) -> tuple[int, int, int]:
+    """(solder traces, lead bends, wires) from a strategy histogram."""
+    traces = sum(n for k, n in mix.items() if k.startswith("solder-trace"))
+    bends = mix.get("lead-bend", 0)
+    wires = sum(n for k, n in mix.items() if k in ("bare-wire", "insulated-wire", "top-jumper"))
+    return traces, bends, wires
+
+
+def test_balanced_is_the_default_table_untouched() -> None:
+    """Every golden route is produced with these costs, so the style must not move them."""
+    assert options_for_style("balanced").costs == DEFAULT_ROUTER_COSTS
+    assert options_for_style("balanced") == DEFAULT_ROUTER_OPTIONS
+
+
+def test_solder_first_routes_the_whole_board_without_wire() -> None:
+    """The complaint this exists for: the default table puts wire almost everywhere,
+    because R5' at 12 a hole prices a trace out exactly where traces are wanted."""
+    registry = footprint_lookup()
+    doc = dataclasses.replace(_load_golden_document("ne555"), conductors=())
+
+    balanced_traces, _bends, balanced_wires = _kinds(_style_mix(doc, registry, "balanced"))
+    solder_traces, _bends, solder_wires = _kinds(_style_mix(doc, registry, "solder"))
+
+    assert balanced_wires > balanced_traces, "the fixture no longer shows the problem"
+    assert solder_wires == 0
+    assert solder_traces > balanced_traces
+
+
+def test_wire_first_does_the_opposite() -> None:
+    registry = footprint_lookup()
+    doc = dataclasses.replace(_load_golden_document("ne555"), conductors=())
+    traces, bends, wires = _kinds(_style_mix(doc, registry, "wire"))
+    assert traces == 0 and bends == 0
+    assert wires > 0
+
+
+def test_lead_bend_first_folds_legs_and_the_others_never_do() -> None:
+    """The cheapest primitive on the board, and the only one the router never produced."""
+    registry = footprint_lookup()
+    doc = dataclasses.replace(_load_golden_document("ne555"), conductors=())
+
+    _t, bends, wires = _kinds(_style_mix(doc, registry, "lead-bend"))
+    assert bends > 0
+    assert wires == 0
+
+    for other in ("balanced", "solder", "wire"):
+        assert _style_mix(doc, registry, other).get("lead-bend", 0) == 0
+
+
+@pytest.mark.parametrize("style", ["balanced", "solder", "wire", "lead-bend"])
+def test_every_style_produces_a_board_that_lvs_and_drc_accept(style: str) -> None:
+    """A preference may change how the board is built. It may not change whether it works."""
+    from perfstudio.drc import run_drc
+
+    registry = footprint_lookup()
+    doc = dataclasses.replace(_load_golden_document("ne555"), conductors=())
+    plan = plan_autoroute(doc, registry, AutorouteOptions(router=options_for_style(style)))
+
+    summary = run_lvs(plan.document, registry).summary
+    assert summary.opens == 0 and summary.shorts == 0
+    assert summary.matched_nets == summary.schematic_nets
+    assert [v for v in run_drc(plan.document, registry) if v.severity == "error"] == []
+
+
+def test_a_lead_bend_is_bounded_by_what_a_leg_can_reach() -> None:
+    """Past max_lead_bend_holes the unsupported span fatigues and shorts against its
+    neighbours -- the same threshold DRC rule 10 reports on."""
+    components = (component("R1", "fp1", hole(2, 2)), component("R2", "fp1", hole(20, 2)))
+    nets = (net("n1", "SIG", "signal", (("R1", "1"), ("R2", "1"))),)
+    doc = make_doc(components=components, nets=nets)
+
+    mix = _style_mix(doc, LOOKUP, "lead-bend")
+
+    assert "lead-bend" not in mix, "18 holes is not a bend, it is a wire"
+
+
+def test_a_lead_bend_names_whose_leg_it_folds() -> None:
+    """A lead-bend conductor belongs to a component and a pin; without that the guide
+    cannot say which leg to bend and deleting the part cannot take it with it."""
+    components = (component("R1", "fp1", hole(2, 2)), component("R2", "fp1", hole(4, 2)))
+    nets = (net("n1", "SIG", "signal", (("R1", "1"), ("R2", "1"))),)
+    doc = make_doc(components=components, nets=nets)
+
+    plan = plan_autoroute(doc, LOOKUP, AutorouteOptions(router=options_for_style("lead-bend")))
+    bends = [c for c in plan.conductors if c.kind == "lead-bend"]
+
+    assert bends, "a two-hole gap is exactly what a bent leg is for"
+    assert bends[0].component_id in {c.id for c in components}
+    assert bends[0].pin_number

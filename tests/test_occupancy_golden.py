@@ -16,7 +16,6 @@ either refuse legal routes or lay copper straight through a wire.
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Any
 
 import pytest

@@ -266,19 +266,28 @@ def remove_stale_conductors() -> dict[str, Any]:
 
 
 @mcp.tool()
-def autoroute(nets: list[str] | None = None) -> dict[str, Any]:
+def autoroute(nets: list[str] | None = None, style: str = "balanced") -> dict[str, Any]:
     """Route the board, or just the named nets, and commit it as one undoable step.
+
+    `style` chooses which primitive to reach for first, which is a judgement about the
+    person building the board rather than about the board:
+      "balanced"   weigh each primitive on its own cost (the default)
+      "solder"     solder trace wherever solder reaches, jumper only over crossings
+      "wire"       for anyone who would rather cut wire than drag solder along a row
+      "lead-bend"  fold a component's own leg where it reaches, then solder, then wire
+    On the NE555 fixture "balanced" gives 4 traces and 10 wires; "solder" gives 14 traces
+    and no wire at all.
 
     Reports every connection it could NOT make, with the router's reason. Do not treat a
     partial result as a finished board: unroutable connections usually mean the parts
     are in the wrong places, and optimize_placement is the answer rather than more
     routing.
     """
-    return session.autoroute(nets)
+    return session.autoroute(nets, style)
 
 
 @mcp.tool()
-def reroute(nets: list[str] | None = None) -> dict[str, Any]:
+def reroute(nets: list[str] | None = None, style: str = "balanced") -> dict[str, Any]:
     """Rip up the existing routing and plan it again from nothing.
 
     Use this after moving parts. `autoroute` only ADDS: the copper laid out for a part's
@@ -286,7 +295,7 @@ def reroute(nets: list[str] | None = None) -> dict[str, Any]:
     puts more copper beside it — the board grows every time. This throws that away and
     re-plans. Conductors with no net assigned are left alone.
     """
-    return session.reroute(nets)
+    return session.reroute(nets, style)
 
 
 @mcp.tool()

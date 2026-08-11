@@ -58,12 +58,18 @@ of route quality, and a caller who needs the shorter route can already pick it o
 
 from __future__ import annotations
 
+import dataclasses
 import math
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal, TypeAlias
 
-from .commands import NewConductor, NewSolderTraceConductor, NewWireConductor
+from .commands import (
+    NewConductor,
+    NewLeadBendConductor,
+    NewSolderTraceConductor,
+    NewWireConductor,
+)
 from .connectivity import FootprintLookup, PhysicalNet, extract_physical_nets
 from .geometry import (
     format_hole,
@@ -118,6 +124,12 @@ class RouterCosts:
     #: This is DRC rule R5' expressed as money instead of a warning, so the search
     #: steers around risky ground instead of merely reporting it afterwards.
     proximity_risk: float = 12
+    #: A component's own leg, bent to a nearby hole. Effectively free (PLAN.md Sec 6.1):
+    #: there is no wire to cut, strip or dress, and it is already soldered at one end.
+    #: Not zero, so that a shorter bend still beats a longer one and the search does not
+    #: wander.
+    lead_bend_fixed: float = 0.5
+    lead_bend_per_mm: float = 0.02
     #: One short insulated jumper carrying a solder trace over something it may not cross.
     #: Cheaper than ``insulated_wire_fixed`` because that prices a whole run -- measuring,
     #: cutting, stripping and dressing a wire across the board -- whereas a hop is a
@@ -150,6 +162,14 @@ class RouterOptions:
     max_pure_solder_trace_pads: int = 6
     #: Top jumpers are ugly and block component space; off by default.
     allow_top_jumper: bool = False
+    #: Whether the router may fold a component's own leg to a nearby hole. Off by
+    #: default: it is the cheapest primitive there is, so turning it on changes what the
+    #: router produces on the boards the golden fixtures pin, which has to be a decision
+    #: somebody makes rather than a silent change.
+    allow_lead_bend: bool = False
+    #: How far a bent leg may reach, in holes. Past this the unsupported span fatigues and
+    #: shorts against its neighbours -- the threshold DRC rule 10 reports on.
+    max_lead_bend_holes: int = 4
     #: Search ceiling, so a hopeless request fails fast instead of scanning the board.
     max_expanded_nodes: int = 20000
     #: See :data:`CrossingPolicy`.
@@ -162,6 +182,83 @@ class RouterOptions:
 
 DEFAULT_ROUTER_OPTIONS = RouterOptions()
 
+
+# ---------------------------------------------------------------------------
+# Routing styles -- which primitive the builder actually wants
+# ---------------------------------------------------------------------------
+
+#: How this board is going to be built. Not a quality setting: a judgement about the
+#: person holding the iron, in the same way ``CrossingPolicy`` is.
+#:
+#: The cost table encodes ONE opinion about that person, and on a populated board that
+#: opinion comes out as wire almost everywhere. Measured on the NE555 fixture with the
+#: default table: 4 solder traces and 11 wires. The dominant term is ``proximity_risk``
+#: at 12 per hole -- R5', the 0.6 mm gap to a neighbouring pad of another net. That is
+#: the right thing to charge (PLAN.md Sec 6.1 argues for exactly it) and at that weight a
+#: single risky hole makes a four-step trace dearer than a wire, which on a board where
+#: most holes have a neighbour means traces are priced out precisely where they are most
+#: wanted.
+#:
+#: So the weight becomes the user's choice rather than the tool's:
+#:
+#:   "balanced"    The table as it is. Every golden fixture is routed with this, so it
+#:                 must not move.
+#:   "solder"      Solder wherever solder reaches. R5' still steers the search and still
+#:                 becomes a measurement in the build guide, but it no longer vetoes a
+#:                 trace; wire is dear, and a long run gets a spine rather than becoming
+#:                 a wire. NE555: 14 traces, 1 wire.
+#:   "wire"        For someone who would rather cut and dress wire than drag solder
+#:                 along a row of pads. Wire is cheap and traces are not.
+#:   "lead-bend"   Fold the component's own leg wherever it reaches, then solder, then
+#:                 wire. The cheapest primitive there is, and the only one the router
+#:                 never used to produce at all.
+RoutingStyle: TypeAlias = Literal["balanced", "solder", "wire", "lead-bend"]
+
+
+def costs_for_style(style: RoutingStyle) -> RouterCosts:
+    """The cost table for a routing style. ``balanced`` is the defaults, untouched."""
+    if style == "solder":
+        return RouterCosts(
+            # Still charged, so the search prefers a clear row to a risky one and the
+            # guide still turns each risky hole into an isolation measurement. Just no
+            # longer enough to lose to a wire on its own.
+            proximity_risk=2,
+            bare_wire_fixed=30,
+            insulated_wire_fixed=40,
+            solder_trace_spine_fixed=4,
+        )
+    if style == "wire":
+        return RouterCosts(
+            solder_trace_step=4,
+            bare_wire_fixed=3,
+            insulated_wire_fixed=6,
+            solder_trace_spine_fixed=12,
+        )
+    if style == "lead-bend":
+        return RouterCosts(proximity_risk=2, bare_wire_fixed=30, insulated_wire_fixed=40)
+    return DEFAULT_ROUTER_COSTS
+
+
+def options_for_style(
+    style: RoutingStyle, base: RouterOptions = DEFAULT_ROUTER_OPTIONS
+) -> RouterOptions:
+    """``base`` with the style's costs and the flags that style implies.
+
+    Kept as one function so a caller cannot pick up the cheap-solder costs and forget the
+    longer pure-trace limit that makes them usable, which would produce a board full of
+    spines nobody asked for.
+    """
+    costs = costs_for_style(style)
+    if style == "solder":
+        # Solder-first means a long run stays a trace instead of turning into a wire at
+        # six pads. It gets a spine, which is what a long rail wants anyway (Sec 6.2).
+        return dataclasses.replace(base, costs=costs, max_pure_solder_trace_pads=20)
+    if style == "lead-bend":
+        return dataclasses.replace(
+            base, costs=costs, max_pure_solder_trace_pads=20, allow_lead_bend=True
+        )
+    return dataclasses.replace(base, costs=costs)
+
 # ---------------------------------------------------------------------------
 # Results
 # ---------------------------------------------------------------------------
@@ -169,6 +266,7 @@ DEFAULT_ROUTER_OPTIONS = RouterOptions()
 RouteStrategy: TypeAlias = Literal[
     "solder-trace",
     "solder-trace-wired",
+    "lead-bend",
     "bare-wire",
     "insulated-wire",
     "top-jumper",
@@ -221,6 +319,10 @@ class RouteRequest:
     #: Empty by default, so a caller that does not supply it gets exactly the
     #: point-to-point behaviour the golden fixtures pin down.
     net_holes: tuple[HoleCoord, ...] = ()
+    #: ``(component_id, pin_number)`` of the pin at ``from_``, when there is one. Only the
+    #: caller knows it, and only a lead bend needs it: it is that component's leg being
+    #: folded, so the conductor has to name whose. None means no lead bend is offered.
+    from_pin: tuple[str, str] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -256,10 +358,15 @@ def route_connection(
         ),
         blocked_segments=_blocked_segments(doc),
         swept_blocked_holes=_trace_blocked_holes(doc),
+        opts_from_pin=request.from_pin,
     )
 
     candidates: list[RouteCandidate] = []
     buildup: SolderBuildup = request.buildup if request.buildup is not None else "normal"
+    if options.allow_lead_bend:
+        bend = _lead_bend_candidate(ctx, from_, to)
+        if bend is not None:
+            candidates.append(bend)
     trace = _solder_trace_candidate(ctx, from_, to, buildup)
     if trace is not None:
         candidates.append(trace)
@@ -326,6 +433,8 @@ class _RouteContext:
     #: Physical net ids those declared holes already sit in -- precomputed here rather
     #: than rediscovered per neighbour, since the set is fixed for the whole search.
     declared_own_nets: frozenset[str] = frozenset()
+    #: See ``RouteRequest.from_pin``.
+    opts_from_pin: tuple[str, str] | None = None
 
 
 def _blocked_segments(doc: PerfDocument) -> tuple[tuple[HoleCoord, HoleCoord], ...]:
@@ -835,6 +944,66 @@ def _reconstruct(
 # ---------------------------------------------------------------------------
 # Strategies 2-4: straight wires
 # ---------------------------------------------------------------------------
+
+
+def _lead_bend_candidate(
+    ctx: _RouteContext, from_: HoleCoord, to: HoleCoord
+) -> RouteCandidate | None:
+    """The component's own leg, bent over to reach a nearby hole.
+
+    The cheapest primitive on the board and, until now, the only one the router never
+    produced: PLAN.md Sec 6.1 prices it at roughly nothing because there is no wire to
+    cut, stretch or strip -- the leg is already there and already soldered at one end.
+
+    Three constraints make it a real thing rather than free wire. It has to start at a
+    COMPONENT PIN, since that is whose leg is being bent, which is why ``RouteRequest``
+    grew ``from_pin``. It is bounded by ``max_lead_bend_holes``, because past that the
+    unsupported span fatigues and shorts against its neighbours -- the same threshold
+    DRC rule 10 reports on. And it is bare metal on the solder side, so it may not cross
+    other copper any more than a bare wire may.
+
+    Off by default (``RouterOptions.allow_lead_bend``). Turning it on changes what the
+    router produces on boards the golden fixtures pin, so it is a deliberate choice --
+    the same treatment ``allow_top_jumper`` gets, and for the same reason.
+    """
+    pin = ctx.opts_from_pin
+    if pin is None:
+        return None
+    component_id, pin_number = pin
+
+    if manhattan(from_, to) > ctx.opts.max_lead_bend_holes:
+        return None
+
+    crossed = holes_under_line(from_, to)
+    for hole in crossed:
+        if same_hole(hole, from_) or same_hole(hole, to):
+            continue
+        if ctx.occupancy.is_copper_blocked(hole, "bottom"):
+            return None
+        if ctx.occupancy.pin_at(hole):
+            return None
+    if _crosses_existing(ctx, from_, to):
+        return None
+
+    length_mm = path_length_mm((from_, to), ctx.doc.board)
+    conductor: NewConductor = NewLeadBendConductor(
+        path=(from_, to),
+        component_id=component_id,
+        pin_number=pin_number,
+        net_id=ctx.own_net_id,
+        layer_z=0,
+    )
+    return RouteCandidate(
+        strategy="lead-bend",
+        conductors=(conductor,),
+        cost=ctx.opts.costs.lead_bend_fixed + length_mm * ctx.opts.costs.lead_bend_per_mm,
+        explanation=(
+            f"lead bend: fold {pin_number}'s own leg {length_mm:.1f} mm from "
+            f"{format_hole(from_)} to {format_hole(to)} — no wire to cut, and it is "
+            "already soldered at one end."
+        ),
+        risk_holes=(),
+    )
 
 
 def _straight_wire_candidate(

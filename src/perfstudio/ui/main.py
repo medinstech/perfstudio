@@ -56,6 +56,7 @@ from PySide6.QtWidgets import (
 
 from perfstudio import persist
 from perfstudio.autoroute import (
+    AutorouteOptions,
     AutoroutePlan,
     UnroutedLink,
     describe_reroute,
@@ -112,6 +113,7 @@ from perfstudio.placer import (
     summarize_changes as summarize_placement,
 )
 from perfstudio.ratsnest import NetRatsnest, ratsnest, summarize
+from perfstudio.router import RoutingStyle, options_for_style
 from perfstudio.version import __version__
 from perfstudio.version import describe as describe_version
 
@@ -330,6 +332,8 @@ class MainWindow(QMainWindow):
         #: Nets whose copper was laid out for a position a part has since left. See
         #: _track_moved_nets for why this is remembered rather than detected.
         self._nets_from_old_layout: set[NetId] = set()
+        #: Which primitive the router should reach for first. See router.RoutingStyle.
+        self._routing_style: RoutingStyle = "balanced"
 
         #: The document as it last hit disk. Identity comparison against the bus's
         #: current document is what "modified" means here -- see is_modified.
@@ -627,6 +631,35 @@ class MainWindow(QMainWindow):
         self.act_route_selected = route_menu.addAction(t("Route Nets of &Selection"))
         self.act_route_selected.setShortcut(QKeySequence("Ctrl+Shift+R"))
         self.act_route_selected.triggered.connect(self.on_route_selection)
+        # HOW the board gets built is the builder's call, not the tool's. The default cost
+        # table encodes one opinion and on a populated board it comes out as wire almost
+        # everywhere -- 4 traces against 10 wires on the NE555 fixture -- because R5'
+        # proximity risk at 12 a hole prices a trace out exactly where traces are wanted.
+        # See router.RoutingStyle for the measurements.
+        style_menu = route_menu.addMenu(t("&Preferred Connection"))
+        style_menu.setToolTipsVisible(True)
+        self.act_style: dict[str, QAction] = {}
+        for style, label, tip in (
+            ("solder", t("&Solder trace where possible"),
+             "Solder wherever solder reaches, with a short jumper only where it must cross. "
+             "On the NE555 fixture this routes all 14 connections without a single wire."),
+            ("balanced", t("&Balanced"),
+             "Weigh each primitive on its own cost. The default, and what every golden "
+             "fixture is routed with."),
+            ("wire", t("&Wire where possible"),
+             "For anyone who would rather cut and dress wire than drag solder along a row."),
+            ("lead-bend", t("Bend component &legs where possible"),
+             "Fold a component's own leg to a nearby hole first, then solder, then wire. "
+             "The cheapest connection there is -- no wire to cut, and already soldered at "
+             "one end."),
+        ):
+            action = style_menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(style == self._routing_style)
+            action.setToolTip(tip)
+            action.triggered.connect(lambda _checked, s=style: self.on_routing_style(s))
+            self.act_style[style] = action
+
         route_menu.addSeparator()
         # Rip-up and re-route is a SEPARATE verb from autoroute, and deliberately not what
         # Ctrl+R does: autoroute completes a board, this one discards work to rebuild it.
@@ -696,6 +729,9 @@ class MainWindow(QMainWindow):
         bar.setMovable(False)
         self.addToolBar(bar)
 
+        for kind in ("solder-trace", "bare-wire", "insulated-wire"):
+            bar.addAction(self.act_draw[kind])
+        bar.addSeparator()
         bar.addAction(self.act_autoplace)
         bar.addAction(self.act_autoroute)
         bar.addAction(self.act_route_selected)
@@ -1348,6 +1384,25 @@ class MainWindow(QMainWindow):
             return
         self._route(only_net_ids=net_ids)
 
+    def on_routing_style(self, style: str) -> None:
+        """Choose which primitive the router reaches for first.
+
+        Only recorded here; it takes effect on the next route. Re-routing the whole board
+        the moment a menu item is ticked would discard work the user has not asked to
+        lose -- and Route > Re-route Everything is right there for when they do.
+        """
+        self._routing_style = cast(RoutingStyle, style)
+        for name, action in self.act_style.items():
+            action.setChecked(name == style)
+        self.statusBar().showMessage(
+            f"{t('Preferred connection')}: {self.act_style[style].text().replace('&', '')}"
+            f" — {t('applies to the next route')}",
+            8000,
+        )
+
+    def _autoroute_options(self) -> AutorouteOptions:
+        return AutorouteOptions(router=options_for_style(self._routing_style))
+
     def on_reroute_selection(self) -> None:
         net_ids = self._selected_net_ids()
         if not net_ids:
@@ -1381,7 +1436,10 @@ class MainWindow(QMainWindow):
         t0 = time.perf_counter()
         plan = self._run_planner(
             "Ripping up and routing again…",
-            lambda _should_stop: plan_reroute(document, self.lookup, only_net_ids=only_net_ids),
+            lambda _should_stop: plan_reroute(
+                document, self.lookup, only_net_ids=only_net_ids,
+                options=self._autoroute_options(),
+            ),
         )
         elapsed = (time.perf_counter() - t0) * 1000
         if plan is None:
@@ -1494,7 +1552,9 @@ class MainWindow(QMainWindow):
         t0 = time.perf_counter()
         plan = self._run_planner(
             "Routing…",
-            lambda _should_stop: plan_autoroute(document, self.lookup, only_net_ids=only_net_ids),
+            lambda _should_stop: plan_autoroute(
+                document, self.lookup, self._autoroute_options(), only_net_ids=only_net_ids
+            ),
         )
         elapsed = (time.perf_counter() - t0) * 1000
         if plan is None:

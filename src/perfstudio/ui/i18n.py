@@ -79,6 +79,13 @@ TURKISH: Mapping[str, str] = {
     "Re-route &Everything": "Her Şeyi &Yeniden Route Et",
     "Re-route Nets of Se&lection": "Seçimin Netlerini Yeniden Route &Et",
     "Remove S&tale Conductors": "&Artık İletkenleri Kaldır",
+    "&Preferred Connection": "&Tercih Edilen Bağlantı",
+    "&Solder trace where possible": "Mümkün olan her yerde &lehim yolu",
+    "&Balanced": "&Dengeli",
+    "&Wire where possible": "Mümkün olan her yerde &kablo",
+    "Bend component &legs where possible": "Mümkün olan her yerde &bacak bük",
+    "Preferred connection": "Tercih edilen bağlantı",
+    "applies to the next route": "bir sonraki route'ta geçerli olur",
     # -- view ----------------------------------------------------------------
     "Flip Board (component / solder side)": "Kartı Çevir (komponent / lehim yüzü)",
     "&Fit Board": "Karta &Sığdır",

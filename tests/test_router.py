@@ -62,7 +62,6 @@ from perfstudio.model import (
 from perfstudio.occupancy import build_occupancy
 from perfstudio.router import (
     DEFAULT_ROUTER_COSTS,
-    DEFAULT_ROUTER_OPTIONS,
     RouteRequest,
     RouterOptions,
     route_connection,

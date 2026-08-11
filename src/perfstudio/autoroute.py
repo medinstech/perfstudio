@@ -421,6 +421,19 @@ def _route_in_order(
 # ---------------------------------------------------------------------------
 
 
+def _pin_identity(doc: PerfDocument, pin: PhysicalPinRef) -> tuple[str, str] | None:
+    """``(component_id, pin_number)`` for a ratsnest pin, or None if it is not placed.
+
+    The ratsnest names pins by REFERENCE ("R1") because that is what a netlist says; a
+    lead-bend conductor names them by component ID because that is what survives a
+    rename. This is the one place the two meet.
+    """
+    for component in doc.components:
+        if component.ref == pin.component_ref:
+            return component.id, pin.pin
+    return None
+
+
 def _fresh_ctx(doc: PerfDocument) -> CommandContext:
     """An id source seeded from ``doc``, for exploring ONE candidate.
 
@@ -527,7 +540,13 @@ def _chain_net(
             working,
             lookup,
             RouteRequest(
-                from_=link.from_, to=link.to, net_id=link.net_id, net_holes=current.pin_holes
+                from_=link.from_,
+                to=link.to,
+                net_id=link.net_id,
+                net_holes=current.pin_holes,
+                # Only the caller knows which component's pin this is, and a lead bend has
+                # to name whose leg it folds.
+                from_pin=_pin_identity(working, link.a),
             ),
             options.router,
         )
@@ -592,7 +611,10 @@ def _rail_net(
     result = route_connection(
         doc,
         lookup,
-        RouteRequest(from_=start, to=end, net_id=net_id, net_holes=entry.pin_holes),
+        RouteRequest(
+            from_=start, to=end, net_id=net_id, net_holes=entry.pin_holes,
+            from_pin=_pin_identity(doc, entry.links[0].a) if entry.links else None,
+        ),
         options.router,
     )
     if not result.ok:

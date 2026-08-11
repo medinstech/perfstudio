@@ -47,8 +47,8 @@ from perfstudio.footprints import footprint_lookup
 from perfstudio.model import (
     Board,
     BoardSide,
-    Conductor,
     ComponentInstance,
+    Conductor,
     DocumentMeta,
     HoleCoord,
     LeadBendConductor,

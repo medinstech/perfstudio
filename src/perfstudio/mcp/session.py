@@ -27,11 +27,11 @@ from __future__ import annotations
 import dataclasses
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast, get_args
 
 from perfstudio import persist
+from perfstudio.autoroute import AutorouteOptions, describe_reroute, plan_autoroute, plan_reroute
 from perfstudio.autoroute import describe as describe_route
-from perfstudio.autoroute import describe_reroute, plan_autoroute, plan_reroute
 from perfstudio.command import CommandBus, CommandContext
 from perfstudio.commands import (
     AddConductorPayload,
@@ -67,6 +67,7 @@ from perfstudio.model import (
 from perfstudio.placer import PlacementOptions, plan_placement
 from perfstudio.placer import describe as describe_placement
 from perfstudio.ratsnest import ratsnest, summarize
+from perfstudio.router import RoutingStyle, options_for_style
 from perfstudio.version import __version__
 
 # ---------------------------------------------------------------------------
@@ -504,7 +505,7 @@ class BoardSession:
 
     # -- the planners ------------------------------------------------------
 
-    def autoroute(self, nets: list[str] | None = None) -> dict[str, Any]:
+    def autoroute(self, nets: list[str] | None = None, style: str = "balanced") -> dict[str, Any]:
         """Plan and commit the routing, as one undoable command."""
         if not self.document.nets:
             return _refused("no-netlist", "Nothing to route: no netlist has been imported.")
@@ -520,7 +521,9 @@ class BoardSession:
         if cleared:
             self.remove_stale_conductors()
 
-        plan = plan_autoroute(self.document, self.lookup, only_net_ids=only)
+        plan = plan_autoroute(
+            self.document, self.lookup, _route_options(style), only_net_ids=only
+        )
         if plan.is_empty:
             return _ok(
                 committed=False,
@@ -554,7 +557,7 @@ class BoardSession:
         )
         return result
 
-    def reroute(self, nets: list[str] | None = None) -> dict[str, Any]:
+    def reroute(self, nets: list[str] | None = None, style: str = "balanced") -> dict[str, Any]:
         """Rip up the existing routing and plan it again, as one undoable command.
 
         Different from ``autoroute``, which only ADDS: after a part moves, the copper
@@ -568,7 +571,9 @@ class BoardSession:
             return _refused("no-netlist", "Nothing to route: no netlist has been imported.")
         only = tuple(self._net_id_strict(name) for name in nets) if nets else None
 
-        plan = plan_reroute(self.document, self.lookup, only_net_ids=only)
+        plan = plan_reroute(
+            self.document, self.lookup, only_net_ids=only, options=_route_options(style)
+        )
         if plan.is_empty:
             return _ok(committed=False, summary=describe_reroute(plan))
 
@@ -895,6 +900,20 @@ class BoardSession:
                 return net.id
         known = ", ".join(n.name for n in self.document.nets) or "(none imported)"
         raise SessionError(f"No net called {name!r}. Known nets: {known}.")
+
+
+def _route_options(style: str) -> AutorouteOptions:
+    """Turn a style name into router options, or say what the names are.
+
+    The style is a judgement about the builder rather than about the board -- which
+    primitive they would rather use -- so it is per call, not a session setting: an agent
+    may reasonably want the power rails as solder rails and the signals as wire.
+    """
+    if style not in get_args(RoutingStyle):
+        raise SessionError(
+            f"{style!r} is not a routing style. Use one of: {', '.join(get_args(RoutingStyle))}."
+        )
+    return AutorouteOptions(router=options_for_style(cast(RoutingStyle, style)))
 
 
 def _rotation(value: int) -> Rotation:

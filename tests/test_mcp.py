@@ -525,3 +525,30 @@ def test_reroute_without_a_netlist_is_refused(session: BoardSession) -> None:
     result = session.reroute()
     assert result["ok"] is False
     assert result["code"] == "no-netlist"
+
+
+def test_the_routing_style_changes_which_primitive_is_used(loaded: BoardSession) -> None:
+    """A judgement about the builder, per call rather than per session: an agent may want
+    the power rails as solder and the signals as wire."""
+    solder = BoardSession()
+    solder.open_document(str(GOLDEN))
+    solder.autoroute(style="solder")
+    kinds = {c.kind for c in solder.document.conductors}
+    assert not (kinds & {"bare-wire", "insulated-wire"}) or kinds <= {
+        "solder-trace", "solder-trace-wired", "insulated-wire"
+    }
+    assert any(k.startswith("solder-trace") for k in kinds)
+
+    wire = BoardSession()
+    wire.open_document(str(GOLDEN))
+    wire.autoroute(style="wire")
+    assert not any(c.kind.startswith("solder-trace") for c in wire.document.conductors)
+
+    del loaded
+
+
+def test_an_unknown_routing_style_lists_the_real_ones(session: BoardSession) -> None:
+    session.import_netlist(str(NETLIST))
+    with pytest.raises(SessionError) as err:
+        session.autoroute(style="magic")
+    assert "solder" in str(err.value) and "balanced" in str(err.value)
