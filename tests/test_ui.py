@@ -809,3 +809,40 @@ def test_autoplace_on_an_empty_board_says_so_rather_than_running(monkeypatch) ->
     assert called == []
     assert "empty" in window.statusBar().currentMessage()
     window.close()
+
+
+# ---------------------------------------------------------------------------
+# Build guide export
+# ---------------------------------------------------------------------------
+
+
+def test_exporting_the_guide_writes_all_four_files(tmp_path, monkeypatch) -> None:
+    window = _window_on(_load_dense())
+    window.current_path = tmp_path / "board.perf"
+
+    monkeypatch.setattr(
+        "perfstudio.ui.main.QMessageBox.warning", lambda *args, **kwargs: None
+    )
+    window.on_export_guide()
+
+    written = sorted(p.name for p in tmp_path.iterdir())
+    assert written == ["board_bom.csv", "board_cut_list.csv", "board_guide.html", "board_guide.json"]
+    assert "<!doctype html>" in (tmp_path / "board_guide.html").read_text(encoding="utf-8")
+    window.close()
+
+
+def test_guide_gaps_are_reported_in_a_dialog_not_only_the_status_bar(tmp_path, monkeypatch) -> None:
+    """Each warning says the guide describes less than the whole build. A user who misses
+    that follows the steps to the end and finds the board does not work."""
+    window = _window_on(_load_dense())
+    window.current_path = tmp_path / "board.perf"
+
+    shown: list[str] = []
+    monkeypatch.setattr(
+        "perfstudio.ui.main.QMessageBox.warning",
+        lambda parent, title, text, *args, **kwargs: shown.append(text),
+    )
+    window.on_export_guide()
+
+    assert shown and "could not cover" in shown[0]
+    window.close()

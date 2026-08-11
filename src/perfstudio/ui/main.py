@@ -65,6 +65,8 @@ from perfstudio.commands import (
 from perfstudio.drc import DrcViolation, run_drc
 from perfstudio.footprints import footprint_lookup, standard_footprints
 from perfstudio.geometry import board_size_mm, format_hole, hole_span_mm
+from perfstudio.guide import build_guide, describe as describe_guide
+from perfstudio.guide_export import bom_to_csv, cut_list_to_csv, guide_to_html, guide_to_json
 from perfstudio.lvs import LvsIssue, LvsResult, run_lvs, stale_conductor_ids
 from perfstudio.model import (
     BoardSide,
@@ -388,6 +390,13 @@ class MainWindow(QMainWindow):
         act_import.setShortcut(QKeySequence("Ctrl+I"))
         act_import.triggered.connect(self.on_import_netlist)
         file_menu.addSeparator()
+        act_guide = file_menu.addAction("Export &Build Guide…")
+        act_guide.setShortcut(QKeySequence("Ctrl+B"))
+        act_guide.setToolTip(
+            "Write the step-by-step soldering guide: one offline HTML file, the wire cut "
+            "list and BOM as CSV, and the whole thing as JSON."
+        )
+        act_guide.triggered.connect(self.on_export_guide)
         act_pdf = file_menu.addAction("Export 1:1 PDF (component + solder side)…")
         act_pdf.triggered.connect(self.on_export_pdf)
         act_png = file_menu.addAction("Export 3D Snapshot PNG…")
@@ -1403,6 +1412,47 @@ class MainWindow(QMainWindow):
         view3d.render_offscreen(self.bus.document, self.lookup, str(out), flipped=(self.side == "bottom"))
         self.statusBar().showMessage(f"Exported {out}")
 
+    def on_export_guide(self) -> None:
+        """Write the build guide beside the document, and say what it could not cover.
+
+        Four files rather than one, because they get used in different places: the HTML
+        on a phone at the bench, the CSVs in a spreadsheet or an order, the JSON by
+        whatever comes next. The 1:1 PDF sheets are a separate export because they are a
+        separate thing -- a template you hold against the board, not a document you read.
+        """
+        base = self.current_path.with_suffix("") if self.current_path else Path.cwd() / "board"
+        guide = build_guide(self.bus.document, self.lookup)
+
+        written: list[Path] = []
+        try:
+            for suffix, text in (
+                ("_guide.html", guide_to_html(guide)),
+                ("_cut_list.csv", cut_list_to_csv(guide)),
+                ("_bom.csv", bom_to_csv(guide)),
+                ("_guide.json", guide_to_json(guide)),
+            ):
+                path = base.with_name(base.name + suffix)
+                path.write_text(text, encoding="utf-8")
+                written.append(path)
+        except OSError as err:
+            QMessageBox.critical(self, "Export failed", f"Could not write the guide: {err}")
+            return
+
+        self.statusBar().showMessage(
+            f"{describe_guide(guide)} — {written[0].name} and {len(written) - 1} more", 0
+        )
+        if guide.warnings:
+            # Said in a dialog, not just the status bar: each of these is a statement that
+            # the guide describes less than the whole build, and a user who misses it will
+            # follow the steps to the end and find the board does not work.
+            lines = "\n".join(f"  • {w.message}" for w in guide.warnings)
+            QMessageBox.warning(
+                self,
+                "The guide has gaps",
+                f"Written to {written[0].parent}, with {len(guide.warnings)} thing(s) it "
+                f"could not cover:\n\n{lines}",
+            )
+
     def on_about(self) -> None:
         """The version, in a form someone can copy into a bug report.
 
@@ -1574,6 +1624,20 @@ def headless(argv: list[str]) -> int:
             f"overlaps {placement.before.overlap_pairs} -> {placement.after.overlap_pairs}, "
             f"DRC errors {errors} -> {placed_errors}"
         )
+
+    # --- The build guide, written out. This is the project's actual output, so a
+    # headless run that renders the board and does not produce it is only testing half
+    # the pipeline.
+    guide = build_guide(doc, lookup)
+    (out_dir / "guide.html").write_text(guide_to_html(guide), encoding="utf-8")
+    (out_dir / "guide.json").write_text(guide_to_json(guide), encoding="utf-8")
+    (out_dir / "cut_list.csv").write_text(cut_list_to_csv(guide), encoding="utf-8")
+    (out_dir / "bom.csv").write_text(bom_to_csv(guide), encoding="utf-8")
+    print(f"\nbuild guide  {describe_guide(guide)}")
+    print(f"             {guide.part_steps} part step(s), {guide.conductor_steps} connection(s), "
+          f"{len(guide.cut_list)} wire(s) -> guide.html")
+    for warning in guide.warnings:
+        print(f"  ! {warning.code}: {warning.message}")
 
     # --- 3D render, offscreen: the build-guide image path ---
     try:

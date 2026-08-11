@@ -40,6 +40,33 @@ closed without a bump.
   or the same component twice.
 - Headless mode reports a dry-run placement, so CI has a number that moves when either
   the placer or the router changes.
+- **The soldering guide** (PLAN.md §7, milestone M5, `guide.py` + `guide_export.py`) —
+  the thing the project exists to produce. Nine phases in build order, a step per part
+  with its hole addresses, lead-bend pitch and orientation, a step per connection with
+  its path, length and estimated resistance, a wire cut list, a spine list and a BOM.
+  **File → Export Build Guide** (Ctrl+B) writes four files; headless mode writes them too.
+  - **Verification checkpoints**, which is the part no competing tool has. Continuity
+    comes from the schematic's own nets and lands in the phase that finishes each net.
+    Isolation comes from DRC: every R5′ proximity warning — a solder trace running
+    0.6 mm from another net's pad — becomes a specific probe, so the risk the tool
+    predicted and the measurement the user performs come off one list. Long runs get an
+    end-to-end resistance expectation computed from the same model DRC prints.
+  - Polarity is read from the registry's **pin names**, not from a convention about
+    pin 1, because no one convention covers an electrolytic (pin 1 is `+`), an LED
+    (pin 1 is the anode) and a diode (pin 1 is the cathode) at once.
+  - The HTML is one self-contained offline file with tickable steps and progress in
+    `localStorage` — no CDN, no fonts, no network, so it still opens from a USB stick on
+    a phone in five years.
+  - Anything the guide cannot cover — no netlist, an unknown footprint, an open net, a
+    DRC error — is reported as a warning rather than producing a quietly shorter guide.
+- `drc.trace_electrical` is public, so the guide and DRC rule 9 quote one resistance
+  model rather than two.
+
+### Fixed
+
+- `bodies.polarity_pin_offset`'s docstring claimed pin 1 is "the cathode of a diode or
+  LED", which the registry contradicts for the LED (its pin 1 is named `A`). The drawing
+  was right; the sentence a reader would have believed was not.
 
 - Versioning. `perfstudio.__version__` is single-sourced from `version.py`, the wheel's
   version is derived from it rather than repeated in `pyproject.toml`, and this file

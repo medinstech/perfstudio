@@ -216,6 +216,66 @@ def _physical_net_for_pin(
     return None
 
 
+@dataclass(frozen=True, slots=True)
+class TraceElectrical:
+    """A solder trace's estimated electrical behaviour.
+
+    Public because the build guide quotes these numbers back to the user as a measurable
+    expectation ("this rail should read about 1.4 mOhm end to end"), and a guide that
+    computed them its own way would eventually disagree with the DRC warning printed two
+    lines above it.
+    """
+
+    length_mm: float
+    #: Solder fillet plus any spine copper. Sizes the ampacity estimate.
+    cross_section_mm2: float
+    capacity_a: float
+    resistance_ohm: float
+    #: Only when the net declares a current.
+    drop_v: float | None
+    loss_w: float | None
+
+
+def trace_electrical(
+    conductor: SolderTraceConductor,
+    board: Board,
+    current_a: float | None = None,
+    options: DrcOptions = DEFAULT_DRC_OPTIONS,
+) -> TraceElectrical:
+    """Length, cross-section, capacity and resistance of one solder trace.
+
+    Extracted from rule 9 so that rule and the build guide share one model. The wired case
+    is two resistors in parallel -- the solder fillet and the copper spine are bonded over
+    the same length and both carry current -- which is the physically correct treatment and
+    is slightly more optimistic than PLAN.md Sec 4.6's own worked example, which
+    approximates it by the spine alone (~1.3 mOhm here against the plan's quoted ~1.5).
+    """
+    length_mm = path_length_mm(conductor.path, board)
+    buildup_area = options.solder_buildup_area_mm2[conductor.buildup]
+    spine = conductor.spine
+    spine_area_mm2 = math.pi * (spine.gauge / 2) ** 2 if spine is not None else 0.0
+    cross_section_mm2 = buildup_area + spine_area_mm2
+
+    solder_r = _resistance_ohm(options.solder_resistivity_u_ohm_cm, length_mm, buildup_area)
+    total_r = solder_r
+    if spine is not None:
+        copper_r = _resistance_ohm(
+            options.copper_resistivity_u_ohm_cm, length_mm, spine_area_mm2
+        )
+        total_r = (solder_r * copper_r) / (solder_r + copper_r)
+
+    drop_v = current_a * total_r if current_a is not None else None
+    loss_w = current_a * drop_v if current_a is not None and drop_v is not None else None
+    return TraceElectrical(
+        length_mm=length_mm,
+        cross_section_mm2=cross_section_mm2,
+        capacity_a=cross_section_mm2 * options.max_current_density_a_per_mm2,
+        resistance_ohm=total_r,
+        drop_v=drop_v,
+        loss_w=loss_w,
+    )
+
+
 def _resistance_ohm(resistivity_u_ohm_cm: float, length_mm: float, area_mm2: float) -> float:
     """R = resistivity * length / area, in Ohms. resistivity given in µOhm*cm.
 
@@ -706,32 +766,17 @@ def _check_current_capacity(doc: PerfDocument, options: DrcOptions) -> list[DrcV
             continue
         current_a = net.current_a
 
-        buildup_area = options.solder_buildup_area_mm2[conductor.buildup]
-        spine = conductor.spine
-        spine_area_mm2 = math.pi * (spine.gauge / 2) ** 2 if spine is not None else 0.0
-        # Cross-section for the capacity estimate: buildup area plus the spine's
-        # copper area, per spec -- a simple sum used only to size the ampacity
-        # threshold.
-        cross_section_mm2 = buildup_area + spine_area_mm2
-        capacity_a = cross_section_mm2 * options.max_current_density_a_per_mm2
+        # One model, shared with the build guide: see trace_electrical above.
+        electrical = trace_electrical(conductor, doc.board, current_a, options)
+        cross_section_mm2 = electrical.cross_section_mm2
+        capacity_a = electrical.capacity_a
         if current_a <= capacity_a:
             continue
 
-        length_mm = path_length_mm(conductor.path, doc.board)
-        solder_r = _resistance_ohm(options.solder_resistivity_u_ohm_cm, length_mm, buildup_area)
-        # Resistance/voltage-drop reporting (as opposed to the capacity estimate
-        # above) models the solder fillet and the copper spine as two resistors of
-        # equal length in parallel -- the physically correct treatment for two
-        # bonded conductive paths carrying the same current over the same run.
-        # This is slightly more optimistic than PLAN.md §4.6's own worked example,
-        # which (for brevity) approximates the wired case by the spine alone: for
-        # its 10-pad/0.6 mm example this model gives ~1.3 mOhm against the plan's
-        # quoted "~1.5 mOhm" -- well within the plan's own "≈".
-        total_r = solder_r
-        if spine is not None:
-            copper_r = _resistance_ohm(options.copper_resistivity_u_ohm_cm, length_mm, spine_area_mm2)
-            total_r = (solder_r * copper_r) / (solder_r + copper_r)
-        drop_v = current_a * total_r
+        length_mm = electrical.length_mm
+        total_r = electrical.resistance_ohm
+        drop_v = electrical.drop_v if electrical.drop_v is not None else 0.0
+        spine = conductor.spine
         spine_note = f" + {spine.gauge} mm {spine.material} spine" if spine is not None else ""
         recommendation = (
             ""

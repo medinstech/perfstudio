@@ -346,10 +346,17 @@ def polarity_pin_offset(footprint: Footprint, pitch: float) -> tuple[float, floa
     """Local mm of the pin that says which way round the part goes, or None if it is
     symmetrical.
 
-    Pin 1 by convention: the cathode of a diode or LED, the positive lead of an
-    electrolytic, pin 1 of a DIP. Getting this the wrong way round is the most common way a
-    finished board turns out dead, so both views mark it from this one function rather than
-    each deciding for itself.
+    Always pin 1, whatever pin 1 happens to MEAN for that part. The registry names the pin
+    where it is not obvious -- an electrolytic's pin 1 is '+', an LED's is 'A', the anode --
+    and leaves it unnamed where the convention is settled, which for a diode makes pin 1 the
+    cathode (the banded end, as KiCad's DO-41 has it).
+
+    So this returns "which end is keyed", and each caller decides what to draw there: an
+    axial band at pin 1 is a cathode stripe, an electrolytic's printed stripe goes on the
+    OPPOSITE side because it marks the negative lead. Anything that has to state the
+    polarity in words -- above all guide.py, where getting it backwards is exactly the
+    failure the build guide exists to prevent -- must read the pin NAME rather than assume
+    a meaning for pin 1.
     """
     if not footprint.polarized and footprint.body.archetype not in _ALWAYS_KEYED:
         return None
