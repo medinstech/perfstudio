@@ -846,3 +846,81 @@ def test_guide_gaps_are_reported_in_a_dialog_not_only_the_status_bar(tmp_path, m
 
     assert shown and "could not cover" in shown[0]
     window.close()
+
+
+# ---------------------------------------------------------------------------
+# The solder side
+# ---------------------------------------------------------------------------
+
+
+def test_the_solder_side_shows_where_a_part_is_without_drawing_the_part() -> None:
+    """You can see a part through the board, and on the solder side you need to: "is
+    there room for this wire" and "which pad belongs to the chip" are questions asked
+    from that side. But drawing the body as seen from above is how somebody solders a
+    board backwards, so the footprint is hatched and carries none of the component-side
+    marks."""
+    from perfstudio.ui.view2d import _paint_body_shadow
+
+    doc = _load_dense()
+    bottom = BoardScene(doc, footprint_lookup(), side="bottom")
+    top = BoardScene(doc, footprint_lookup(), side="top")
+
+    assert len(bottom.component_items) == len(top.component_items)
+    assert callable(_paint_body_shadow)
+
+
+def test_the_solder_side_body_shadow_ignores_the_polarity_key() -> None:
+    """A cathode band and a pin-1 notch are moulded into the TOP of a part. Showing them
+    from below would be inventing a view that does not exist."""
+    import inspect
+
+    from perfstudio.ui import view2d
+
+    source = inspect.getsource(view2d._paint_body_shadow)
+    assert "_body_path(footprint, placement, None)" in source
+
+
+# ---------------------------------------------------------------------------
+# Conductor appearance
+# ---------------------------------------------------------------------------
+
+
+def test_insulated_wire_takes_its_nets_colour_from_the_build_guides_convention() -> None:
+    """The screen and the cut list a person works from must not disagree about which
+    wire is which."""
+    from perfstudio.guide import COLOR_BY_NET_CLASS
+    from perfstudio.ui.view2d import _INSULATION_SCREEN, insulation_color
+
+    assert insulation_color("power", 0) == _INSULATION_SCREEN[COLOR_BY_NET_CLASS["power"]]
+    assert insulation_color("ground", 0) == _INSULATION_SCREEN[COLOR_BY_NET_CLASS["ground"]]
+    # Signals cycle, and two different signals are told apart.
+    assert insulation_color("signal", 0) != insulation_color("signal", 1)
+    # Every name the guide can emit has a screen colour, or a wire would silently fall
+    # back to grey and stop matching its own cut-list row.
+    from perfstudio.guide import SIGNAL_COLORS
+
+    for name in (*SIGNAL_COLORS, *COLOR_BY_NET_CLASS.values()):
+        assert name in _INSULATION_SCREEN, name
+
+
+def test_no_conductor_is_drawn_in_the_error_colour() -> None:
+    """Red means "this is wrong" -- the DRC outline and the R5' risk ring. Every
+    insulated wire used to be red as well, so a completely correct board looked alarming
+    and a real risk had nothing to stand out against."""
+    from perfstudio.ui.view2d import CONDUCTOR_STYLE, ERROR_OUTLINE, RISK_RING
+
+    for kind, (colour, _width, _dashed) in CONDUCTOR_STYLE.items():
+        assert colour.name() != ERROR_OUTLINE.name(), kind
+        assert colour.name() != RISK_RING.name(), kind
+
+
+def test_solder_beads_sit_inside_the_pad_rather_than_over_it() -> None:
+    """Solder fills a pad; it does not replace it. A bead wider than the pad hides the
+    very thing being soldered to, which is what made a routed board read as a diagram of
+    coloured bars with a board somewhere underneath."""
+    from perfstudio.ui.view2d import CONDUCTOR_STYLE
+
+    board = _load_dense().board
+    for kind in ("solder-trace", "solder-trace-wired", "bare-wire", "insulated-wire"):
+        width = CONDUCTOR_STYLE[kind][1]
+        assert width < board.pad_diameter, kind

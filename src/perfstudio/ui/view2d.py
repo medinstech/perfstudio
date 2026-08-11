@@ -49,12 +49,16 @@ from perfstudio.geometry import (
     all_pin_holes,
     board_size_mm,
     column_label,
+    format_hole,
     hole_span_mm,
     is_inside_board,
     row_label,
     transform_offset,
     transform_pin_offset,
 )
+# The one place the wire-colour convention is defined, so the editor and the cut list a
+# person actually works from cannot disagree about which wire is which.
+from perfstudio.guide import COLOR_BY_NET_CLASS, SIGNAL_COLORS
 from perfstudio.model import (
     Board,
     BoardSide,
@@ -62,6 +66,7 @@ from perfstudio.model import (
     Conductor,
     Footprint,
     HoleCoord,
+    NetClass,
     PerfDocument,
     contacts_every_path_hole,
 )
@@ -95,6 +100,11 @@ LABEL = QColor("#15151a")
 REF_LABEL = QColor("#eef1f8")
 SELECTED = QColor("#4c9dff")
 ERROR_OUTLINE = QColor("#e5484d")
+#: The part on the far side, seen through the board. Dim on purpose: on the solder side
+#: the pads are the subject, and anything that competes with them for attention is a way
+#: to solder the wrong pad.
+BODY_SHADOW = QColor("#95a3b8")
+BODY_SHADOW_EDGE = QColor("#6d7a8c")
 RISK_RING = QColor("#e5484d")
 RULER_TEXT = QColor("#8b93a7")
 RULER_TEXT_MAJOR = QColor("#d3d9e8")
@@ -108,16 +118,61 @@ RATSNEST = {
 }
 RATSNEST_HIGHLIGHT = QColor("#ffd166")
 
+#: kind -> (colour, stroke width mm, dashed).
+#:
+#: WIDTHS ARE PHYSICAL, and that is the point. A 1.9 mm pad is the reference: solder
+#: sits inside it rather than swallowing it, tinned wire is about half a millimetre, and
+#: insulated wire is thicker than bare because of the sleeve. These used to be set for
+#: legibility alone, which made every trace wider than the pads it joined and turned a
+#: routed board into a diagram of coloured bars with a board somewhere underneath.
+#:
+#: RED IS NOT A CONDUCTOR COLOUR here. It is the error and R5'-risk colour, and it was
+#: also every insulated wire, so a fully correct board looked alarming. Insulated wire
+#: now takes its NET's colour instead -- the same convention the build guide's cut list
+#: prints, so the screen and the list a person works from agree.
 CONDUCTOR_STYLE = {
-    # kind: (colour, width mm, dashed)
-    "solder-trace": (QColor("#9aa0a6"), 1.5, False),
-    "solder-trace-wired": (QColor("#7c848c"), 1.7, False),
-    "bare-wire": (QColor("#b0b6bb"), 0.6, False),
-    "insulated-wire": (QColor("#d32f2f"), 1.0, False),
-    "top-jumper": (QColor("#388e3c"), 0.9, True),
-    "lead-bend": (QColor("#c0c4c8"), 0.5, False),
+    "solder-trace": (QColor("#b9bec6"), 0.9, False),
+    "solder-trace-wired": (QColor("#aeb4bd"), 1.0, False),
+    "bare-wire": (QColor("#dfe4ea"), 0.5, False),
+    "insulated-wire": (QColor("#8e97a3"), 0.85, False),
+    "top-jumper": (QColor("#8e97a3"), 0.75, True),
+    "lead-bend": (QColor("#c2c8d0"), 0.45, False),
     "strip": (QColor("#c8a951"), 2.0, False),
 }
+
+#: Insulation colours, matching guide.py's cut list exactly. Named there and mapped to
+#: screen colours here, because the guide names a colour a human buys ("black") and this
+#: needs one that reads on a dark board.
+_INSULATION_SCREEN = {
+    "red": QColor("#e05252"),
+    "black": QColor("#5c6470"),
+    "yellow": QColor("#e2c541"),
+    "green": QColor("#5cb85c"),
+    "blue": QColor("#5b8dd9"),
+    "white": QColor("#e8ecf2"),
+    "orange": QColor("#e08b3c"),
+    "violet": QColor("#a978d8"),
+    "grey": QColor("#9aa2ad"),
+    "brown": QColor("#a5764f"),
+}
+
+#: The copper spine inside a wired solder trace, drawn as a core through the solder.
+SPINE_CORE = QColor("#c08a4a")
+
+
+def insulation_color(net_class: NetClass | None, signal_index: int) -> QColor:
+    """The colour a wire on this net should be, by the build guide's own convention.
+
+    Red for power and black for ground, then a fixed cycle for signals -- assigned by
+    net order, so the same board always gets the same colours in the editor and in the
+    cut list. A convention that changed between the screen and the printout would be
+    worse than none.
+    """
+    if net_class is None:
+        return CONDUCTOR_STYLE["insulated-wire"][0]
+    fixed = COLOR_BY_NET_CLASS.get(net_class)
+    name = fixed if fixed is not None else SIGNAL_COLORS[signal_index % len(SIGNAL_COLORS)]
+    return _INSULATION_SCREEN.get(name, CONDUCTOR_STYLE["insulated-wire"][0])
 
 #: Millimetres of scene reserved outside the substrate for the hole-address rulers.
 RULER_MARGIN_MM = 6.0
@@ -539,14 +594,25 @@ class ConductorItem(QGraphicsItem):
     it must be read from the engine, never re-implemented here.
     """
 
-    def __init__(self, conductor: Conductor, board: Board, side: BoardSide) -> None:
+    def __init__(
+        self,
+        conductor: Conductor,
+        board: Board,
+        side: BoardSide,
+        net_class: NetClass | None = None,
+        signal_index: int = 0,
+    ) -> None:
         super().__init__()
         self.conductor = conductor
         self.board = board
         self.side = side
+        self.net_class = net_class
+        self.signal_index = signal_index
         self.setZValue(-50 if conductor.side == "bottom" else 40)
         first, last = conductor.path[0], conductor.path[-1]
-        self.setToolTip(f"{conductor.kind}  {first.col},{first.row} to {last.col},{last.row}")
+        self.setToolTip(
+            f"{conductor.kind.replace('-', ' ')}  {format_hole(first)} → {format_hole(last)}"
+        )
 
     def _points(self) -> list[QPointF]:
         return [hole_to_screen(h, self.board, self.side) for h in self.conductor.path]
@@ -570,38 +636,71 @@ class ConductorItem(QGraphicsItem):
         pad = 2.0
         return QRectF(min(xs) - pad, min(ys) - pad, max(xs) - min(xs) + 2 * pad, max(ys) - min(ys) + 2 * pad)
 
+    def _colour(self) -> QColor:
+        """This conductor's colour: its own if it has one, else its net's, else its kind's."""
+        explicit = getattr(self.conductor, "color", None)
+        if explicit:
+            return QColor(explicit)
+        if self.conductor.kind in ("insulated-wire", "top-jumper"):
+            return insulation_color(self.net_class, self.signal_index)
+        return CONDUCTOR_STYLE.get(self.conductor.kind, (QColor("#888"), 0.6, False))[0]
+
     def paint(self, painter: QPainter, option: Any, widget: Any = None) -> None:
-        k = self.conductor.kind
-        colour, width, dashed = CONDUCTOR_STYLE.get(k, (QColor("#888"), 0.6, False))
-        color_attr = getattr(self.conductor, "color", None)
-        if color_attr:
-            colour = QColor(color_attr)
+        kind = self.conductor.kind
+        _default, width, dashed = CONDUCTOR_STYLE.get(kind, (QColor("#888"), 0.6, False))
+        colour = self._colour()
 
         pts = self._points()
+        path = QPainterPath(pts[0])
+        for p in pts[1:]:
+            path.lineTo(p)
+
+        # Insulated wire and top jumpers get a dark casing line under the colour, so a
+        # coloured sleeve reads as a sleeve rather than as a painted line, and stays
+        # legible where it crosses a pad of nearly its own brightness.
+        if kind in ("insulated-wire", "top-jumper"):
+            casing = QPen(QColor(0, 0, 0, 150), width + 0.22)
+            casing.setCapStyle(Qt.PenCapStyle.RoundCap)
+            casing.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            painter.setPen(casing)
+            painter.drawPath(path)
+
         pen = QPen(colour, width)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
         if dashed:
-            pen.setDashPattern([2.0, 1.5])
+            pen.setDashPattern([2.2, 1.6])
         painter.setPen(pen)
-
-        path = QPainterPath(pts[0])
-        for p in pts[1:]:
-            path.lineTo(p)
         painter.drawPath(path)
+
+        # The spine, drawn as a thin copper core running through the solder -- which is
+        # exactly what it is, and the only thing distinguishing the two trace kinds on
+        # screen. Their electrical difference is about an order of magnitude, so it has
+        # to be visible.
+        if kind == "solder-trace-wired":
+            core = QPen(SPINE_CORE, 0.3)
+            core.setCapStyle(Qt.PenCapStyle.RoundCap)
+            painter.setPen(core)
+            painter.drawPath(path)
 
         contacts = self.contact_points()
         painter.setPen(Qt.PenStyle.NoPen)
         if contacts_every_path_hole(self.conductor):
-            # Beads at every pad: this trace is soldered down all along its length.
-            painter.setBrush(QBrush(colour.lighter(115)))
+            # A bead at every pad: this trace is soldered down all along its length.
+            # Sized to sit INSIDE the pad rather than over it -- solder fills the pad, it
+            # does not replace it, and a bead wider than the pad hides the thing being
+            # soldered to.
+            radius = min(width * 0.85, self.board.pad_diameter * 0.42)
+            painter.setBrush(QBrush(colour.lighter(112)))
             for p in contacts:
-                painter.drawEllipse(p, width * 0.62, width * 0.62)
+                painter.drawEllipse(p, radius, radius)
         else:
-            # Fillets at the endpoints only: a wire is soldered only at its two ends.
-            painter.setBrush(QBrush(colour.lighter(125)))
+            # A fillet at each end only: a wire is soldered at its two ends and merely
+            # passes over everything between them.
+            radius = min(width * 0.95, self.board.pad_diameter * 0.40)
+            painter.setBrush(QBrush(colour.lighter(120)))
             for p in contacts:
-                painter.drawEllipse(p, width * 0.75, width * 0.75)
+                painter.drawEllipse(p, radius, radius)
 
 
 # --------------------------------------------------------------- component bodies
@@ -670,6 +769,35 @@ def _body_path(
     radius = min(rect.width(), rect.height()) * 0.12
     path.addRoundedRect(rect, radius, radius)
     return path
+
+
+def _paint_body_shadow(
+    painter: QPainter,
+    footprint: Footprint,
+    placement: BodyPlacement,
+    selected: bool,
+) -> None:
+    """Where a part sits, seen through the board from the solder side.
+
+    Hatched, not filled, and deliberately without a single one of the component-side
+    marks. The distinction it has to carry is "something is on the other side here"
+    rather than "here is a part", because on the solder side the second reading is how
+    somebody solders a board backwards.
+
+    Diagonal hatching rather than a tint because a tint competes with the pads for
+    attention and this must never do that: on this side the pads ARE the subject.
+    ``keyed=None`` is passed on purpose, so an LED's flat and a diode's band do not
+    appear -- they are moulded into the top of the part and cannot be seen from below.
+    """
+    path = _body_path(footprint, placement, None)
+    painter.setPen(QPen(QColor(SELECTED if selected else BODY_SHADOW_EDGE), 0.12))
+    brush = QBrush(QColor(SELECTED if selected else BODY_SHADOW), Qt.BrushStyle.FDiagPattern)
+    # Hatch patterns are defined in device pixels, so without this they would stay the
+    # same size on screen while the board zooms -- turning into a solid block when zoomed
+    # in and vanishing when zoomed out.
+    brush.setTransform(painter.transform().inverted()[0])
+    painter.setBrush(brush)
+    painter.drawPath(path)
 
 
 def _paint_body(
@@ -902,11 +1030,23 @@ class ComponentItem(QGraphicsItem):
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawPolygon(self._local_outline())
 
-        # THE SOLDER SIDE SHOWS NO BODY. Turn a real board over and the parts are on the far
-        # face: what you see is the substrate, the pads, and the cut lead ends poking through.
-        # Mirroring the silhouettes and drawing them as if seen from above -- which is what
-        # this did -- shows you a view that does not exist, on the very side where a
-        # misreading gets soldered in.
+        # THE SOLDER SIDE SHOWS NO BODY, only where one IS. Turn a real board over and the
+        # parts are on the far face: what you see is the substrate, the pads and the cut
+        # lead ends. Drawing the silhouettes as if seen from above -- which this used to do
+        # -- shows a view that does not exist, on the very side where a misreading gets
+        # soldered in.
+        #
+        # But you can still see the part through the board, and you need to: "is there room
+        # for this wire" and "which of these pads belongs to the chip" are solder-side
+        # questions. So the footprint is hatched rather than drawn: the area is marked as
+        # occupied, with none of the component-side detail -- no cathode band, no pin-1
+        # notch, no tab -- that would make it read as a part you are looking at.
+        if self.side == "bottom":
+            painter.save()
+            self._apply_local_transform(painter)
+            _paint_body_shadow(painter, self.fp, placement, self.isSelected())
+            painter.restore()
+
         if self.side == "top":
             # Leads, in item coordinates: a line does not care which way its frame is turned,
             # and the endpoints already come from the shared transform.
@@ -1107,8 +1247,21 @@ class BoardScene(QGraphicsScene):
         if self.show_rulers:
             self.addItem(HoleRulerItem(board, self.side))
 
+        net_class_by_id = {net.id: net.net_class for net in self.document.nets}
+        signal_index = {
+            net.id: index
+            for index, net in enumerate(n for n in self.document.nets if n.net_class == "signal")
+        }
         for conductor in self.document.conductors:
-            self.addItem(ConductorItem(conductor, board, self.side))
+            self.addItem(
+                ConductorItem(
+                    conductor,
+                    board,
+                    self.side,
+                    net_class=net_class_by_id.get(conductor.net_id or ""),
+                    signal_index=signal_index.get(conductor.net_id or "", 0),
+                )
+            )
 
         for comp in self.document.components:
             fp = self.lookup(comp.footprint_id)

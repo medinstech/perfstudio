@@ -24,6 +24,7 @@ for the differential proof they were built for, and useless as routing targets.
 
 from __future__ import annotations
 
+import dataclasses
 import random
 from pathlib import Path
 
@@ -35,7 +36,9 @@ from perfstudio.autoroute import (
     AutorouteOptions,
     _criticality_order,
     describe,
+    describe_reroute,
     plan_autoroute,
+    plan_reroute,
     plan_route_net,
     risk_holes,
     unrouted_links,
@@ -44,7 +47,7 @@ from perfstudio.command import CommandBus, CommandContext
 from perfstudio.commands import create_document_id_generator, create_standard_registry
 from perfstudio.connectivity import FootprintLookup, PhysicalPinRef, are_pins_connected
 from perfstudio.footprints import footprint_lookup
-from perfstudio.lvs import run_lvs
+from perfstudio.lvs import run_lvs, stale_conductor_ids
 from perfstudio.model import (
     Board,
     BodySpec,
@@ -58,6 +61,7 @@ from perfstudio.model import (
     NetClass,
     NetNode,
     PerfDocument,
+    WireConductor,
 )
 from perfstudio.ratsnest import ratsnest, summarize
 from perfstudio.router import RouterCosts, RouterOptions
@@ -689,3 +693,132 @@ def test_property_autoroute_is_reproducible(seed: int) -> None:
     again = plan_autoroute(doc, LOOKUP)
 
     assert first.conductors == again.conductors
+
+
+# ---------------------------------------------------------------------------
+# Rip-up and re-route
+# ---------------------------------------------------------------------------
+
+
+def test_autoroute_only_adds_which_is_why_reroute_exists() -> None:
+    """The measurement that justifies plan_reroute, as an assertion.
+
+    Move a part after routing and the copper laid for its old position still joins the
+    right pins of the right net: it is not floating, not stale, and removing any of it
+    disconnects something -- so nothing reports it and autoroute puts more beside it.
+    The board grows every time. Only ripping up gets it back.
+    """
+    registry = footprint_lookup()
+    doc = _load_golden_document("ne555")
+
+    fresh = commit(doc, plan_autoroute(doc, registry).payload())
+    fresh_count = len(fresh.conductors)
+
+    moved = dataclasses.replace(
+        fresh,
+        components=tuple(
+            dataclasses.replace(c, anchor=HoleCoord(0, 14)) if c.ref == "R1" else c
+            for c in fresh.components
+        ),
+    )
+    grown = commit(moved, plan_autoroute(moved, registry).payload())
+    assert len(grown.conductors) > fresh_count, "autoroute is supposed to add, not replace"
+    assert stale_conductor_ids(grown, registry) == (), "and none of it looks stale"
+
+    plan = plan_reroute(grown, registry)
+    rerouted = _commit_replace(grown, plan.payload())
+
+    assert len(rerouted.conductors) == fresh_count
+    assert run_lvs(rerouted, LOOKUP_STD).summary.opens == 0
+
+
+def test_reroute_leaves_copper_that_claims_no_net_alone() -> None:
+    """Hand-drawn copper makes no claim this planner could act on, and unpicking someone
+    else's wiring is exactly the wrong behaviour."""
+    components = (component("R1", "fp1", hole(2, 2)), component("R2", "fp1", hole(9, 2)))
+    nets = (net("n1", "SIG", "signal", (("R1", "1"), ("R2", "1"))),)
+    doc = make_doc(components=components, nets=nets)
+    routed = commit(doc, plan_autoroute(doc, LOOKUP).payload())
+    with_handmade = dataclasses.replace(
+        routed,
+        conductors=routed.conductors
+        + (WireConductor(id="hand-1", path=(hole(4, 8), hole(9, 8)), net_id=None),),
+    )
+
+    plan = plan_reroute(with_handmade, LOOKUP)
+
+    assert "hand-1" not in plan.remove_ids
+    after = _commit_replace(with_handmade, plan.payload())
+    assert any(c.id == "hand-1" for c in after.conductors)
+
+
+def test_reroute_of_one_net_does_not_touch_another() -> None:
+    components = (
+        component("R1", "fp1", hole(2, 2)),
+        component("R2", "fp1", hole(9, 2)),
+        component("R3", "fp1", hole(2, 8)),
+        component("R4", "fp1", hole(9, 8)),
+    )
+    nets = (
+        net("n1", "A", "signal", (("R1", "1"), ("R2", "1"))),
+        net("n2", "B", "signal", (("R3", "1"), ("R4", "1"))),
+    )
+    doc = make_doc(components=components, nets=nets)
+    routed = commit(doc, plan_autoroute(doc, LOOKUP).payload())
+    b_ids = {c.id for c in routed.conductors if c.net_id == "n2"}
+
+    plan = plan_reroute(routed, LOOKUP, only_net_ids=("n1",))
+
+    assert b_ids.isdisjoint(plan.remove_ids)
+    after = _commit_replace(routed, plan.payload())
+    assert b_ids <= {c.id for c in after.conductors}
+
+
+def test_reroute_commits_as_a_single_undo_step() -> None:
+    components = (component("R1", "fp1", hole(2, 2)), component("R2", "fp1", hole(9, 2)))
+    nets = (net("n1", "SIG", "signal", (("R1", "1"), ("R2", "1"))),)
+    doc = make_doc(components=components, nets=nets)
+    routed = commit(doc, plan_autoroute(doc, LOOKUP).payload())
+
+    bus = CommandBus(
+        routed,
+        create_standard_registry(),
+        CommandContext(next_id=create_document_id_generator(routed)),
+    )
+    plan = plan_reroute(routed, LOOKUP)
+    assert bus.dispatch("conductor.replace", plan.payload()).ok
+    assert len(bus.history()) == 1
+
+    bus.undo()
+    assert bus.document.conductors == routed.conductors
+
+
+def test_reroute_on_an_unrouted_board_removes_nothing() -> None:
+    components = (component("R1", "fp1", hole(2, 2)), component("R2", "fp1", hole(9, 2)))
+    nets = (net("n1", "SIG", "signal", (("R1", "1"), ("R2", "1"))),)
+    doc = make_doc(components=components, nets=nets)
+
+    plan = plan_reroute(doc, LOOKUP)
+
+    assert plan.remove_ids == ()
+    assert plan.conductors
+    assert "ripped up" in describe_reroute(plan)
+
+
+def _commit_replace(doc: PerfDocument, payload: object) -> PerfDocument:
+    bus = CommandBus(
+        doc, create_standard_registry(), CommandContext(next_id=create_document_id_generator(doc))
+    )
+    result = bus.dispatch("conductor.replace", payload)
+    assert result.ok, result.message
+    return bus.document
+
+
+def _load_golden_document(name: str) -> PerfDocument:
+    path = Path(__file__).resolve().parents[1] / "tools" / "diffcheck" / "golden" / f"{name}.perf"
+    result = persist.deserialize_document(path.read_text(encoding="utf-8"))
+    assert result.ok
+    return result.document
+
+
+LOOKUP_STD: FootprintLookup = footprint_lookup()

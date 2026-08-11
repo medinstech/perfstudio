@@ -39,6 +39,7 @@ from perfstudio.commands import (
     ComponentPlacement,
     MoveComponentPayload,
     MoveComponentsPayload,
+    ReplaceConductorsPayload,
     NewLeadBendConductor,
     NewSolderTraceConductor,
     NewStripConductor,
@@ -938,3 +939,106 @@ def test_an_empty_delete_batch_is_refused():
     assert result.ok is False
     assert result.code == "nothing-to-delete"
     assert bus.journal() == ()
+
+
+# ---------------------------------------------------------------------------
+# conductor.replace -- rip-up and re-route as one step
+# ---------------------------------------------------------------------------
+
+
+def _two_traces(bus: CommandBus):
+    bus.dispatch(
+        "conductor.addMany",
+        AddConductorsPayload(
+            conductors=(
+                NewSolderTraceConductor(path=(HoleCoord(2, 2), HoleCoord(3, 2))),
+                NewSolderTraceConductor(path=(HoleCoord(5, 5), HoleCoord(6, 5))),
+            )
+        ),
+    )
+    return [c.id for c in bus.document.conductors]
+
+
+def test_replaces_conductors_in_one_command():
+    bus = new_bus()
+    first, second = _two_traces(bus)
+    before = bus.document
+
+    result = bus.dispatch(
+        "conductor.replace",
+        ReplaceConductorsPayload(
+            remove_ids=(first,),
+            conductors=(NewSolderTraceConductor(path=(HoleCoord(8, 8), HoleCoord(9, 8))),),
+            label="Re-route GND",
+        ),
+    )
+
+    assert result.ok, result.message
+    ids = [c.id for c in bus.document.conductors]
+    assert first not in ids
+    assert second in ids
+    assert len(ids) == 2
+    assert bus.history()[-1] == "Re-route GND"
+
+    bus.undo()
+    assert bus.document is before
+
+
+def test_replace_is_all_or_nothing():
+    """A half-applied re-route leaves a net ripped up with nothing put back -- a board
+    the planner never proposed and nobody chose."""
+    bus = new_bus()
+    first, _second = _two_traces(bus)
+    before = bus.document
+
+    result = bus.dispatch(
+        "conductor.replace",
+        ReplaceConductorsPayload(
+            remove_ids=(first,),
+            # Diagonal: refused by exactly the same check conductor.add applies.
+            conductors=(NewSolderTraceConductor(path=(HoleCoord(8, 8), HoleCoord(9, 9))),),
+        ),
+    )
+
+    assert result.ok is False
+    assert bus.document is before
+
+
+def test_replace_refuses_an_id_that_is_not_there():
+    bus = new_bus()
+    _two_traces(bus)
+    result = bus.dispatch(
+        "conductor.replace",
+        ReplaceConductorsPayload(
+            remove_ids=("cond-99",),
+            conductors=(NewSolderTraceConductor(path=(HoleCoord(8, 8), HoleCoord(9, 8))),),
+        ),
+    )
+    assert result.ok is False
+    assert result.code == "conductor-not-found"
+
+
+def test_replace_refuses_a_no_op():
+    bus = new_bus()
+    result = bus.dispatch(
+        "conductor.replace", ReplaceConductorsPayload(remove_ids=(), conductors=())
+    )
+    assert result.ok is False
+    assert result.code == "nothing-to-do"
+
+
+def test_replace_can_reuse_a_hole_the_removed_conductor_occupied():
+    """The new conductors are validated against the document AFTER the removals, which is
+    the whole reason this is one command and not two."""
+    bus = new_bus()
+    first, _second = _two_traces(bus)
+
+    result = bus.dispatch(
+        "conductor.replace",
+        ReplaceConductorsPayload(
+            remove_ids=(first,),
+            conductors=(NewSolderTraceConductor(path=(HoleCoord(2, 2), HoleCoord(2, 3))),),
+        ),
+    )
+
+    assert result.ok, result.message

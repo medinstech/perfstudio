@@ -278,6 +278,18 @@ def autoroute(nets: list[str] | None = None) -> dict[str, Any]:
 
 
 @mcp.tool()
+def reroute(nets: list[str] | None = None) -> dict[str, Any]:
+    """Rip up the existing routing and plan it again from nothing.
+
+    Use this after moving parts. `autoroute` only ADDS: the copper laid out for a part's
+    old position still joins the right pins, so nothing flags it, and routing again just
+    puts more copper beside it — the board grows every time. This throws that away and
+    re-plans. Conductors with no net assigned are left alone.
+    """
+    return session.reroute(nets)
+
+
+@mcp.tool()
 def optimize_placement(seed: int = 0, apply: bool = True) -> dict[str, Any]:
     """Rearrange the unlocked parts to shorten the connections and make more of them
     solderable as traces rather than wires.

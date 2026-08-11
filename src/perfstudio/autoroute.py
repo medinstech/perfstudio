@@ -45,6 +45,7 @@ Pure and deterministic: no I/O, no clock, no randomness. Same board, same plan.
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass
 
 from .command import CommandContext, CommandError
@@ -52,12 +53,13 @@ from .commands import (
     AddConductorPayload,
     AddConductorsPayload,
     NewConductor,
+    ReplaceConductorsPayload,
     add_conductor,
     create_document_id_generator,
 )
 from .connectivity import FootprintLookup, PhysicalPinRef
 from .geometry import format_hole, path_length_mm
-from .model import HoleCoord, NetClass, NetId, PerfDocument
+from .model import ConductorId, HoleCoord, NetClass, NetId, PerfDocument
 from .ratsnest import NetRatsnest, RatsnestLink, ratsnest
 from .router import (
     DEFAULT_ROUTER_OPTIONS,
@@ -252,6 +254,100 @@ def plan_route_net(
     """Route a single net. Same machinery, so a one-net run and a whole-board run cannot
     disagree about how a connection should be made."""
     return plan_autoroute(doc, lookup, options, only_net_ids=(net_id,))
+
+
+@dataclass(frozen=True, slots=True)
+class ReroutePlan:
+    """Rip up a net's existing copper and route it again from nothing.
+
+    WHY THIS EXISTS AS A SEPARATE THING FROM ``plan_autoroute``.
+
+    Autoroute only ADDS. It looks at what is still unconnected and connects it, which is
+    the right behaviour when a board is half finished and the wrong one after a part has
+    moved: the copper laid for the old position still joins the right pins, so it is
+    neither stale nor redundant nor a DRC violation -- it simply describes a board that
+    no longer exists, and the router adds more copper alongside it. Measured on the NE555
+    fixture: routed fresh it takes 14 conductors; move one resistor and autoroute again
+    and it is 16, none of which can be removed without disconnecting something. Routed
+    again from scratch after the move it is 14.
+
+    So the only way back to a clean board is to rip up and re-plan, and that is a
+    different user intention from "finish the routing" -- it discards work. It gets its
+    own function, its own command and its own menu entry rather than quietly becoming
+    what Ctrl+R does.
+
+    WHAT IT WILL REMOVE: conductors whose ``net_id`` names one of the nets being
+    re-routed. That claim is the conductor saying "I am part of this net's routing", so
+    replacing that routing replaces it. Copper with NO net_id is never touched -- that is
+    hand-drawn work, which makes no claim this function could act on, and unpicking it
+    would be exactly the wrong behaviour.
+    """
+
+    document: PerfDocument
+    #: Conductors to delete. Empty means nothing was ripped up.
+    remove_ids: tuple[ConductorId, ...]
+    conductors: tuple[NewConductor, ...]
+    nets: tuple[NetOutcome, ...]
+    summary: AutorouteSummary
+    label: str
+
+    def payload(self) -> ReplaceConductorsPayload:
+        """The one command that commits this plan, as a single undo step."""
+        return ReplaceConductorsPayload(
+            remove_ids=self.remove_ids, conductors=self.conductors, label=self.label
+        )
+
+    @property
+    def is_empty(self) -> bool:
+        return not self.remove_ids and not self.conductors
+
+
+def plan_reroute(
+    doc: PerfDocument,
+    lookup: FootprintLookup,
+    only_net_ids: tuple[NetId, ...] | None = None,
+    options: AutorouteOptions = DEFAULT_AUTOROUTE_OPTIONS,
+) -> ReroutePlan:
+    """Rip up the routing of every net (or just ``only_net_ids``) and plan it again."""
+    targets = {net.id for net in doc.nets}
+    if only_net_ids is not None:
+        targets &= set(only_net_ids)
+
+    remove_ids = tuple(
+        sorted(c.id for c in doc.conductors if c.net_id is not None and c.net_id in targets)
+    )
+    stripped = dataclasses.replace(
+        doc, conductors=tuple(c for c in doc.conductors if c.id not in set(remove_ids))
+    )
+
+    plan = plan_autoroute(stripped, lookup, options, only_net_ids=only_net_ids)
+    names = [net.name for net in doc.nets if net.id in targets]
+    label = (
+        f"Re-route {len(names)} net(s)"
+        if len(names) != 1
+        else f"Re-route {names[0]}"
+    )
+    return ReroutePlan(
+        document=plan.document,
+        remove_ids=remove_ids,
+        conductors=plan.conductors,
+        nets=plan.nets,
+        summary=plan.summary,
+        label=label,
+    )
+
+
+def describe_reroute(plan: ReroutePlan) -> str:
+    """One line for a status bar, leading with what was thrown away."""
+    if plan.is_empty:
+        return "Nothing to re-route"
+    parts = [f"{len(plan.remove_ids)} old conductor(s) ripped up"]
+    parts.append(f"{plan.summary.links_routed} connection(s) re-routed")
+    if plan.summary.links_unrouted:
+        parts.append(f"{plan.summary.links_unrouted} could NOT be routed")
+    net_count = len(plan.conductors)
+    parts.append(f"{net_count} conductor(s) now")
+    return " · ".join(parts)
 
 
 # ---------------------------------------------------------------------------

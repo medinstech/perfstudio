@@ -372,6 +372,23 @@ class DeleteConductorsPayload:
 
 
 @dataclass(frozen=True, slots=True)
+class ReplaceConductorsPayload:
+    """Remove some conductors and add others, as ONE command.
+
+    What rip-up-and-reroute needs, and the reason it is a single command rather than a
+    delete followed by an add: those two are one decision to the user, and splitting them
+    means a single Ctrl+Z leaves the board with a net ripped up and nothing put back --
+    a state the planner never proposed and nobody chose.
+    """
+
+    remove_ids: tuple[ConductorId, ...]
+    conductors: tuple[NewConductor, ...]
+    #: Optional explicit ids for the new conductors, for reproducible replay.
+    ids: tuple[ConductorId, ...] | None = None
+    label: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class SetBoardPayload:
     board: Board
 
@@ -749,6 +766,51 @@ class _DeleteConductors:
         return f"Delete {len(p.ids)} conductor(s)"
 
 
+class _ReplaceConductors:
+    type = "conductor.replace"
+
+    def apply(
+        self, doc: PerfDocument, p: ReplaceConductorsPayload, ctx: CommandContext
+    ) -> PerfDocument:
+        if not p.remove_ids and not p.conductors:
+            raise CommandError(
+                "nothing-to-do",
+                "conductor.replace needs something to remove or something to add.",
+            )
+        if p.ids is not None and len(p.ids) != len(p.conductors):
+            raise CommandError(
+                "id-count-mismatch",
+                f"Got {len(p.ids)} id(s) for {len(p.conductors)} conductor(s).",
+            )
+
+        present = {c.id for c in doc.conductors}
+        missing = [id_ for id_ in p.remove_ids if id_ not in present]
+        if missing:
+            raise CommandError(
+                "conductor-not-found", f"No conductor with id(s) {', '.join(sorted(missing))}."
+            )
+
+        doomed = set(p.remove_ids)
+        kept = tuple(c for c in doc.conductors if c.id not in doomed)
+
+        # Validated against the document AFTER the removals, which is the board the new
+        # conductors will actually live on -- and which is the point of doing both in one
+        # command rather than two.
+        reduced = dataclasses.replace(doc, conductors=kept)
+        taken = {c.id for c in kept}
+        prepared: list[Conductor] = []
+        for index, spec in enumerate(p.conductors):
+            id_ = p.ids[index] if p.ids is not None else ctx.next_id("cond")
+            prepared.append(_prepare_conductor(reduced, spec, id_, taken))
+
+        return dataclasses.replace(doc, conductors=kept + tuple(prepared))
+
+    def describe(self, p: ReplaceConductorsPayload, doc: PerfDocument) -> str:
+        if p.label:
+            return p.label
+        return f"Replace {len(p.remove_ids)} conductor(s) with {len(p.conductors)}"
+
+
 # ---------------------------------------------------------------------------
 # Board, netlist and cuts
 # ---------------------------------------------------------------------------
@@ -860,6 +922,7 @@ add_conductors: CommandDefinition[AddConductorsPayload] = _AddConductors()
 set_conductor_path: CommandDefinition[SetConductorPathPayload] = _SetConductorPath()
 delete_conductor: CommandDefinition[DeleteConductorPayload] = _DeleteConductor()
 delete_conductors: CommandDefinition[DeleteConductorsPayload] = _DeleteConductors()
+replace_conductors: CommandDefinition[ReplaceConductorsPayload] = _ReplaceConductors()
 set_board: CommandDefinition[SetBoardPayload] = _SetBoard()
 import_netlist: CommandDefinition[ImportNetlistPayload] = _ImportNetlist()
 add_cut: CommandDefinition[AddCutPayload] = _AddCut()
@@ -881,6 +944,7 @@ STANDARD_COMMANDS: tuple[CommandDefinition[Any], ...] = (
     set_conductor_path,
     delete_conductor,
     delete_conductors,
+    replace_conductors,
     set_board,
     import_netlist,
     add_cut,

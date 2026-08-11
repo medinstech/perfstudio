@@ -48,7 +48,14 @@ from PySide6.QtWidgets import (
 )
 
 from perfstudio import persist
-from perfstudio.autoroute import AutoroutePlan, describe as describe_plan, plan_autoroute
+from perfstudio.autoroute import (
+    AutoroutePlan,
+    UnroutedLink,
+    describe as describe_plan,
+    describe_reroute,
+    plan_autoroute,
+    plan_reroute,
+)
 from perfstudio.command import CommandBus, CommandContext, DispatchResult, HistoryEntry
 from perfstudio.commands import (
     DeleteComponentPayload,
@@ -220,6 +227,9 @@ class MainWindow(QMainWindow):
         #: in, so pressing it repeatedly keeps exploring instead of re-running the same
         #: search and reporting the same answer.
         self._place_seed = 0
+        #: Nets whose copper was laid out for a position a part has since left. See
+        #: _track_moved_nets for why this is remembered rather than detected.
+        self._nets_from_old_layout: set[NetId] = set()
 
         self.setWindowTitle(window_title())
         self.resize(1500, 950)
@@ -470,6 +480,20 @@ class MainWindow(QMainWindow):
         self.act_route_selected.setShortcut(QKeySequence("Ctrl+Shift+R"))
         self.act_route_selected.triggered.connect(self.on_route_selection)
         route_menu.addSeparator()
+        # Rip-up and re-route is a SEPARATE verb from autoroute, and deliberately not what
+        # Ctrl+R does: autoroute completes a board, this one discards work to rebuild it.
+        # See autoroute.ReroutePlan for the measurement that made it necessary.
+        self.act_reroute_all = route_menu.addAction("Re-route &Everything")
+        self.act_reroute_all.setToolTip(
+            "Rip up the existing routing and plan it again from nothing. Use this after "
+            "moving parts: autoroute only adds, so it leaves the copper laid out for "
+            "where things used to be. Hand-drawn copper with no net is never touched."
+        )
+        self.act_reroute_all.triggered.connect(lambda: self.on_reroute(None))
+        self.act_reroute_selected = route_menu.addAction("Re-route Nets of Se&lection")
+        self.act_reroute_selected.setShortcut(QKeySequence("Ctrl+Alt+R"))
+        self.act_reroute_selected.triggered.connect(self.on_reroute_selection)
+        route_menu.addSeparator()
         self.act_clear_strays = route_menu.addAction("Remove S&tale Conductors")
         self.act_clear_strays.triggered.connect(self.on_clear_strays)
 
@@ -713,6 +737,7 @@ class MainWindow(QMainWindow):
     # -- the one repaint path: every successful command, undo and redo funnels here --
 
     def on_bus_changed(self, document: PerfDocument, entry: HistoryEntry | None) -> None:
+        self._track_moved_nets(document, entry)
         self.scene.set_document(document)
 
         t0 = time.perf_counter()
@@ -733,6 +758,38 @@ class MainWindow(QMainWindow):
 
         if entry is not None:
             self.statusBar().showMessage(entry.description, 6000)
+
+    #: Commands after which a net's existing copper describes a board that no longer
+    #: exists. Not a guess: the bus says exactly which command ran.
+    _MOVING_COMMANDS = frozenset(
+        {"component.move", "component.moveMany", "component.rotate", "component.mirror"}
+    )
+
+    def _track_moved_nets(self, document: PerfDocument, entry: HistoryEntry | None) -> None:
+        """Remember which nets carry routing laid out for an older position.
+
+        This cannot be detected by looking at the board afterwards, and that is worth
+        knowing rather than working around. Move a part and the copper that ran to its
+        old pin holes still joins the right pins of the right net: it is not floating, not
+        stale, and removing any of it disconnects something. It is simply shaped for a
+        board that is no longer there, and autoroute -- which only ever adds -- will lay
+        more copper beside it.
+
+        So instead of inferring, this listens. The bus says which command ran; a move, a
+        rotate or a mirror marks that component's nets, and re-routing them clears the
+        mark. Undo is deliberately not special-cased: an undone move still leaves the
+        question of whether those nets want re-routing open.
+        """
+        if entry is None or entry.record.type not in self._MOVING_COMMANDS:
+            return
+        payload = entry.record.payload
+        ids = {p.id for p in getattr(payload, "placements", ())} or {getattr(payload, "id", None)}
+        refs = {c.ref for c in document.components if c.id in ids}
+        self._nets_from_old_layout |= {
+            net.id
+            for net in document.nets
+            if any(node.component_ref in refs for node in net.nodes)
+        }
 
     def _refresh_status(self) -> None:
         errors = sum(1 for v in self._last_violations if v.severity == "error")
@@ -1038,6 +1095,70 @@ class MainWindow(QMainWindow):
             return
         self._route(only_net_ids=net_ids)
 
+    def on_reroute_selection(self) -> None:
+        net_ids = self._selected_net_ids()
+        if not net_ids:
+            selected_refs = {
+                item.comp.ref for item in self.scene.component_items.values() if item.isSelected()
+            }
+            net_ids = tuple(
+                net.id
+                for net in self.bus.document.nets
+                if any(node.component_ref in selected_refs for node in net.nodes)
+            )
+        if not net_ids:
+            self.statusBar().showMessage(
+                "Select a net in the Nets panel, or a part on the board, then re-route.", 6000
+            )
+            return
+        self.on_reroute(net_ids)
+
+    def on_reroute(self, only_net_ids: tuple[NetId, ...] | None) -> None:
+        """Rip up and route again, as one undoable command.
+
+        Asked before it happens, because it DISCARDS routing -- which autoroute never
+        does. The dialog says how much copper goes and what replaces it, since "14
+        conductors become 12" is the only honest way to describe throwing away work.
+        """
+        if not self.bus.document.nets:
+            self.statusBar().showMessage("No netlist imported, so there is nothing to route.", 6000)
+            return
+
+        t0 = time.perf_counter()
+        plan = plan_reroute(self.bus.document, self.lookup, only_net_ids=only_net_ids)
+        elapsed = (time.perf_counter() - t0) * 1000
+
+        if plan.is_empty:
+            self.statusBar().showMessage(f"Nothing to re-route ({elapsed:.0f} ms)", 6000)
+            return
+
+        if plan.remove_ids:
+            answer = QMessageBox.question(
+                self,
+                "Re-route?",
+                f"<b>{describe_reroute(plan)}</b>"
+                f"<p>{len(plan.remove_ids)} existing conductor(s) will be removed and "
+                f"{len(plan.conductors)} planned in their place. Copper with no net "
+                f"assigned is left alone.</p>"
+                f"<p>One Ctrl+Z puts it all back.</p>",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Yes,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+
+        result = self.bus.dispatch("conductor.replace", plan.payload())
+        if not result.ok:
+            QMessageBox.warning(self, "Re-route refused", f"[{result.code}] {result.message}")
+            return
+
+        rerouted = set(only_net_ids) if only_net_ids else {n.id for n in self.bus.document.nets}
+        self._nets_from_old_layout -= rerouted
+        self.statusBar().showMessage(f"{describe_reroute(plan)}  ({elapsed:.0f} ms)", 0)
+        self._report_unrouted_items(
+            [item for outcome in plan.nets for item in outcome.unrouted]
+        )
+
     def _clear_strays(self, quiet: bool = False) -> int:
         """Delete conductors that are attached to nothing, as one undo step.
 
@@ -1079,6 +1200,30 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("No netlist imported, so there is nothing to route.", 6000)
             return
 
+        # Autoroute ADDS. On a net whose parts have moved since it was routed that is the
+        # wrong answer and produces a board that grows every time -- so the question is
+        # put to the user rather than either behaviour being assumed. See
+        # _track_moved_nets and autoroute.ReroutePlan.
+        stale_nets = self._nets_from_old_layout & {
+            net.id
+            for net in self.bus.document.nets
+            if any(c.net_id == net.id for c in self.bus.document.conductors)
+        }
+        if stale_nets and only_net_ids is None:
+            names = sorted(n.name for n in self.bus.document.nets if n.id in stale_nets)
+            answer = QMessageBox.question(
+                self,
+                "Re-route the nets whose parts moved?",
+                f"<b>{', '.join(names)}</b> still carry the copper laid out before a part "
+                f"moved.<p>Autoroute only adds, so routing now leaves that copper in place "
+                f"and puts more beside it. Re-routing them rips it up and plans again.</p>",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
+            )
+            if answer == QMessageBox.StandardButton.Yes:
+                self.on_reroute(tuple(stale_nets))
+                return
+
         # Cleared BEFORE planning, so the plan is made against the board as it will be rather
         # than around copper that is about to go. Its own undo entry, named, immediately before
         # the routing one.
@@ -1109,7 +1254,9 @@ class MainWindow(QMainWindow):
         self._report_unrouted(plan)
 
     def _report_unrouted(self, plan: AutoroutePlan) -> None:
-        failures = [item for outcome in plan.nets for item in outcome.unrouted]
+        self._report_unrouted_items([item for outcome in plan.nets for item in outcome.unrouted])
+
+    def _report_unrouted_items(self, failures: list[UnroutedLink]) -> None:
         if not failures:
             return
         lines = [

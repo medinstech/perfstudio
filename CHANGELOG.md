@@ -75,6 +75,33 @@ closed without a bump.
     takes a blank board through import → place → optimise → route → verify → guide with
     7/7 nets matched, 0 opens, 0 shorts, 0 DRC errors and no guide warnings.
 
+- **Rip-up and re-route** (`autoroute.plan_reroute`, `conductor.replace`,
+  **Route → Re-route Everything** / **Re-route Nets of Selection** (Ctrl+Alt+R), and the
+  `reroute` MCP tool). Autoroute only *adds*, which is right for finishing a board and
+  wrong after a part has moved: the copper laid for the old position still joins the
+  right pins, so it is neither stale nor floating nor redundant, and routing again puts
+  more copper beside it. Measured on the NE555 fixture — 14 conductors routed fresh, 16
+  after moving one resistor and autorouting again, none of them removable without
+  disconnecting something, and 14 again after a re-route. Ctrl+R now notices when a net's
+  parts have moved since it was routed and offers to re-route it instead.
+
+### Changed
+
+- **Conductors are drawn at physical widths.** They were set for legibility alone, which
+  made every solder trace wider than the pads it joins and turned a routed board into a
+  diagram of coloured bars with a board somewhere underneath. Solder beads now sit inside
+  the pad, a wired trace shows its copper spine as a core, and bare wire is half a
+  millimetre.
+- **Red is no longer a conductor colour.** It is the error and R5′ risk colour, and it
+  was also every insulated wire, so a completely correct board looked alarming and a real
+  risk had nothing to stand out against. Insulated wire takes its **net's** colour
+  instead — the same convention the build guide's cut list prints, so the screen and the
+  list someone works from cannot disagree about which wire is which.
+- The solder side hatches each part's footprint, so it is clear something is on the other
+  side without drawing a body as seen from above — which is how a board gets soldered
+  backwards. The hatch deliberately carries no cathode band, pin-1 notch or tab: those
+  are moulded into the top of a part and cannot be seen from below.
+
 ### Fixed
 
 - `bodies.polarity_pin_offset`'s docstring claimed pin 1 is "the cathode of a diode or

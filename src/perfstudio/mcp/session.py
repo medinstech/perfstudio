@@ -31,7 +31,7 @@ from typing import Any
 
 from perfstudio import persist
 from perfstudio.autoroute import describe as describe_route
-from perfstudio.autoroute import plan_autoroute
+from perfstudio.autoroute import describe_reroute, plan_autoroute, plan_reroute
 from perfstudio.command import CommandBus, CommandContext
 from perfstudio.commands import (
     AddConductorPayload,
@@ -541,6 +541,46 @@ class BoardSession:
             unrouted=plan.summary.links_unrouted,
             # Never summarised away: PLAN.md Sec 13 names "it routed most of it and left
             # four connections" as the trap this project is built to avoid.
+            unrouted_detail=[
+                {
+                    "net": item.link.net_name,
+                    "from": format_hole(item.link.from_),
+                    "to": format_hole(item.link.to),
+                    "reason": item.reason,
+                }
+                for outcome in plan.nets
+                for item in outcome.unrouted
+            ],
+        )
+        return result
+
+    def reroute(self, nets: list[str] | None = None) -> dict[str, Any]:
+        """Rip up the existing routing and plan it again, as one undoable command.
+
+        Different from ``autoroute``, which only ADDS: after a part moves, the copper
+        laid for its old position still joins the right pins, so nothing reports it and
+        autoroute simply puts more copper beside it. Measured on the NE555 fixture:
+        14 conductors routed fresh, 16 after moving one resistor and autorouting again,
+        14 again after this. Removes only conductors that claim one of these nets;
+        copper with no net is left alone.
+        """
+        if not self.document.nets:
+            return _refused("no-netlist", "Nothing to route: no netlist has been imported.")
+        only = tuple(self._net_id_strict(name) for name in nets) if nets else None
+
+        plan = plan_reroute(self.document, self.lookup, only_net_ids=only)
+        if plan.is_empty:
+            return _ok(committed=False, summary=describe_reroute(plan))
+
+        result = self._dispatch("conductor.replace", plan.payload())
+        if not result["ok"]:
+            return result
+        result.update(
+            committed=True,
+            summary=describe_reroute(plan),
+            ripped_up=len(plan.remove_ids),
+            routed=plan.summary.links_routed,
+            unrouted=plan.summary.links_unrouted,
             unrouted_detail=[
                 {
                     "net": item.link.net_name,

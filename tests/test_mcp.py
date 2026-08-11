@@ -489,3 +489,39 @@ def test_nothing_in_the_mcp_package_writes_to_stdout() -> None:
             if stripped.startswith("#") or "file=sys.stderr" in stripped:
                 continue
             assert not stripped.startswith("print("), f"{source.name}:{number} prints to stdout"
+
+
+def test_reroute_replaces_the_routing_rather_than_adding_to_it(loaded: BoardSession) -> None:
+    """autoroute ADDS; after a part moves that grows the board every time, because the
+    copper laid for the old position still joins the right pins and nothing flags it."""
+    loaded.autoroute()
+    fresh = loaded.get_status()["conductors"]
+
+    loaded.move_component("R1", "A15")
+    loaded.autoroute()
+    assert loaded.get_status()["conductors"] > fresh
+
+    result = loaded.reroute()
+
+    assert result["ok"] and result["committed"]
+    assert result["ripped_up"] > 0
+    assert loaded.get_status()["conductors"] == fresh
+    assert loaded.run_lvs()["opens"] == 0
+
+
+def test_reroute_is_one_undo_step(loaded: BoardSession) -> None:
+    loaded.autoroute()
+    before = loaded.get_status()["conductors"]
+    depth = len(loaded.history())
+
+    loaded.reroute()
+
+    assert len(loaded.history()) == depth + 1
+    loaded.undo()
+    assert loaded.get_status()["conductors"] == before
+
+
+def test_reroute_without_a_netlist_is_refused(session: BoardSession) -> None:
+    result = session.reroute()
+    assert result["ok"] is False
+    assert result["code"] == "no-netlist"
