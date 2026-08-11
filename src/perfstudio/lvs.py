@@ -34,6 +34,7 @@ from itertools import pairwise
 from typing import Literal, TypeAlias
 
 from .connectivity import FootprintLookup, PhysicalNet, PhysicalPinRef, extract_physical_nets
+
 # format_hole, not coord_to_hole_ref: everything below is building a MESSAGE, and the
 # strict encoder raises on a negative column by design. A board can legally hold a part
 # whose pins fall outside it -- rotating a part near an edge does exactly that, and DRC's

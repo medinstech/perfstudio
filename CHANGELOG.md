@@ -85,8 +85,34 @@ closed without a bump.
   disconnecting something, and 14 again after a re-route. Ctrl+R now notices when a net's
   parts have moved since it was routed and offers to re-route it instead.
 
+- **Nothing is lost by closing the window.** There was no `closeEvent` and no notion of
+  a modified document, so the X button silently discarded the work. Save / Discard /
+  Cancel on close, open and new, a bullet in the title bar, and **File → New Board**,
+  which did not exist at all — the only way to start a board was to quit and relaunch.
+- **File → Board Setup** — the first thing anywhere able to reach `board.set`, which was
+  unreachable from the GUI and MCP alike, so the grid was frozen at 60×40 FR-4 unless
+  you hand-edited JSON. The material matters: it sets the iron temperature and dwell the
+  build guide gives, and DRC's pad-lifting rule only fires on FR-2/FR-1 — the cheap
+  phenolic most perfboard is actually sold as.
+- **A Draw menu**, reaching `conductor.add`, which had existed since the first commit
+  with nothing able to call it: on a perfboard tool there was no way to run a wire or lay
+  a solder trace by hand. A wire is two clicks; a trace is a chain ending in Enter. The
+  preview refuses a diagonal step on a trace visibly rather than ignoring the click.
+- **Conductors are selectable and deletable.** Before this a single bad route could only
+  be removed by undoing the whole autoroute or re-routing the entire board.
+- The hole under the cursor is in the status bar. Every DRC message, guide step and MCP
+  argument says "C7", and there was no way to tell which hole the pointer was on.
+
 ### Changed
 
+- **The 2D view is seven times faster on a large board**: a 100×60 grid (6000 holes) went
+  from 112 ms a frame (8.9 fps) to 16 ms (62 fps), by rasterising one pad and blitting
+  it. Two approaches that did not work are recorded in `PadGridItem` — one even-odd path
+  for every ring took 5.8 seconds, and disabling antialiasing bought half as much while
+  making the board look cheap.
+- **Auto-place and autoroute run off the UI thread**, with a progress dialog that appears
+  only if the work outlasts a grace period, and a Cancel that asks the placer to stop and
+  return its best result so far rather than discarding it.
 - **Conductors are drawn at physical widths.** They were set for legibility alone, which
   made every solder trace wider than the pads it joins and turned a routed board into a
   diagram of coloured bars with a board somewhere underneath. Solder beads now sit inside

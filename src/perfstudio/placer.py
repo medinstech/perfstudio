@@ -56,6 +56,7 @@ from __future__ import annotations
 
 import math
 import random
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 
 from .autoroute import plan_autoroute
@@ -813,6 +814,7 @@ def plan_placement(
     doc: PerfDocument,
     lookup: FootprintLookup,
     options: PlacementOptions = DEFAULT_PLACEMENT_OPTIONS,
+    should_stop: Callable[[], bool] | None = None,
 ) -> PlacementPlan:
     """Anneal the placement of every unlocked component and return a plan.
 
@@ -822,6 +824,11 @@ def plan_placement(
 
     Runs ``options.restarts`` independent anneals and returns the best. What "best"
     means is the interesting part -- see :func:`_pick_best`.
+
+    ``should_stop`` lets a caller cut a run short -- a Cancel button, a deadline -- and
+    get back the best placement found so far rather than nothing. Stopping early yields a
+    worse answer, never an invalid one: every candidate is a complete, legal placement.
+    Leave it None and the function is exactly as deterministic as before.
     """
     parts = _build_parts(doc, lookup)
     nets, nets_of = _build_nets(doc, parts)
@@ -850,12 +857,18 @@ def plan_placement(
 
     candidates: list[PlacementPlan] = []
     for attempt in range(max(1, options.restarts)):
+        if candidates and should_stop is not None and should_stop():
+            # At least one complete candidate exists, so stopping here returns a real
+            # placement rather than nothing. Checked between restarts as well as inside
+            # the anneal so a cancel lands promptly either way.
+            break
         # Every restart starts from the ORIGINAL placement, not from the last one's
         # result: restarts exist to sample independent basins, and chaining them would
         # just be one longer anneal with the temperature reset.
         run_state = _initial_state(doc, parts)
         after, accepted = _anneal(
-            run_state, scorer, movable, doc, options, iterations, options.seed + attempt
+            run_state, scorer, movable, doc, options, iterations, options.seed + attempt,
+            should_stop,
         )
         changes = _changes(doc, run_state)
         candidates.append(
@@ -876,6 +889,7 @@ def _anneal(
     options: PlacementOptions,
     iterations: int,
     seed: int,
+    should_stop: Callable[[], bool] | None = None,
 ) -> tuple[PlacementCost, int]:
     """One annealing run, in place on ``state``. Returns its cost and accepted count."""
     rng = random.Random(seed)
@@ -892,6 +906,10 @@ def _anneal(
     accepted = 0
 
     for step in range(iterations):
+        # Every 512th move, not every move: should_stop crosses a thread boundary in the
+        # GUI and calling it forty thousand times would cost more than the annealing.
+        if should_stop is not None and step % 512 == 0 and step and should_stop():
+            break
         progress = step / iterations
         radius = max(1, round(max_radius * (1.0 - progress)))
         proposal = _propose(rng, state, movable, radius, options)

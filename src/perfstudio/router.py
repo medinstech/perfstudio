@@ -69,11 +69,11 @@ from .geometry import (
     format_hole,
     hole_key,
     hole_to_mm,
+    holes_under_line,
     is_inside_board,
     manhattan,
     neighbors4,
     path_length_mm,
-    holes_under_line,
     same_hole,
     segments_touch,
 )

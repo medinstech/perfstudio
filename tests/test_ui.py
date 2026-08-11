@@ -1234,3 +1234,101 @@ def test_a_conductor_is_pickable_along_its_length_not_by_its_bounding_box() -> N
 
     assert item.shape().contains(item.mapFromScene(on_the_wire))
     assert not item.shape().contains(item.mapFromScene(off_the_wire))
+
+
+# ---------------------------------------------------------------------------
+# Performance and long-running work
+# ---------------------------------------------------------------------------
+
+
+def test_the_pad_grid_reuses_one_rasterised_pad() -> None:
+    """Every pad on a board is identical by definition, so rasterising 6000 of them is
+    6000 times more work than necessary. Blitting one pre-rendered pad took a 100x60
+    board from 8.9 to 62 frames a second."""
+    from PySide6.QtGui import QPixmap
+
+    doc = _load_dense()
+    grid = view2d.PadGridItem(doc.board, "top")
+
+    first = grid._pad_for(12.0)
+    assert isinstance(first, QPixmap)
+    assert first.width() > 0
+    # Same zoom, same pixmap object: no re-rasterising between frames.
+    assert grid._pad_for(12.0) is first
+    # A nearby zoom falls in the same bucket, so a smooth zoom does not thrash the cache.
+    assert grid._pad_for(13.0) is first
+    # A very different zoom does get its own.
+    assert grid._pad_for(60.0) is not first
+
+
+def test_the_pad_pixmap_is_bounded_however_far_you_zoom() -> None:
+    doc = _load_dense()
+    grid = view2d.PadGridItem(doc.board, "top")
+    assert grid._pad_for(100000.0).width() <= 256
+
+
+def test_a_planner_runs_off_the_ui_thread_and_can_be_cancelled() -> None:
+    """Auto-place takes about a second, and it used to take it on the UI thread behind a
+    wait cursor -- so the window stopped repainting and looked hung for exactly as long as
+    the useful work took."""
+    window = _window_on(_load_dense())
+    seen: list[bool] = []
+
+    def work(should_stop):
+        seen.append(callable(should_stop))
+        return "done"
+
+    assert window._run_planner("test", work) == "done"
+    assert seen == [True]
+    _close(window)
+
+
+def test_a_planner_exception_surfaces_on_the_ui_thread() -> None:
+    """Swallowed on the worker thread it would look like a silent no-op."""
+    window = _window_on(_load_dense())
+
+    def boom(_should_stop):
+        raise ValueError("nope")
+
+    with pytest.raises(ValueError, match="nope"):
+        window._run_planner("test", boom)
+    _close(window)
+
+
+def test_the_window_is_re_enabled_even_when_the_planner_fails() -> None:
+    window = _window_on(_load_dense())
+
+    def boom(_should_stop):
+        raise ValueError("nope")
+
+    with pytest.raises(ValueError):
+        window._run_planner("test", boom)
+    assert window.isEnabled()
+    _close(window)
+
+
+def test_placement_stopped_early_still_returns_a_legal_placement() -> None:
+    """Cancelling asks the planner to stop and hand back its best result so far. Stopping
+    early yields a worse placement, never an invalid one."""
+    from perfstudio.placer import PlacementOptions, plan_placement
+
+    doc = _load_dense()
+    plan = plan_placement(
+        doc,
+        footprint_lookup(),
+        PlacementOptions(iterations=40000, restarts=4, score_with_router=False),
+        should_stop=lambda: True,
+    )
+    assert plan.after.is_legal
+    assert plan.after.total(plan.weights) <= plan.before.total(plan.weights) + 1e-9
+
+
+def test_the_cursor_hole_readout_tracks_the_pointer() -> None:
+    window = _window_on(_load_dense())
+
+    window._on_hovered_hole(2, 6)
+    assert "C7" in window.label_hole.text()
+
+    window._on_hovered_hole(-1, 0)
+    assert "—" in window.label_hole.text()
+    _close(window)

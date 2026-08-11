@@ -39,13 +39,14 @@ from typing import Literal
 
 from .geometry import validate_orthogonal_chain
 from .model import (
+    DOCUMENT_FORMAT_VERSION,
+    VALID_ROTATIONS,
     Board,
     BoardMaterial,
     BoardSide,
     BoardType,
-    Conductor,
     ComponentInstance,
-    DOCUMENT_FORMAT_VERSION,
+    Conductor,
     DocumentMeta,
     HoleCoord,
     LeadBendConductor,
@@ -59,7 +60,6 @@ from .model import (
     SpineSpec,
     StripConductor,
     TrackCut,
-    VALID_ROTATIONS,
     WireConductor,
 )
 

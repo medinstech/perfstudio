@@ -24,10 +24,11 @@ import datetime
 import os
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
-from PySide6.QtCore import QRectF, Qt
+from PySide6.QtCore import QEventLoop, QRectF, Qt, QThread
 from PySide6.QtGui import QAction, QColor, QImage, QKeySequence, QPainter
 from PySide6.QtWidgets import (
     QApplication,
@@ -42,6 +43,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMainWindow,
     QMessageBox,
+    QProgressDialog,
     QSpinBox,
     QStatusBar,
     QToolBar,
@@ -1150,6 +1152,89 @@ class MainWindow(QMainWindow):
         note = f", {locked} locked" if locked else ""
         self.label_selection.setText(f"<b>{len(components)} parts</b> selected{note}")
 
+    # -- running a planner without freezing the window ----------------------
+
+    def _run_planner(
+        self,
+        label: str,
+        work: Callable[[Callable[[], bool]], Any],
+    ) -> Any:
+        """Run a planner off the UI thread, with a progress dialog that can cancel it.
+
+        Auto-place takes about a second on eight parts and autoroute about a third of
+        one, and both used to happen on the UI thread behind a wait cursor -- so the
+        window stopped repainting, stopped moving, and looked hung for exactly as long as
+        the useful work took.
+
+        The dialog is indeterminate rather than a percentage, because neither planner can
+        honestly report progress: annealing does a fixed number of moves but the answer
+        can arrive at any of them, and the router's work depends on what it finds. A fake
+        percentage bar would be a lie about something the user is watching closely.
+
+        ``work`` is handed a ``should_stop`` predicate. Cancelling asks the planner to
+        stop and return its best result so far rather than discarding it, which for the
+        placer means a worse placement, never an invalid one.
+        """
+        cancelled = False
+
+        def should_stop() -> bool:
+            return cancelled
+
+        holder: dict[str, Any] = {}
+        error: dict[str, BaseException] = {}
+
+        class _Worker(QThread):
+            def run(self) -> None:
+                try:
+                    holder["result"] = work(should_stop)
+                except BaseException as exc:  # noqa: BLE001 - re-raised on the UI thread
+                    error["exc"] = exc
+
+        worker = _Worker(self)
+        progress: QProgressDialog | None = None
+        started = time.perf_counter()
+        # Disabled rather than merely covered: the dialog only appears after the grace
+        # period, and in that window a second Ctrl+R would otherwise re-enter this method
+        # while a planner is already running against the same document.
+        self.setEnabled(False)
+        try:
+            worker.start()
+            while not worker.isFinished():
+                QApplication.processEvents(QEventLoop.ProcessEventsFlag.AllEvents, 20)
+                if progress is None and time.perf_counter() - started > self.PLANNER_GRACE_S:
+                    # Only now, so a run that finishes quickly never flashes a dialog: a
+                    # window that blinks is worse than one that pauses imperceptibly.
+                    progress = QProgressDialog(label, "Cancel", 0, 0, self)
+                    progress.setWindowTitle("Working")
+                    progress.setWindowModality(Qt.WindowModality.WindowModal)
+                    progress.setMinimumDuration(0)
+                    progress.setAutoClose(False)
+                    progress.setAutoReset(False)
+
+                    def on_cancel() -> None:
+                        nonlocal cancelled
+                        cancelled = True
+                        if progress is not None:
+                            progress.setLabelText(
+                                f"{label}\nStopping, and keeping the best found so far…"
+                            )
+
+                    progress.canceled.connect(on_cancel)
+                    progress.show()
+            worker.wait()
+        finally:
+            if progress is not None:
+                progress.close()
+            self.setEnabled(True)
+
+        if "exc" in error:
+            raise error["exc"]
+        return holder.get("result")
+
+    #: How long a planner may run before a progress dialog appears. Long enough that
+    #: anything interactive finishes first, short enough that a real wait is explained.
+    PLANNER_GRACE_S = 0.35
+
     # -- placement ----------------------------------------------------------
 
     def on_autoplace(self, reroll: bool = False) -> None:
@@ -1169,15 +1254,18 @@ class MainWindow(QMainWindow):
         if reroll:
             self._place_seed += 1
 
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        try:
-            t0 = time.perf_counter()
-            plan = plan_placement(
-                self.bus.document, self.lookup, PlacementOptions(seed=self._place_seed)
-            )
-            elapsed = (time.perf_counter() - t0) * 1000
-        finally:
-            QApplication.restoreOverrideCursor()
+        document = self.bus.document
+        options = PlacementOptions(seed=self._place_seed)
+        t0 = time.perf_counter()
+        plan = self._run_planner(
+            "Trying arrangements, and routing each one to compare them…",
+            lambda should_stop: plan_placement(
+                document, self.lookup, options, should_stop=should_stop
+            ),
+        )
+        elapsed = (time.perf_counter() - t0) * 1000
+        if plan is None:
+            return
 
         if plan.is_empty:
             self.statusBar().showMessage(
@@ -1283,9 +1371,15 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("No netlist imported, so there is nothing to route.", 6000)
             return
 
+        document = self.bus.document
         t0 = time.perf_counter()
-        plan = plan_reroute(self.bus.document, self.lookup, only_net_ids=only_net_ids)
+        plan = self._run_planner(
+            "Ripping up and routing again…",
+            lambda _should_stop: plan_reroute(document, self.lookup, only_net_ids=only_net_ids),
+        )
         elapsed = (time.perf_counter() - t0) * 1000
+        if plan is None:
+            return
 
         if plan.is_empty:
             self.statusBar().showMessage(f"Nothing to re-route ({elapsed:.0f} ms)", 6000)
@@ -1388,9 +1482,15 @@ class MainWindow(QMainWindow):
         # the routing one.
         cleared = self._clear_strays(quiet=True)
 
+        document = self.bus.document
         t0 = time.perf_counter()
-        plan = plan_autoroute(self.bus.document, self.lookup, only_net_ids=only_net_ids)
+        plan = self._run_planner(
+            "Routing…",
+            lambda _should_stop: plan_autoroute(document, self.lookup, only_net_ids=only_net_ids),
+        )
         elapsed = (time.perf_counter() - t0) * 1000
+        if plan is None:
+            return
         cleared_note = f"  ·  {cleared} stale conductor(s) removed first" if cleared else ""
 
         if plan.is_empty:
