@@ -31,14 +31,18 @@ from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QAction, QColor, QImage, QKeySequence, QPainter
 from PySide6.QtWidgets import (
     QApplication,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
     QDockWidget,
     QFileDialog,
+    QFormLayout,
     QHeaderView,
     QLabel,
     QLineEdit,
     QMainWindow,
     QMessageBox,
-    QSplitter,
+    QSpinBox,
     QStatusBar,
     QToolBar,
     QTreeWidget,
@@ -51,19 +55,23 @@ from perfstudio import persist
 from perfstudio.autoroute import (
     AutoroutePlan,
     UnroutedLink,
-    describe as describe_plan,
     describe_reroute,
     plan_autoroute,
     plan_reroute,
 )
+from perfstudio.autoroute import (
+    describe as describe_plan,
+)
 from perfstudio.command import CommandBus, CommandContext, DispatchResult, HistoryEntry
 from perfstudio.commands import (
+    DEFAULT_BOARD,
     DeleteComponentPayload,
     DeleteConductorsPayload,
     ImportNetlistPayload,
-    PlaceComponentPayload,
     MirrorComponentPayload,
+    PlaceComponentPayload,
     RotateComponentPayload,
+    SetBoardPayload,
     UpdateComponentPayload,
     create_document_id_generator,
     create_empty_document,
@@ -72,14 +80,17 @@ from perfstudio.commands import (
 from perfstudio.drc import DrcViolation, run_drc
 from perfstudio.footprints import footprint_lookup, standard_footprints
 from perfstudio.geometry import board_size_mm, format_hole, hole_span_mm
-from perfstudio.guide import build_guide, describe as describe_guide
+from perfstudio.guide import build_guide
+from perfstudio.guide import describe as describe_guide
 from perfstudio.guide_export import bom_to_csv, cut_list_to_csv, guide_to_html, guide_to_json
 from perfstudio.lvs import LvsIssue, LvsResult, run_lvs, stale_conductor_ids
 from perfstudio.model import (
+    Board,
+    BoardMaterial,
     BoardSide,
     ComponentInstance,
-    Footprint,
     DocumentMeta,
+    Footprint,
     HoleCoord,
     NetId,
     PerfDocument,
@@ -89,12 +100,17 @@ from perfstudio.parsers.kicad import parse_kicad_netlist
 from perfstudio.placer import (
     PlacementOptions,
     PlacementPlan,
-    describe as describe_placement,
     plan_placement,
+)
+from perfstudio.placer import (
+    describe as describe_placement,
+)
+from perfstudio.placer import (
     summarize_changes as summarize_placement,
 )
 from perfstudio.ratsnest import NetRatsnest, ratsnest, summarize
-from perfstudio.version import __version__, describe as describe_version
+from perfstudio.version import __version__
+from perfstudio.version import describe as describe_version
 
 from . import view3d
 from .export_pdf import export_pdf, verify_scale
@@ -178,15 +194,95 @@ def read_document_text(path: Path) -> tuple[str | None, str | None]:
         return None, f"Cannot open {path}: not UTF-8 text. A .perf document is JSON."
 
 
-def window_title(path: Path | None = None) -> str:
-    """The title bar names the build as well as the document.
+class BoardSetupDialog(QDialog):
+    """Grid size and substrate for a board.
+
+    The material is not a cosmetic choice and the dialog says so where the choice is
+    made. FR-2 phenolic -- the cheap brown board most perfboard is actually sold as --
+    lifts its pads under sustained heat, so DRC's pad-lifting rule only fires on it and
+    the build guide drops the iron 30 degrees and halves the dwell time. Choosing the
+    wrong one here means the tool's most useful safety advice never appears.
+    """
+
+    MATERIALS: tuple[tuple[BoardMaterial, str], ...] = (
+        ("FR4", "FR-4 — glass epoxy, the green kind. Tolerates heat well."),
+        ("FR2", "FR-2 — phenolic paper (\"pertinaks\"), the brown kind. Pads lift easily."),
+        ("FR1", "FR-1 — phenolic paper, as FR-2."),
+    )
+
+    def __init__(self, board: Board, parent: QWidget | None = None, title: str = "New Board") -> None:
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setMinimumWidth(420)
+
+        self.cols = QSpinBox()
+        self.cols.setRange(2, 400)
+        self.cols.setValue(board.cols)
+        self.rows = QSpinBox()
+        self.rows.setRange(2, 400)
+        self.rows.setValue(board.rows)
+        self.material = QComboBox()
+        for value, label in self.MATERIALS:
+            self.material.addItem(label, value)
+        index = self.material.findData(board.material)
+        self.material.setCurrentIndex(max(0, index))
+
+        self._size_note = QLabel()
+        self.cols.valueChanged.connect(self._update_note)
+        self.rows.valueChanged.connect(self._update_note)
+        self._pitch = board.pitch
+        self._update_note()
+
+        form = QFormLayout()
+        form.addRow("Columns", self.cols)
+        form.addRow("Rows", self.rows)
+        form.addRow("Material", self.material)
+        form.addRow("", self._size_note)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+        layout = QVBoxLayout(self)
+        layout.addLayout(form)
+        layout.addWidget(buttons)
+        self._board = board
+
+    def _update_note(self) -> None:
+        # The physical size, because that is what someone holds against a piece of board
+        # they already own -- "80 columns" means nothing at the shop.
+        width = self.cols.value() * self._pitch
+        height = self.rows.value() * self._pitch
+        self._size_note.setText(
+            f"<span style='color:{TEXT_DIM}'>{width:.1f} × {height:.1f} mm "
+            f"({self.cols.value() * self.rows.value()} holes)</span>"
+        )
+
+    def board(self) -> Board:
+        return dataclasses.replace(
+            self._board,
+            cols=self.cols.value(),
+            rows=self.rows.value(),
+            material=cast(BoardMaterial, self.material.currentData()),
+        )
+
+
+def window_title(path: Path | None = None, modified: bool = False) -> str:
+    """The title bar names the build, the document, and whether it is saved.
 
     While the version carries a ``.dev`` suffix this is not decoration: pre-release
     builds get screenshotted into bug reports, and a screenshot that does not say which
     build it came from costs a round trip to find out.
+
+    The bullet is the standard unsaved marker, and it is here rather than only in the
+    close dialog because by the time the dialog appears the decision is already being
+    forced -- the title is where someone notices in time to just press Ctrl+S.
     """
     name = f"PerfStudio {__version__}"
-    return f"{name} — {path.name}" if path is not None else name
+    document = f" — {path.name}" if path is not None else " — untitled"
+    return f"{'• ' if modified else ''}{name}{document}"
 
 
 def _find_repo_root() -> Path:
@@ -231,7 +327,10 @@ class MainWindow(QMainWindow):
         #: _track_moved_nets for why this is remembered rather than detected.
         self._nets_from_old_layout: set[NetId] = set()
 
-        self.setWindowTitle(window_title())
+        #: The document as it last hit disk. Identity comparison against the bus's
+        #: current document is what "modified" means here -- see is_modified.
+        self._saved_document = document
+        self.setWindowTitle(window_title(path))
         self.resize(1500, 950)
         self.setStyleSheet(STYLESHEET)
 
@@ -240,6 +339,9 @@ class MainWindow(QMainWindow):
         self.scene.moveCommitted.connect(self.on_move_committed)
         self.scene.selectionNetsChanged.connect(self._on_selection_nets_changed)
         self.scene.placementArmed.connect(self._on_placement_armed)
+        self.scene.drawArmed.connect(self._on_draw_armed)
+        self.scene.conductorDrawn.connect(self._on_conductor_drawn)
+        self.scene.hoveredHole.connect(self._on_hovered_hole)
         self.scene.componentPlaced.connect(self._on_component_placed)
 
         # The 2D editor is the application; the 3D view is a panel you open when you want
@@ -386,6 +488,9 @@ class MainWindow(QMainWindow):
         menu = self.menuBar()
 
         file_menu = menu.addMenu("&File")
+        act_new = file_menu.addAction("&New Board…")
+        act_new.setShortcut(QKeySequence.StandardKey.New)
+        act_new.triggered.connect(self.on_new)
         act_open = file_menu.addAction("&Open…")
         act_open.setShortcut(QKeySequence.StandardKey.Open)
         act_open.triggered.connect(self.on_open)
@@ -396,6 +501,12 @@ class MainWindow(QMainWindow):
         act_save_as.setShortcut(QKeySequence.StandardKey.SaveAs)
         act_save_as.triggered.connect(self.on_save_as)
         file_menu.addSeparator()
+        act_board = file_menu.addAction("&Board Setup…")
+        act_board.setToolTip(
+            "Grid size and substrate. The material is not cosmetic: it decides the iron "
+            "temperature the build guide gives and whether the pad-lifting rule applies."
+        )
+        act_board.triggered.connect(self.on_board_setup)
         act_import = file_menu.addAction("&Import KiCad Netlist…")
         act_import.setShortcut(QKeySequence("Ctrl+I"))
         act_import.triggered.connect(self.on_import_netlist)
@@ -456,6 +567,39 @@ class MainWindow(QMainWindow):
         )
         for action in self.selection_actions:
             action.setEnabled(False)
+
+        draw_menu = menu.addMenu("&Draw")
+        draw_menu.setToolTipsVisible(True)
+        # The engine has had conductor.add since the first commit with nothing able to
+        # reach it, so on a perfboard tool there was no way to run a wire or lay a solder
+        # trace by hand -- only to accept the router's output whole or discard it.
+        self.act_draw: dict[str, QAction] = {}
+        for kind, label, shortcut, tip in (
+            ("solder-trace", "&Solder Trace", "T",
+             "Join adjacent pads with solder. Orthogonal steps only — solder spans the "
+             "0.6 mm gap to the next pad and not the 1.7 mm diagonal one. Click each pad, "
+             "then Enter or right-click to finish."),
+            ("solder-trace-wired", "Solder Trace with S&pine", "Shift+T",
+             "The same over a tinned-wire spine: about ten times lower resistance, and "
+             "what a power or ground rail longer than five or six pads wants."),
+            ("bare-wire", "&Bare Wire", "W",
+             "Tinned wire on the solder side. Cannot cross other copper. Click both ends."),
+            ("insulated-wire", "&Insulated Wire", "Shift+W",
+             "May cross anything, at the cost of stripping it. Click both ends."),
+            ("top-jumper", "Top &Jumper", "",
+             "Insulated, routed over the component side. Occupies body space."),
+        ):
+            action = draw_menu.addAction(label)
+            action.setCheckable(True)
+            if shortcut:
+                action.setShortcut(QKeySequence(shortcut))
+            action.setToolTip(tip)
+            action.triggered.connect(lambda checked, k=kind: self.on_draw_mode(k, checked))
+            self.act_draw[kind] = action
+        draw_menu.addSeparator()
+        act_stop_draw = draw_menu.addAction("&Stop Drawing")
+        act_stop_draw.setShortcut(QKeySequence("Escape"))
+        act_stop_draw.triggered.connect(lambda: self.on_draw_mode("", False))
 
         place_menu = menu.addMenu("&Place")
         self.act_autoplace = place_menu.addAction("&Auto-place Board")
@@ -720,6 +864,7 @@ class MainWindow(QMainWindow):
         self.label_lvs = QLabel()
         self.label_ratsnest = QLabel()
         self.label_side = QLabel()
+        self.label_hole = QLabel()
         # All permanent, including the selection. QStatusBar.showMessage HIDES ordinary
         # widgets for as long as a message is up -- so a selection label added the obvious
         # way vanished at precisely the wrong moment, since acting on a part is exactly what
@@ -727,6 +872,7 @@ class MainWindow(QMainWindow):
         # they are added, so the selection still comes first.
         for label in (
             self.label_selection,
+            self.label_hole,
             self.label_ratsnest,
             self.label_lvs,
             self.label_drc,
@@ -756,6 +902,7 @@ class MainWindow(QMainWindow):
         self._refresh_selection_state()
         self._refresh_3d()
 
+        self._refresh_title()
         if entry is not None:
             self.statusBar().showMessage(entry.description, 6000)
 
@@ -790,6 +937,18 @@ class MainWindow(QMainWindow):
             for net in document.nets
             if any(node.component_ref in refs for node in net.nodes)
         }
+
+    def _on_hovered_hole(self, col: int, row: int) -> None:
+        """The address under the pointer, always visible.
+
+        The whole tool speaks hole addresses -- every DRC message, every guide step, every
+        MCP argument -- and there was no way to tell which one the pointer was on except
+        by counting along a ruler.
+        """
+        board = self.bus.document.board
+        inside = 0 <= col < board.cols and 0 <= row < board.rows
+        text = format_hole(HoleCoord(col, row)) if inside else "—"
+        self.label_hole.setText(f'<span style="color:{TEXT_DIM}">hole</span> <b>{text}</b>')
 
     def _refresh_status(self) -> None:
         errors = sum(1 for v in self._last_violations if v.severity == "error")
@@ -1332,7 +1491,61 @@ class MainWindow(QMainWindow):
         ]
         self._report_refusals(results, f"Mirrored {len(results)} part(s)")
 
+    def on_draw_mode(self, kind: str, checked: bool) -> None:
+        """Arm or disarm a drawing tool. Only one may be armed at a time."""
+        wanted = kind if checked and kind else ""
+        for name, action in self.act_draw.items():
+            action.setChecked(name == wanted)
+        self.scene.arm_drawing(cast(Any, wanted) if wanted else None)
+        if wanted:
+            two_point = wanted in ("bare-wire", "insulated-wire", "top-jumper")
+            how = (
+                "Click both ends."
+                if two_point
+                else "Click each pad along the run, then Enter or right-click to finish."
+            )
+            self.statusBar().showMessage(
+                f"Drawing {wanted.replace('-', ' ')} — {how}  Esc cancels.", 0
+            )
+        else:
+            self.statusBar().clearMessage()
+
+    def _on_draw_armed(self, kind: str) -> None:
+        """Keep the menu in step when the scene ends drawing by itself (Esc, or commit)."""
+        for name, action in self.act_draw.items():
+            action.setChecked(name == kind)
+
+    def _on_conductor_drawn(self, result: Any) -> None:
+        if result is not None and not result.ok:
+            self.statusBar().showMessage(f"[{result.code}] {result.message}", 8000)
+
     def on_delete_selection(self) -> None:
+        """Delete whatever is selected -- parts, conductors, or both.
+
+        Conductors became selectable for this: before it, a single bad route could only be
+        removed by undoing the whole autoroute or re-routing the entire board.
+        """
+        conductor_ids = self.scene.selected_conductor_ids()
+        components = [
+            item.comp
+            for item in self.scene.component_items.values()
+            if item.isSelected()
+        ]
+        if conductor_ids and not components:
+            label = f"Delete {len(conductor_ids)} conductor(s)"
+            if (
+                QMessageBox.question(self, "Delete conductors", f"{label}?")
+                != QMessageBox.StandardButton.Yes
+            ):
+                return
+            result = self.bus.dispatch(
+                "conductor.deleteMany",
+                DeleteConductorsPayload(ids=conductor_ids, label=label),
+            )
+            if not result.ok:
+                self.statusBar().showMessage(f"[{result.code}] {result.message}", 8000)
+            return
+
         components = self._require_selection("delete it")
         if not components:
             return
@@ -1376,7 +1589,56 @@ class MainWindow(QMainWindow):
 
     # -- file ----------------------------------------------------------------
 
+    def on_new(self) -> None:
+        """Start a blank board, after asking about anything unsaved."""
+        if not self._offer_to_save():
+            return
+        dialog = BoardSetupDialog(DEFAULT_BOARD, self, title="New Board")
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        document = create_empty_document(
+            DocumentMeta(name="untitled", created=_now_iso(), modified=_now_iso()),
+            dialog.board(),
+        )
+        self.current_path = None
+        self.bus = self._new_bus(document)
+        self._subscribe_bus()
+        self.scene.bus = self.bus
+        self._nets_from_old_layout.clear()
+        self.on_bus_changed(self.bus.document, None)
+        self._mark_saved()
+        self.view.fit_board()
+        self.statusBar().showMessage(
+            f"New {document.board.cols}×{document.board.rows} {document.board.material} board", 8000
+        )
+
+    def on_board_setup(self) -> None:
+        """Change the grid or the substrate of the board already open.
+
+        Through ``board.set`` like everything else, so shrinking a board that still has a
+        part hanging off the new edge comes back as a refusal naming the part, rather
+        than silently stranding it.
+        """
+        dialog = BoardSetupDialog(self.bus.document.board, self, title="Board Setup")
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        board = dialog.board()
+        if board == self.bus.document.board:
+            return
+        result = self.bus.dispatch("board.set", SetBoardPayload(board=board))
+        if not result.ok:
+            QMessageBox.warning(
+                self,
+                "Board not changed",
+                f"[{result.code}] {result.message}\n\nMove or delete whatever is in the way "
+                "and try again.",
+            )
+            return
+        self.view.fit_board()
+
     def on_open(self) -> None:
+        if not self._offer_to_save():
+            return
         start_dir = str(self.current_path.parent) if self.current_path else str(Path.cwd())
         path_str, _ = QFileDialog.getOpenFileName(self, "Open .perf", start_dir, "PerfStudio documents (*.perf)")
         if not path_str:
@@ -1404,7 +1666,7 @@ class MainWindow(QMainWindow):
         self.view.fit_board()
         note = f" ({len(result.warnings)} warning(s))" if result.warnings else ""
         self.statusBar().showMessage(f"Loaded {path.name}{note}", 8000)
-        self.setWindowTitle(window_title(path))
+        self._mark_saved()
 
     # -- netlist import ------------------------------------------------------
 
@@ -1512,22 +1774,79 @@ class MainWindow(QMainWindow):
             message += f"; {skipped} could not be placed and will show in LVS as unplaced"
         self.statusBar().showMessage(message, 10000)
 
-    def on_save(self) -> None:
+    def on_save(self) -> bool:
+        """Save, returning whether it happened. The bool is what the close guard needs."""
         if self.current_path is None:
-            self.on_save_as()
-            return
+            return self.on_save_as()
         self._save_to(self.current_path)
+        return True
 
-    def on_save_as(self) -> None:
+    def on_save_as(self) -> bool:
         default = str(self.current_path) if self.current_path else str(Path.cwd() / "board.perf")
         path_str, _ = QFileDialog.getSaveFileName(self, "Save As", default, "PerfStudio documents (*.perf)")
         if not path_str:
-            return
+            return False
         path = Path(path_str)
         if path.suffix != ".perf":
             path = path.with_suffix(".perf")
         self.current_path = path
         self._save_to(path)
+        return True
+
+    # -- unsaved work --------------------------------------------------------
+
+    @property
+    def is_modified(self) -> bool:
+        """Whether the board differs from what is on disk.
+
+        Compared by IDENTITY, not by value, and that is exactly right here rather than a
+        shortcut. Documents are immutable and every command builds a new one, so the
+        saved document is a distinct object the moment anything is dispatched -- and
+        undoing back to it restores that very object (``HistoryEntry.before`` is the same
+        instance), so undoing your way back to the saved state correctly reads as
+        unmodified again. A value comparison would give the same answer far more slowly,
+        on every keystroke.
+        """
+        return self.bus.document is not self._saved_document
+
+    def _mark_saved(self) -> None:
+        self._saved_document = self.bus.document
+        self._refresh_title()
+
+    def _refresh_title(self) -> None:
+        self.setWindowTitle(window_title(self.current_path, modified=self.is_modified))
+
+    def _offer_to_save(self) -> bool:
+        """Ask about unsaved work. False means the user cancelled the whole operation.
+
+        Three buttons rather than two, because "are you sure?" with only yes and no makes
+        the destructive answer the fast one. Discard is deliberately not the default.
+        """
+        if not self.is_modified:
+            return True
+        name = self.current_path.name if self.current_path else "this board"
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Unsaved changes")
+        box.setText(f"<b>{name} has changes that are not saved.</b>")
+        box.setInformativeText("Saving keeps them; discarding loses them for good.")
+        box.setStandardButtons(
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel
+        )
+        box.setDefaultButton(QMessageBox.StandardButton.Save)
+        answer = box.exec()
+        if answer == QMessageBox.StandardButton.Save:
+            return self.on_save()
+        return answer == QMessageBox.StandardButton.Discard
+
+    def closeEvent(self, event: Any) -> None:
+        """The last thing standing between an hour of layout and the X button."""
+        if self._offer_to_save():
+            event.accept()
+        else:
+            event.ignore()
 
     def _save_to(self, path: Path) -> None:
         # meta.modified is host-stamped, not part of any command (core has no clock --
@@ -1536,6 +1855,7 @@ class MainWindow(QMainWindow):
         doc = self.bus.document
         stamped = dataclasses.replace(doc, meta=dataclasses.replace(doc.meta, modified=_now_iso()))
         path.write_text(persist.serialize_document(stamped), encoding="utf-8")
+        self._mark_saved()
         self.statusBar().showMessage(f"Saved {path}")
 
     def on_export_pdf(self) -> None:

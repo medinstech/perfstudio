@@ -19,6 +19,7 @@ catch the two failure modes this rewiring exists to prevent:
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import pathlib
 import sys
@@ -712,9 +713,11 @@ def test_footprint_guesses_from_a_netlist_reference(ref: str, pins: int, expecte
 # ---------------------------------------------------------------------------
 
 
-def test_window_title_names_the_build_and_the_document() -> None:
-    assert window_title() == f"PerfStudio {__version__}"
+def test_window_title_names_the_build_the_document_and_whether_it_is_saved() -> None:
+    assert window_title() == f"PerfStudio {__version__} — untitled"
     assert window_title(pathlib.Path("a/b/ne555.perf")) == f"PerfStudio {__version__} — ne555.perf"
+    # The unsaved marker leads, so it is visible before the title is elided.
+    assert window_title(pathlib.Path("x/ne555.perf"), modified=True).startswith("• PerfStudio")
 
 
 def test_version_flag_answers_without_starting_qt(monkeypatch, capsys) -> None:
@@ -751,6 +754,17 @@ def _window_on(doc):
     from perfstudio.ui.main import MainWindow
 
     return MainWindow(doc)
+
+
+def _close(window) -> None:
+    """Close a test window without tripping the unsaved-work guard.
+
+    The guard opens a real modal dialog, which in a headless test run waits forever --
+    which is a reasonable thing for it to do and the reason the tests say explicitly
+    that they are discarding, rather than the suite quietly never exercising it.
+    """
+    window._saved_document = window.bus.document
+    window.close()
 
 
 def test_autoplace_asks_before_moving_the_users_board(monkeypatch) -> None:
@@ -924,3 +938,299 @@ def test_solder_beads_sit_inside_the_pad_rather_than_over_it() -> None:
     for kind in ("solder-trace", "solder-trace-wired", "bare-wire", "insulated-wire"):
         width = CONDUCTOR_STYLE[kind][1]
         assert width < board.pad_diameter, kind
+
+
+# ---------------------------------------------------------------------------
+# Unsaved work
+# ---------------------------------------------------------------------------
+
+
+def test_a_fresh_window_is_not_modified() -> None:
+    window = _window_on(_load_dense())
+    assert window.is_modified is False
+    assert "•" not in window.windowTitle()
+    _close(window)
+
+
+def test_any_command_marks_the_board_modified() -> None:
+    from perfstudio.commands import MoveComponentPayload
+
+    window = _window_on(_load_dense())
+    first = window.bus.document.components[0]
+    window.bus.dispatch(
+        "component.move", MoveComponentPayload(id=first.id, anchor=view2d.HoleCoord(5, 5))
+    )
+
+    assert window.is_modified is True
+    assert window.windowTitle().startswith("•")
+    _close(window)
+
+
+def test_undoing_back_to_the_saved_state_reads_as_unmodified() -> None:
+    """Identity, not equality: undo restores the very document object that was saved, so
+    "I undid everything" correctly stops nagging."""
+    from perfstudio.commands import MoveComponentPayload
+
+    window = _window_on(_load_dense())
+    first = window.bus.document.components[0]
+    window.bus.dispatch(
+        "component.move", MoveComponentPayload(id=first.id, anchor=view2d.HoleCoord(5, 5))
+    )
+    assert window.is_modified
+
+    window.bus.undo()
+
+    assert window.is_modified is False
+    _close(window)
+
+
+def test_closing_with_unsaved_work_asks_and_can_be_cancelled(monkeypatch) -> None:
+    """The last thing standing between an hour of layout and the X button."""
+    from PySide6.QtGui import QCloseEvent
+
+    from perfstudio.commands import MoveComponentPayload
+
+    window = _window_on(_load_dense())
+    first = window.bus.document.components[0]
+    window.bus.dispatch(
+        "component.move", MoveComponentPayload(id=first.id, anchor=view2d.HoleCoord(5, 5))
+    )
+
+    monkeypatch.setattr(window, "_offer_to_save", lambda: False)
+    event = QCloseEvent()
+    window.closeEvent(event)
+    assert not event.isAccepted()
+
+    monkeypatch.setattr(window, "_offer_to_save", lambda: True)
+    event = QCloseEvent()
+    window.closeEvent(event)
+    assert event.isAccepted()
+    _close(window)
+
+
+def test_an_unmodified_board_closes_without_a_prompt(monkeypatch) -> None:
+    window = _window_on(_load_dense())
+    asked = []
+    monkeypatch.setattr(
+        "perfstudio.ui.main.QMessageBox.exec", lambda self: asked.append(1) or 0
+    )
+    assert window._offer_to_save() is True
+    assert asked == []
+    _close(window)
+
+
+def test_saving_clears_the_modified_marker(tmp_path) -> None:
+    from perfstudio.commands import MoveComponentPayload
+
+    window = _window_on(_load_dense())
+    first = window.bus.document.components[0]
+    window.bus.dispatch(
+        "component.move", MoveComponentPayload(id=first.id, anchor=view2d.HoleCoord(5, 5))
+    )
+    window.current_path = tmp_path / "b.perf"
+    window.on_save()
+
+    assert window.is_modified is False
+    assert (tmp_path / "b.perf").exists()
+    _close(window)
+
+
+# ---------------------------------------------------------------------------
+# Board setup -- the first thing that can reach board.set
+# ---------------------------------------------------------------------------
+
+
+def test_board_setup_dialog_round_trips_a_board() -> None:
+    from perfstudio.ui.main import BoardSetupDialog
+
+    doc = _load_dense()
+    dialog = BoardSetupDialog(doc.board)
+    assert dialog.board() == doc.board
+
+    dialog.cols.setValue(40)
+    dialog.material.setCurrentIndex(dialog.material.findData("FR2"))
+    changed = dialog.board()
+    assert changed.cols == 40
+    assert changed.material == "FR2"
+    # Pitch and pad geometry are not the dialog's business and must survive untouched.
+    assert changed.pitch == doc.board.pitch
+    assert changed.pad_diameter == doc.board.pad_diameter
+
+
+def test_every_board_material_is_offered() -> None:
+    """FR-2 in particular: it is the board most perfboard is actually sold as, and the
+    only one where the pad-lifting rule and the derated iron temperature apply."""
+    from perfstudio.model import BoardMaterial
+    from perfstudio.ui.main import BoardSetupDialog
+    from typing import get_args
+
+    offered = {value for value, _label in BoardSetupDialog.MATERIALS}
+    assert offered == set(get_args(BoardMaterial))
+
+
+def test_shrinking_the_board_under_a_part_is_refused_not_silently_applied(monkeypatch) -> None:
+    from perfstudio.commands import SetBoardPayload
+
+    window = _window_on(_load_dense())
+    tiny = dataclasses.replace(window.bus.document.board, cols=3, rows=3)
+    result = window.bus.dispatch("board.set", SetBoardPayload(board=tiny))
+
+    assert result.ok is False
+    assert window.bus.document.board.cols != 3
+    _close(window)
+
+
+# ---------------------------------------------------------------------------
+# Drawing conductors by hand
+# ---------------------------------------------------------------------------
+
+
+def _drawing_scene():
+    """A scene over a small board with a bus, ready to draw on."""
+    from perfstudio.commands import create_empty_document
+    from perfstudio.model import DocumentMeta
+
+    doc = create_empty_document(
+        DocumentMeta(name="t", created="2024-01-01T00:00:00.000Z", modified="2024-01-01T00:00:00.000Z")
+    )
+    bus = _new_bus(doc)
+    scene = BoardScene(bus.document, footprint_lookup(), side="top", bus=bus)
+    return scene, bus
+
+
+def test_a_wire_is_two_clicks_and_commits_itself() -> None:
+    scene, bus = _drawing_scene()
+    scene.arm_drawing("insulated-wire")
+
+    assert scene.draw_click(view2d.HoleCoord(2, 2)) is None  # First click starts it.
+    result = scene.draw_click(view2d.HoleCoord(9, 6))
+
+    assert result is not None and result.ok, result
+    conductor = bus.document.conductors[0]
+    assert conductor.kind == "insulated-wire"
+    assert conductor.path == (view2d.HoleCoord(2, 2), view2d.HoleCoord(9, 6))
+    assert scene.armed_draw_kind is None  # Disarmed once committed.
+
+
+def test_a_solder_trace_is_a_chain_and_commits_on_request() -> None:
+    scene, bus = _drawing_scene()
+    scene.arm_drawing("solder-trace")
+
+    for col in range(2, 6):
+        scene.draw_click(view2d.HoleCoord(col, 4))
+    assert not bus.document.conductors  # Still being drawn.
+
+    result = scene.commit_drawing()
+
+    assert result is not None and result.ok, result
+    assert len(bus.document.conductors[0].path) == 4
+
+
+def test_a_diagonal_step_is_refused_before_the_click_lands() -> None:
+    """Solder spans the 0.6 mm gap to the next pad and not the 1.7 mm diagonal one. The
+    command knows that; the preview has to know it too, or the tool looks broken when a
+    click does nothing."""
+    scene, bus = _drawing_scene()
+    scene.arm_drawing("solder-trace")
+    scene.draw_click(view2d.HoleCoord(4, 4))
+
+    assert scene.draw_click(view2d.HoleCoord(5, 5)) is None
+    scene.commit_drawing()
+    assert not bus.document.conductors  # One hole is not a conductor.
+
+
+def test_a_wire_may_go_diagonally_because_a_wire_physically_can() -> None:
+    scene, bus = _drawing_scene()
+    scene.arm_drawing("bare-wire")
+    scene.draw_click(view2d.HoleCoord(4, 4))
+    result = scene.draw_click(view2d.HoleCoord(7, 9))
+    assert result is not None and result.ok
+    assert bus.document.conductors[0].path[-1] == view2d.HoleCoord(7, 9)
+
+
+def test_escape_abandons_a_half_drawn_trace() -> None:
+    scene, bus = _drawing_scene()
+    scene.arm_drawing("solder-trace")
+    scene.draw_click(view2d.HoleCoord(2, 2))
+    scene.draw_click(view2d.HoleCoord(3, 2))
+
+    scene.arm_drawing(None)
+
+    assert not bus.document.conductors
+    assert scene.armed_draw_kind is None
+
+
+def test_a_hand_drawn_conductor_takes_a_net_only_when_it_is_unambiguous() -> None:
+    """Copper with no net claim is what rip-up-and-reroute and the stale cleanup both
+    promise never to touch, so a connection the tool cannot interpret is also one it will
+    never quietly remove."""
+    from perfstudio.commands import PlaceComponentPayload
+    from perfstudio.model import Net, NetNode
+
+    scene, bus = _drawing_scene()
+    bus.dispatch(
+        "component.place",
+        PlaceComponentPayload(ref="R1", value="", footprint_id="r-axial-4", anchor=view2d.HoleCoord(2, 2)),
+    )
+    bus.dispatch(
+        "component.place",
+        PlaceComponentPayload(ref="R2", value="", footprint_id="r-axial-4", anchor=view2d.HoleCoord(9, 2)),
+    )
+    from perfstudio.commands import ImportNetlistPayload
+
+    bus.dispatch(
+        "netlist.import",
+        ImportNetlistPayload(
+            nets=(
+                Net(
+                    id="n1",
+                    name="SIG",
+                    nodes=(NetNode(component_ref="R1", pin="1"), NetNode(component_ref="R2", pin="1")),
+                ),
+            )
+        ),
+    )
+    scene.set_document(bus.document)
+
+    scene.arm_drawing("bare-wire")
+    scene.draw_click(view2d.HoleCoord(2, 2))
+    scene.draw_click(view2d.HoleCoord(9, 2))
+    assert bus.document.conductors[-1].net_id == "n1"
+
+    # ...and an end on no pin at all leaves it unassigned rather than guessing.
+    scene.set_document(bus.document)
+    scene.arm_drawing("bare-wire")
+    scene.draw_click(view2d.HoleCoord(4, 10))
+    scene.draw_click(view2d.HoleCoord(8, 10))
+    assert bus.document.conductors[-1].net_id is None
+
+
+def test_conductors_can_be_selected_and_deleted() -> None:
+    scene, bus = _drawing_scene()
+    scene.arm_drawing("bare-wire")
+    scene.draw_click(view2d.HoleCoord(2, 2))
+    scene.draw_click(view2d.HoleCoord(8, 2))
+    scene.set_document(bus.document)
+
+    items = [i for i in scene.items() if isinstance(i, view2d.ConductorItem)]
+    assert len(items) == 1
+    items[0].setSelected(True)
+
+    assert scene.selected_conductor_ids() == (bus.document.conductors[0].id,)
+
+
+def test_a_conductor_is_pickable_along_its_length_not_by_its_bounding_box() -> None:
+    """Two wires crossing at an angle share a bounding rect the size of the board between
+    them; picking by that rect would select whichever happened to be on top."""
+    scene, bus = _drawing_scene()
+    scene.arm_drawing("bare-wire")
+    scene.draw_click(view2d.HoleCoord(2, 2))
+    scene.draw_click(view2d.HoleCoord(20, 20))
+    scene.set_document(bus.document)
+
+    item = next(i for i in scene.items() if isinstance(i, view2d.ConductorItem))
+    on_the_wire = view2d.hole_to_screen(view2d.HoleCoord(11, 11), bus.document.board, "top")
+    off_the_wire = view2d.hole_to_screen(view2d.HoleCoord(20, 2), bus.document.board, "top")
+
+    assert item.shape().contains(item.mapFromScene(on_the_wire))
+    assert not item.shape().contains(item.mapFromScene(off_the_wire))

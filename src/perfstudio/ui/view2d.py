@@ -23,15 +23,15 @@ consistently everywhere, not a family of ad hoc sign flips that can drift apart.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, cast
 
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import (
     QBrush,
     QColor,
-    QFont,
     QPainter,
     QPainterPath,
+    QPainterPathStroker,
     QPen,
     QPolygonF,
 )
@@ -42,7 +42,14 @@ from PySide6.QtWidgets import (
 )
 
 from perfstudio.command import CommandBus, DispatchResult
-from perfstudio.commands import MoveComponentPayload, PlaceComponentPayload
+from perfstudio.commands import (
+    AddConductorPayload,
+    MoveComponentPayload,
+    NewConductor,
+    NewSolderTraceConductor,
+    NewWireConductor,
+    PlaceComponentPayload,
+)
 from perfstudio.connectivity import FootprintLookup
 from perfstudio.drc import DrcViolation
 from perfstudio.geometry import (
@@ -56,6 +63,7 @@ from perfstudio.geometry import (
     transform_offset,
     transform_pin_offset,
 )
+
 # The one place the wire-colour convention is defined, so the editor and the cut list a
 # person actually works from cannot disagree about which wire is which.
 from perfstudio.guide import COLOR_BY_NET_CLASS, SIGNAL_COLORS
@@ -64,6 +72,7 @@ from perfstudio.model import (
     BoardSide,
     ComponentInstance,
     Conductor,
+    ConductorKind,
     Footprint,
     HoleCoord,
     NetClass,
@@ -585,6 +594,72 @@ class RiskRingsItem(QGraphicsItem):
 # ------------------------------------------------------------------ conductor item
 
 
+class DrawPreviewItem(QGraphicsItem):
+    """The conductor being drawn, before it exists.
+
+    Shows the chain committed so far solid and the step under the cursor dashed, so the
+    difference between "this is what I have" and "this is where the next click goes" is
+    visible without moving your eyes off the board. A step the command would refuse --
+    a diagonal on a solder trace -- is drawn in the error colour rather than simply
+    ignored, because silently dropping a click reads as the tool having stopped working.
+    """
+
+    def __init__(self, kind: ConductorKind, board: Board, side: BoardSide) -> None:
+        super().__init__()
+        self.kind = kind
+        self.board = board
+        self.side = side
+        self.path: list[HoleCoord] = []
+        # Not "cursor": QGraphicsItem already has a cursor() and shadowing it would make
+        # the item's own cursor handling silently stop working.
+        self.next_hole: HoleCoord | None = None
+        self.next_ok = True
+        self.setZValue(120)
+
+    def boundingRect(self) -> QRectF:
+        w, h = board_size_mm(self.board)
+        return QRectF(-self.board.pitch, -self.board.pitch, w + 2 * self.board.pitch,
+                      h + 2 * self.board.pitch)
+
+    def set_path(self, path: list[HoleCoord], next_hole: HoleCoord | None, ok: bool) -> None:
+        self.path = path
+        self.next_hole = next_hole
+        self.next_ok = ok
+        self.update()
+
+    def paint(self, painter: QPainter, option: Any, widget: Any = None) -> None:
+        colour, width, _dashed = CONDUCTOR_STYLE.get(self.kind, (QColor("#888"), 0.6, False))
+        points = [hole_to_screen(h, self.board, self.side) for h in self.path]
+
+        if len(points) >= 2:
+            pen = QPen(colour, width)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            painter.setPen(pen)
+            path = QPainterPath(points[0])
+            for p in points[1:]:
+                path.lineTo(p)
+            painter.drawPath(path)
+
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(colour.lighter(130)))
+        for p in points:
+            painter.drawEllipse(p, width * 0.7, width * 0.7)
+
+        if self.next_hole is not None:
+            end = hole_to_screen(self.next_hole, self.board, self.side)
+            tint = colour if self.next_ok else ERROR_OUTLINE
+            if points:
+                pen = QPen(tint, width)
+                pen.setDashPattern([1.6, 1.4])
+                pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+                painter.setPen(pen)
+                painter.drawLine(points[-1], end)
+            painter.setPen(QPen(tint, 0.22))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawEllipse(end, self.board.pad_diameter * 0.62, self.board.pad_diameter * 0.62)
+
+
 class ConductorItem(QGraphicsItem):
     """Each conductor kind has to be tellable apart at a glance.
 
@@ -608,6 +683,9 @@ class ConductorItem(QGraphicsItem):
         self.side = side
         self.net_class = net_class
         self.signal_index = signal_index
+        # Selectable, so a single bad route can be deleted instead of the whole autoroute
+        # being undone or the entire board re-routed -- which were the only two options.
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
         self.setZValue(-50 if conductor.side == "bottom" else 40)
         first, last = conductor.path[0], conductor.path[-1]
         self.setToolTip(
@@ -636,6 +714,28 @@ class ConductorItem(QGraphicsItem):
         pad = 2.0
         return QRectF(min(xs) - pad, min(ys) - pad, max(xs) - min(xs) + 2 * pad, max(ys) - min(ys) + 2 * pad)
 
+    @property
+    def conductor_id(self) -> str:
+        return self.conductor.id
+
+    def shape(self) -> QPainterPath:
+        """A clickable band along the path, so a conductor can be picked.
+
+        A stroked path rather than the bounding rect: two wires crossing at an angle share
+        a bounding rect the size of the board between them, and picking one would select
+        whichever happened to be on top.
+        """
+        pts = self._points()
+        line = QPainterPath(pts[0])
+        for p in pts[1:]:
+            line.lineTo(p)
+        stroker = QPainterPathStroker()
+        # A little wider than the conductor: at 2.54 mm pitch, half a pad's worth of slack
+        # is the difference between clicking a wire and clicking near it.
+        stroker.setWidth(max(CONDUCTOR_STYLE.get(self.conductor.kind, (None, 0.6, None))[1], 0.6) + 0.8)
+        stroker.setCapStyle(Qt.PenCapStyle.RoundCap)
+        return stroker.createStroke(line)
+
     def _colour(self) -> QColor:
         """This conductor's colour: its own if it has one, else its net's, else its kind's."""
         explicit = getattr(self.conductor, "color", None)
@@ -663,6 +763,13 @@ class ConductorItem(QGraphicsItem):
             casing.setCapStyle(Qt.PenCapStyle.RoundCap)
             casing.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
             painter.setPen(casing)
+            painter.drawPath(path)
+
+        if self.isSelected():
+            halo = QPen(SELECTED, width + 0.7)
+            halo.setCapStyle(Qt.PenCapStyle.RoundCap)
+            halo.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            painter.setPen(halo)
             painter.drawPath(path)
 
         pen = QPen(colour, width)
@@ -1148,6 +1255,13 @@ class BoardScene(QGraphicsScene):
     #: Emitted with the ids of the schematic nets under the current selection, so the host
     #: can update a net list or a status line without the scene knowing either exists.
     selectionNetsChanged = Signal(list)
+    #: Emitted with the armed conductor kind, or an empty string when drawing ends.
+    drawArmed = Signal(str)
+    #: Emitted with the DispatchResult of a hand-drawn conductor.
+    conductorDrawn = Signal(object)
+    #: (col, row) under the cursor. The whole tool speaks hole addresses, so the status
+    #: bar has to be able to say which one the pointer is on -- otherwise you count.
+    hoveredHole = Signal(int, int)
 
     def __init__(
         self,
@@ -1174,6 +1288,9 @@ class BoardScene(QGraphicsScene):
         self._ratsnest_links: tuple[RatsnestLink, ...] = ()
         self._armed_footprint: Footprint | None = None
         self._armed_id: str | None = None
+        self._draw_kind: ConductorKind | None = None
+        self._draw_path: list[HoleCoord] = []
+        self._draw_preview: DrawPreviewItem | None = None
         self._ghost: PlacementGhostItem | None = None
         #: Whether the last placement landed somewhere already occupied. Read by the host to
         #: say so, since the bus allows it and only DRC objects.
@@ -1226,6 +1343,7 @@ class BoardScene(QGraphicsScene):
         self._risk_item = None
         self._ratsnest_item = None
         self._ghost = None
+        self._draw_preview = None
         board = self.document.board
         w, h = board_size_mm(board)
         margin = RULER_MARGIN_MM if self.show_rulers else 4.0
@@ -1375,6 +1493,131 @@ class BoardScene(QGraphicsScene):
     #: Emitted with the armed footprint id, or an empty string when placement is cancelled.
     placementArmed = Signal(str)
 
+    # -- drawing conductors by hand ------------------------------------------
+    #
+    # The engine has had conductor.add since the first commit and nothing in the window
+    # could reach it, so on a perfboard tool there was no way to run a wire or lay a
+    # solder trace yourself -- only to accept whatever the router produced or throw the
+    # whole thing away.
+
+    #: Kinds that are exactly two holes: click a start, click an end, done.
+    _TWO_POINT_KINDS: frozenset[ConductorKind] = frozenset(
+        {"bare-wire", "insulated-wire", "top-jumper"}
+    )
+
+    def arm_drawing(self, kind: ConductorKind | None) -> None:
+        """Arm (or, with None, disarm) drawing a conductor of this kind."""
+        self._clear_draw()
+        self._draw_kind = kind
+        if kind is not None:
+            self.arm_placement(None)  # The two modes are mutually exclusive.
+            self._draw_preview = DrawPreviewItem(kind, self.document.board, self.side)
+            self.addItem(self._draw_preview)
+        self.drawArmed.emit(kind or "")
+
+    @property
+    def armed_draw_kind(self) -> ConductorKind | None:
+        return self._draw_kind
+
+    def _clear_draw(self) -> None:
+        if self._draw_preview is not None:
+            self.removeItem(self._draw_preview)
+            self._draw_preview = None
+        self._draw_path = []
+        self._draw_kind = None
+
+    def _step_is_legal(self, at: HoleCoord) -> bool:
+        """Whether the next click may go here, by the same rule the command applies.
+
+        A solder trace joins orthogonal neighbours only: at 2.54 mm pitch the orthogonal
+        pad gap is about 0.6 mm and the diagonal one about 1.7 mm, and solder does not
+        reliably span the second. Checked here so the preview can say so before the click
+        rather than the command refusing after it.
+        """
+        if not is_inside_board(at, self.document.board):
+            return False
+        if not self._draw_path:
+            return True
+        if at in self._draw_path:
+            return False
+        last = self._draw_path[-1]
+        if self._draw_kind in ("solder-trace", "solder-trace-wired"):
+            return abs(at.col - last.col) + abs(at.row - last.row) == 1
+        return at != last
+
+    def draw_click(self, at: HoleCoord) -> DispatchResult | None:
+        """Extend the conductor being drawn, committing it when it is complete."""
+        if self._draw_kind is None or not self._step_is_legal(at):
+            return None
+        self._draw_path.append(at)
+        if self._draw_kind in self._TWO_POINT_KINDS and len(self._draw_path) == 2:
+            return self.commit_drawing()
+        self._refresh_draw_preview(at)
+        return None
+
+    def commit_drawing(self) -> DispatchResult | None:
+        """Dispatch the drawn conductor. Fewer than two holes is a cancel, not an error."""
+        if self.bus is None or self._draw_kind is None or len(self._draw_path) < 2:
+            self._clear_draw()
+            self.drawArmed.emit("")
+            return None
+
+        kind = self._draw_kind
+        path = tuple(self._draw_path)
+        spec: NewConductor
+        if kind in ("solder-trace", "solder-trace-wired"):
+            spec = NewSolderTraceConductor(
+                path=path, kind=cast(Any, kind), net_id=self._net_for(path)
+            )
+        else:
+            spec = NewWireConductor(path=path, kind=cast(Any, kind), net_id=self._net_for(path))
+
+        result = self.bus.dispatch("conductor.add", AddConductorPayload(conductor=spec))
+        self._clear_draw()
+        self.drawArmed.emit("")
+        self.conductorDrawn.emit(result)
+        return result
+
+    def _net_for(self, path: tuple[HoleCoord, ...]) -> str | None:
+        """The schematic net this conductor evidently belongs to, or None.
+
+        Assigned only when both ends land on pins that share exactly one net -- an
+        unambiguous case. Anything else stays unassigned, which is not a failure: copper
+        with no net claim is what rip-up-and-reroute and the stale-conductor cleanup both
+        promise never to touch, so a hand-drawn connection the tool cannot interpret is
+        also one it will never quietly remove.
+        """
+        pins_at: dict[tuple[int, int], set[tuple[str, str]]] = {}
+        for comp in self.document.components:
+            for pin, hole in _pin_holes_of(comp, self.lookup):
+                pins_at.setdefault((hole.col, hole.row), set()).add((comp.ref, pin.number))
+
+        ends = [pins_at.get((path[0].col, path[0].row), set()),
+                pins_at.get((path[-1].col, path[-1].row), set())]
+        if not all(ends):
+            return None
+        candidates = [
+            net.id
+            for net in self.document.nets
+            if all(
+                any((node.component_ref, node.pin) in end for node in net.nodes) for end in ends
+            )
+        ]
+        return candidates[0] if len(candidates) == 1 else None
+
+    def _refresh_draw_preview(self, cursor: HoleCoord | None) -> None:
+        if self._draw_preview is None:
+            return
+        ok = cursor is None or self._step_is_legal(cursor)
+        self._draw_preview.set_path(list(self._draw_path), cursor, ok)
+
+    def selected_conductor_ids(self) -> tuple[str, ...]:
+        return tuple(
+            item.conductor_id
+            for item in self.items()
+            if isinstance(item, ConductorItem) and item.isSelected()
+        )
+
     def arm_placement(self, footprint_id: str | None) -> None:
         """Arm (or, with None, disarm) placing a footprint on the next board click."""
         self._armed_footprint = None if footprint_id is None else self.lookup(footprint_id)
@@ -1419,12 +1662,25 @@ class BoardScene(QGraphicsScene):
         return False
 
     def mouseMoveEvent(self, event: Any) -> None:
+        at = screen_to_hole(event.scenePos(), self.document.board, self.side)
         if self._ghost is not None:
-            anchor = screen_to_hole(event.scenePos(), self.document.board, self.side)
-            self._ghost.set_anchor(anchor, self._placement_blocked(anchor))
+            self._ghost.set_anchor(at, self._placement_blocked(at))
+        if self._draw_preview is not None:
+            self._refresh_draw_preview(at)
+        self.hoveredHole.emit(at.col, at.row)
         super().mouseMoveEvent(event)
 
     def mousePressEvent(self, event: Any) -> None:
+        if self._draw_kind is not None:
+            at = screen_to_hole(event.scenePos(), self.document.board, self.side)
+            if event.button() == Qt.MouseButton.LeftButton:
+                self.draw_click(at)
+            elif event.button() == Qt.MouseButton.RightButton:
+                # Right-click ends a trace where it is, which is what a chain-drawing tool
+                # in any editor does. Under two holes it cancels instead.
+                self.commit_drawing()
+            event.accept()
+            return
         if self._armed_footprint is not None and event.button() == Qt.MouseButton.LeftButton:
             anchor = screen_to_hole(event.scenePos(), self.document.board, self.side)
             self.place_armed(anchor)
@@ -1487,6 +1743,17 @@ class BoardScene(QGraphicsScene):
             Qt.Key.Key_Up: (0, -1),
             Qt.Key.Key_Down: (0, 1),
         }
+        if self._draw_kind is not None and event.key() == Qt.Key.Key_Escape:
+            self.arm_drawing(None)
+            event.accept()
+            return
+        if self._draw_kind is not None and event.key() in (
+            Qt.Key.Key_Return,
+            Qt.Key.Key_Enter,
+        ):
+            self.commit_drawing()
+            event.accept()
+            return
         if event.key() == Qt.Key.Key_Escape and self._armed_footprint is not None:
             self.arm_placement(None)
             event.accept()
