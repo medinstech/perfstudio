@@ -30,7 +30,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
-from PySide6.QtCore import QEventLoop, QRectF, QSettings, Qt, QThread, QTimer
+from PySide6.QtCore import QEventLoop, QRectF, QSettings, QSize, Qt, QThread, QTimer
 from PySide6.QtGui import QAction, QColor, QImage, QKeySequence, QPainter
 from PySide6.QtWidgets import (
     QApplication,
@@ -154,7 +154,7 @@ from perfstudio.router import RoutingStyle, options_for_style
 from perfstudio.version import __version__
 from perfstudio.version import describe as describe_version
 
-from . import view3d
+from . import icons, view3d
 from .boardcolors import SCHEMES as BOARD_SCHEMES
 from .boardcolors import choose as choose_board_colour
 from .export_pdf import export_pdf, verify_scale
@@ -1071,6 +1071,9 @@ class MainWindow(QMainWindow):
         self.scene.netPinsChanged.connect(self._on_net_pins_changed)
         self.scene.netPinRejected.connect(self._on_net_pin_rejected)
         self.scene.netPinsCommitted.connect(self._on_net_pins_committed)
+        self.scene.connectArmed.connect(self._on_connect_armed)
+        self.scene.connectProgress.connect(self._on_connect_progress)
+        self.scene.pinsConnected.connect(self._on_pins_connected)
         self.scene.hoveredHole.connect(self._on_hovered_hole)
         self.scene.componentPlaced.connect(self._on_component_placed)
 
@@ -1396,10 +1399,12 @@ class MainWindow(QMainWindow):
         )
         act_features.triggered.connect(self.on_board_features)
         act_import = file_menu.addAction(t("&Import KiCad Netlist…"))
+        self.act_import = act_import
         act_import.setShortcut(QKeySequence("Ctrl+I"))
         act_import.triggered.connect(self.on_import_netlist)
         file_menu.addSeparator()
         act_guide = file_menu.addAction(t("Export &Build Guide…"))
+        self.act_guide = act_guide
         act_guide.setShortcut(QKeySequence("Ctrl+B"))
         act_guide.setToolTip(
             "Write the step-by-step soldering guide: one offline HTML file, the wire cut "
@@ -1517,7 +1522,20 @@ class MainWindow(QMainWindow):
         # entered by hand: name the net, then click the pins that are on it.
         net_menu = menu.addMenu(t("&Net"))
         net_menu.setToolTipsVisible(True)
+        # FIRST, and on the toolbar, because it is the whole job in two clicks. Everything
+        # below it exists for the cases this cannot cover -- naming a net before it has
+        # pins, saying what it carries, taking a pin off one.
+        self.act_connect = net_menu.addAction(t("&Connect Two Pins"))
+        self.act_connect.setCheckable(True)
+        self.act_connect.setShortcut(QKeySequence("C"))
+        self.act_connect.setToolTip(
+            "Click one pin, then another. They end up on the same net: an existing one if "
+            "either pin is already on it, or a new one named for you if neither is."
+        )
+        self.act_connect.triggered.connect(self.on_connect_tool)
+        net_menu.addSeparator()
         act_new_net = net_menu.addAction(t("&New Net…"))
+        self.act_new_net = act_new_net
         act_new_net.setShortcut(QKeySequence("Ctrl+Shift+N"))
         act_new_net.setToolTip(
             "Name a net, then click its pins on the board. Nothing here needs KiCad."
@@ -1618,10 +1636,12 @@ class MainWindow(QMainWindow):
 
         view_menu = menu.addMenu(t("&View"))
         act_flip = view_menu.addAction(t("Flip Board (component / solder side)"))
+        self.act_flip = act_flip
         act_flip.setShortcut(QKeySequence("Ctrl+F"))
         act_flip.triggered.connect(self.on_flip_board)
         view_menu.addSeparator()
         act_fit: QAction = view_menu.addAction(t("&Fit Board"))
+        self.act_fit = act_fit
         act_fit.setShortcut(QKeySequence("Ctrl+0"))
         act_fit.triggered.connect(self.view.fit_board)
         act_zoom_in = view_menu.addAction(t("Zoom &In"))
@@ -1703,48 +1723,101 @@ class MainWindow(QMainWindow):
         act_about.triggered.connect(self.on_about)
 
     def _build_toolbar(self) -> None:
-        """The half-dozen actions used constantly, where they can be reached without a menu.
+        """Every tool, on the bar, with a picture and its name under it.
 
-        Text-only buttons: shipping an icon set is a separate piece of work, and unlabelled
-        guesses at icons would be worse than words for actions as specific as "flip to the
-        solder side".
+        This replaced a row of words. Words are precise, and they are also a row of eleven
+        identical grey rectangles you have to read left to right every time -- so the tools
+        were being hunted for in the menus instead, which is the thing a toolbar exists to
+        prevent. The icons are drawn in ``icons.py`` and the label stays underneath each
+        one: a picture alone would make the specific actions ("flip to the solder side",
+        "route only the selected nets") into guesses.
+
+        The four conductor icons deliberately share one drawing and differ only in what
+        runs between the two pads, because that difference IS the application.
         """
         bar = QToolBar("Main")
         bar.setMovable(False)
+        bar.setIconSize(QSize(icons.SIZE, icons.SIZE))
+        bar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
         self.addToolBar(bar)
+        self.toolbar = bar
 
-        # Save, then undo and redo, then the work. These three were reachable only from a
-        # menu or a shortcut, which is the wrong place for the two actions a person reaches
-        # for after every experiment -- and an undo you cannot see the state of is one you
-        # press hopefully.
+        # Short labels for the BUTTONS only. Qt draws an action's iconText on a toolbar and
+        # its text in a menu, so "Autoroute All Nets" stays exact where there is room for
+        # it and the button says "Autoroute" -- without which sixteen tools at full menu
+        # length run off the end of a 1600 px window and half of them end up behind the
+        # overflow arrow, which is where the menus already were.
+        for action, short in (
+            (self.act_connect, t("Connect")),
+            (self.act_new_net, t("New Net")),
+            (self.act_draw["solder-trace"], t("Trace")),
+            (self.act_draw["solder-trace-wired"], t("Spine")),
+            (self.act_draw["bare-wire"], t("Bare")),
+            (self.act_draw["insulated-wire"], t("Insulated")),
+            (self.act_draw["top-jumper"], t("Jumper")),
+            (self.act_autoplace, t("Auto-place")),
+            (self.act_autoroute, t("Autoroute")),
+            (self.act_rotate_cw, t("Rotate")),
+            (self.act_mirror, t("Mirror")),
+            (self.act_delete, t("Delete")),
+            (self.act_flip, t("Flip")),
+            (self.act_ratsnest, t("Ratsnest")),
+            (self.act_3d, t("3D")),
+            (self.act_fit, t("Fit")),
+        ):
+            action.setIconText(short)
+
+        # The document, then what makes a circuit, then what turns it into a board, then
+        # how you look at it. Grouped in the order a board is actually built.
+        self.act_save.setIcon(icons.icon("save"))
+        self.act_undo.setIcon(icons.icon("undo"))
+        self.act_redo.setIcon(icons.icon("redo"))
         bar.addAction(self.act_save)
         bar.addAction(self.act_undo)
         bar.addAction(self.act_redo)
+
         bar.addSeparator()
-        for kind in ("solder-trace", "bare-wire", "insulated-wire"):
+        # The netlist, which had been the hardest thing in the application to reach: two
+        # levels of menu, then a dialog, before a single pin could be joined to anything.
+        self.act_connect.setIcon(icons.icon("connect"))
+        self.act_new_net.setIcon(icons.icon("new-net"))
+        bar.addAction(self.act_connect)
+        bar.addAction(self.act_new_net)
+
+        bar.addSeparator()
+        for kind in ("solder-trace", "solder-trace-wired", "bare-wire", "insulated-wire",
+                     "top-jumper"):
+            self.act_draw[kind].setIcon(icons.icon(kind))
             bar.addAction(self.act_draw[kind])
+
         bar.addSeparator()
+        self.act_autoplace.setIcon(icons.icon("autoplace"))
+        self.act_autoroute.setIcon(icons.icon("autoroute"))
         bar.addAction(self.act_autoplace)
         bar.addAction(self.act_autoroute)
-        bar.addAction(self.act_route_selected)
+
         bar.addSeparator()
-        rotate = bar.addAction(t("Rotate"))
-        rotate.setToolTip("Rotate the selected part(s) 90° clockwise (R; Shift+R for the other way)")
-        rotate.triggered.connect(lambda: self.on_rotate_selection(90))
-        mirror = bar.addAction(t("Mirror"))
-        mirror.setToolTip("Mirror the selected part(s) (M)")
-        mirror.triggered.connect(self.on_mirror_selection)
+        self.act_rotate_cw.setIcon(icons.icon("rotate"))
+        self.act_mirror.setIcon(icons.icon("mirror"))
+        self.act_delete.setIcon(icons.icon("delete"))
+        bar.addAction(self.act_rotate_cw)
+        bar.addAction(self.act_mirror)
+        bar.addAction(self.act_delete)
+
         bar.addSeparator()
-        flip = bar.addAction(t("Flip Side"))
-        flip.setToolTip("Switch between the component side and the mirrored solder side (Ctrl+F)")
-        flip.triggered.connect(self.on_flip_board)
+        self.act_flip.setIcon(icons.icon("flip"))
+        self.act_ratsnest.setIcon(icons.icon("ratsnest"))
+        self.act_3d.setIcon(icons.icon("3d"))
+        self.act_fit.setIcon(icons.icon("fit"))
+        bar.addAction(self.act_flip)
         bar.addAction(self.act_ratsnest)
         bar.addAction(self.act_3d)
-        bar.addSeparator()
-        fit = bar.addAction(t("Fit"))
-        fit.triggered.connect(self.view.fit_board)
-        bar.addAction("Zoom +").triggered.connect(lambda: self.view.zoom_by(1.25))
-        bar.addAction("Zoom −").triggered.connect(lambda: self.view.zoom_by(1 / 1.25))
+        bar.addAction(self.act_fit)
+
+        # The menu entries carry the same pictures. A toolbar that teaches one icon and a
+        # menu that shows another teaches nothing.
+        self.act_import.setIcon(icons.icon("import"))
+        self.act_guide.setIcon(icons.icon("guide"))
 
     def _build_library_dock(self) -> None:
         """The footprint registry, with a filter box, arming placement on selection.
@@ -1856,6 +1929,15 @@ class MainWindow(QMainWindow):
         self._refresh_empty_hint()
 
     def _mode_text(self) -> str:
+        if self.scene.connect_armed:
+            first = self.scene.connect_from()
+            if first is None:
+                return f"{t('Connecting')}  ·  {t('click the first pin, Esc cancels')}"
+            return (
+                f"{t('Connecting from')} {first[0]}.{first[1]}  ·  "
+                f"{t('click the pin it joins, Esc cancels')}"
+            )
+
         net_id = self.scene.armed_net_id
         if net_id is not None:
             picked = self.scene.picked_pins()
@@ -2875,6 +2957,7 @@ class MainWindow(QMainWindow):
             action.setChecked(name == wanted)
         if not wanted:
             self.scene.arm_net_pins(None)
+            self.scene.arm_connect(False)
         self.scene.arm_drawing(cast(Any, wanted) if wanted else None)
         if wanted:
             two_point = wanted in ("bare-wire", "insulated-wire", "top-jumper")
@@ -3178,6 +3261,34 @@ class MainWindow(QMainWindow):
             return
         self._select_net(net.id)
         self.scene.arm_net_pins(net.id)
+
+    # -- the two-click connect tool -------------------------------------------
+
+    def on_connect_tool(self, checked: bool) -> None:
+        self.scene.arm_connect(checked)
+
+    def _on_connect_armed(self, on: bool) -> None:
+        self.act_connect.setChecked(on)
+        self._refresh_mode_banner()
+        if on:
+            self.statusBar().showMessage(
+                "Click a pin, then the pin it joins. Neither on a net yet? One gets made. "
+                "Esc cancels.",
+                0,
+            )
+        else:
+            self.statusBar().clearMessage()
+
+    def _on_connect_progress(self, picked: list[Any]) -> None:
+        self._refresh_mode_banner()
+        if picked:
+            self.statusBar().showMessage(f"From {picked[0]} — click the pin it joins.", 0)
+
+    def _on_pins_connected(self, result: Any) -> None:
+        if result is None:
+            return
+        message = result.description if result.ok else f"[{result.code}] {result.message}"
+        self.statusBar().showMessage(message, 6000)
 
     def on_add_pins_to_net(self) -> None:
         net_id = self._one_selected_net()

@@ -2539,3 +2539,244 @@ def test_the_menus_survive_a_garbage_collection() -> None:
     assert window.act_save.shortcut().toString() == "Ctrl+S"
     assert all(menu.actions() is not None for menu in window._menus)
     _close(window)
+
+
+# ---------------------------------------------------------------------------
+# Joining two pins in two clicks
+#
+# Declaring a net, filling it and routing it is the honest model, and it was also four
+# steps deep in two menus before a single pin could be joined to anything. Most of the
+# time nobody is thinking "I shall declare a net"; they are pointing at two legs.
+# ---------------------------------------------------------------------------
+
+
+def _hole_of(window, ref: str, pin: str) -> HoleCoord:
+    from perfstudio.geometry import all_pin_holes
+
+    comp = next(c for c in window.bus.document.components if c.ref == ref)
+    footprint = window.lookup(comp.footprint_id)
+    return next(hole for p, hole in all_pin_holes(comp, footprint) if p.number == pin)
+
+
+def _free_pins(window) -> list[tuple[str, str]]:
+    """Pins on the board that no net has claimed."""
+    from perfstudio.geometry import all_pin_holes
+
+    taken = {(n.component_ref, n.pin) for net in window.bus.document.nets for n in net.nodes}
+    return [
+        (comp.ref, pin.number)
+        for comp in window.bus.document.components
+        if (footprint := window.lookup(comp.footprint_id)) is not None
+        for pin, _hole in all_pin_holes(comp, footprint)
+        if (comp.ref, pin.number) not in taken
+    ]
+
+
+def test_two_free_pins_get_a_net_of_their_own() -> None:
+    window = _window_on(_load_dense())
+    first, second = _free_pins(window)[:2]
+
+    window.scene.arm_connect(True)
+    window.scene.connect_click(_hole_of(window, *first))
+    result = window.scene.connect_click(_hole_of(window, *second))
+
+    assert result is not None and result.ok, result
+    made = window.bus.document.nets[-1]
+    assert made.name == "N1"
+    assert {(n.component_ref, n.pin) for n in made.nodes} == {first, second}
+    _close(window)
+
+
+def test_a_pin_joined_to_a_pin_on_a_net_joins_that_net() -> None:
+    """What a person pointing at a leg and then at a rail means."""
+    window = _window_on(_load_dense())
+    net = next(n for n in window.bus.document.nets if n.nodes)
+    on_net = (net.nodes[0].component_ref, net.nodes[0].pin)
+    free = _free_pins(window)[0]
+    before = len(window.bus.document.nets)
+
+    window.scene.arm_connect(True)
+    window.scene.connect_click(_hole_of(window, *free))
+    result = window.scene.connect_click(_hole_of(window, *on_net))
+
+    assert result is not None and result.ok, result
+    assert len(window.bus.document.nets) == before  # joined, not invented
+    after = next(n for n in window.bus.document.nets if n.id == net.id)
+    assert free in {(n.component_ref, n.pin) for n in after.nodes}
+    _close(window)
+
+
+def _pin_by_holding_net(window) -> dict[str, tuple[str, str]]:
+    """One pin per net, keyed by the net that EFFECTIVELY holds it.
+
+    First net wins, matching the connectivity engine and LVS -- dense.perf has a pin named
+    by two nets, which is a document the net commands would now refuse and a file from
+    before they existed is still allowed to contain.
+    """
+    holder: dict[tuple[str, str], str] = {}
+    for net in window.bus.document.nets:
+        for node in net.nodes:
+            holder.setdefault((node.component_ref, node.pin), net.name)
+    by_net: dict[str, tuple[str, str]] = {}
+    for pin, name in holder.items():
+        by_net.setdefault(name, pin)
+    return by_net
+
+
+def test_two_pins_on_different_nets_are_refused_with_both_named() -> None:
+    """Merging two nets is a change to the circuit, not something two clicks may do."""
+    window = _window_on(_load_dense())
+    reasons: list[str] = []
+    window.scene.netPinRejected.connect(reasons.append)
+    (name_a, pin_a), (name_b, pin_b) = list(_pin_by_holding_net(window).items())[:2]
+    before = window.bus.document
+
+    window.scene.arm_connect(True)
+    window.scene.connect_click(_hole_of(window, *pin_a))
+    result = window.scene.connect_click(_hole_of(window, *pin_b))
+
+    assert result is None
+    assert window.bus.document is before
+    assert name_a in reasons[-1] and name_b in reasons[-1]
+    _close(window)
+
+
+def test_two_pins_already_on_one_net_say_so_rather_than_dispatching() -> None:
+    window = _window_on(_load_dense())
+    reasons: list[str] = []
+    window.scene.netPinRejected.connect(reasons.append)
+    net = next(n for n in window.bus.document.nets if len(n.nodes) >= 2)
+    before = window.bus.document
+
+    window.scene.arm_connect(True)
+    window.scene.connect_click(_hole_of(window, net.nodes[0].component_ref, net.nodes[0].pin))
+    window.scene.connect_click(_hole_of(window, net.nodes[1].component_ref, net.nodes[1].pin))
+
+    assert window.bus.document is before
+    assert net.name in reasons[-1]
+    _close(window)
+
+
+def test_the_tool_stays_armed_so_connections_can_be_chained() -> None:
+    """A board is a list of connections, not one, and re-arming between each of them is
+    the friction this tool exists to remove."""
+    window = _window_on(_load_dense())
+    a, b, c = _free_pins(window)[:3]
+
+    window.scene.arm_connect(True)
+    window.scene.connect_click(_hole_of(window, *a))
+    window.scene.connect_click(_hole_of(window, *b))
+    assert window.scene.connect_armed
+    assert window.scene.connect_from() is None  # ready for the next pair, not mid-pair
+
+    window.scene.connect_click(_hole_of(window, *c))
+    result = window.scene.connect_click(_hole_of(window, *a))
+
+    assert result is not None and result.ok, result
+    assert len(window.bus.document.nets[-1].nodes) == 3
+    _close(window)
+
+
+def test_a_refused_pair_does_not_leave_the_first_pin_armed() -> None:
+    """Otherwise the next click joins something the user has stopped thinking about."""
+    window = _window_on(_load_dense())
+
+    pins = list(_pin_by_holding_net(window).values())[:2]
+
+    window.scene.arm_connect(True)
+    window.scene.connect_click(_hole_of(window, *pins[0]))
+    window.scene.connect_click(_hole_of(window, *pins[1]))
+
+    assert window.scene.connect_from() is None
+    _close(window)
+
+
+def test_clicking_an_empty_hole_while_connecting_says_so() -> None:
+    window = _window_on(_load_dense())
+    reasons: list[str] = []
+    window.scene.netPinRejected.connect(reasons.append)
+
+    window.scene.arm_connect(True)
+    window.scene.connect_click(HoleCoord(0, 0))
+
+    assert reasons and "No component pin" in reasons[0]
+    assert window.scene.connect_from() is None
+    _close(window)
+
+
+def test_arming_another_board_tool_ends_a_connection_in_progress() -> None:
+    window = _window_on(_load_dense())
+    window.scene.arm_connect(True)
+    window.scene.connect_click(_hole_of(window, *_free_pins(window)[0]))
+
+    window.scene.arm_drawing("bare-wire")
+
+    assert window.scene.connect_armed is False
+    assert window.scene.connect_from() is None
+    _close(window)
+
+
+def test_the_automatic_net_name_counts_from_the_document() -> None:
+    """Like next_reference, and for the same reason: a hidden counter would disagree with
+    the document after an undo and the bus would refuse the name for an invisible reason."""
+    from perfstudio.commands import AddNetPayload
+    from perfstudio.ui.view2d import next_net_name
+
+    window = _window_on(_load_dense())
+    assert next_net_name(window.bus.document) == "N1"
+
+    window.bus.dispatch("net.add", AddNetPayload(name="N1"))
+    assert next_net_name(window.bus.document) == "N2"
+
+    window.bus.undo()
+    assert next_net_name(window.bus.document) == "N1"
+    _close(window)
+
+
+# ---------------------------------------------------------------------------
+# The toolbar
+# ---------------------------------------------------------------------------
+
+
+def test_every_tool_on_the_bar_has_a_picture_and_a_short_label() -> None:
+    """A toolbar of eleven identical grey rectangles is one people read left to right
+    every time, which is how the tools ended up being hunted for in the menus instead."""
+    window = _window_on(_load_dense())
+
+    tools = [a for a in window.toolbar.actions() if not a.isSeparator()]
+
+    assert len(tools) >= 15
+    for action in tools:
+        assert not action.icon().isNull(), f"{action.text()} has no icon"
+        assert action.iconText(), f"{action.text()} has no button label"
+        assert len(action.iconText()) <= 12, f"{action.iconText()} is too long for a button"
+    _close(window)
+
+
+def test_the_menus_keep_the_full_wording_the_buttons_abbreviate() -> None:
+    """Qt draws iconText on a toolbar and text in a menu, so the short label must not
+    have overwritten the exact one."""
+    window = _window_on(_load_dense())
+
+    assert window.act_autoroute.iconText() == "Autoroute"
+    assert "All Nets" in window.act_autoroute.text()
+    _close(window)
+
+
+def test_an_unknown_icon_is_empty_rather_than_an_exception() -> None:
+    """A missing picture is a cosmetic fault; taking the window down over one would not
+    be."""
+    from perfstudio.ui.icons import icon
+
+    assert icon("no-such-icon").isNull()
+    assert not icon("connect").isNull()
+
+
+def test_every_icon_in_the_set_draws() -> None:
+    """They are drawn with QPainter at import-independent sizes, so a broken path shows up
+    as an empty pixmap rather than an error anywhere."""
+    from perfstudio.ui.icons import DRAWINGS, icon
+
+    for name in DRAWINGS:
+        assert not icon(name).isNull(), name
+        assert not icon(name).pixmap(22, 22).isNull(), name

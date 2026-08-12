@@ -137,8 +137,8 @@ def test_no_two_entries_in_a_menu_claim_the_same_accelerator() -> None:
                  "&Mirror", "Toggle &Lock", "&Delete"],
         "draw": ["&Solder Trace", "Solder Trace with S&pine", "&Bare Wire",
                  "&Insulated Wire", "Top &Jumper", "&Stop Drawing"],
-        "net": ["&New Net…", "&Add Pins to Net", "&Finish Adding Pins", "&Edit Net…",
-                "&Disconnect Selected Pins", "De&lete Net"],
+        "net": ["&Connect Two Pins", "&New Net…", "&Add Pins to Net", "&Finish Adding Pins",
+                "&Edit Net…", "&Disconnect Selected Pins", "De&lete Net"],
     }
     for name, keys in groups.items():
         for code, catalogue in CATALOGUES.items():

@@ -79,6 +79,7 @@ TURKISH: Mapping[str, str] = {
     # "&Net" becomes the plural "Netler": a menu named with the same word in both
     # languages would be an untranslated entry, which the catalogue tests refuse.
     "&Net": "&Netler",
+    "&Connect Two Pins": "&İki Pini Bağla",
     "&New Net…": "&Yeni Net…",
     "&Add Pins to Net": "Nete &Pin Ekle",
     "&Finish Adding Pins": "Pin Eklemeyi &Bitir",
@@ -159,11 +160,31 @@ TURKISH: Mapping[str, str] = {
         "Mevcut bir devre Dosya ▸ KiCad Netlist İçe Aktar ile gelir.",
     "Filter nets…  (gnd, power, U1)": "Netleri süz…  (gnd, power, U1)",
     "Filter parts…  (resistor, dip, 5mm)": "Parçaları süz…  (direnç, dip, 5mm)",
-    # -- toolbar -------------------------------------------------------------
+    # -- toolbar ---------------------------------------------------------------
+    # Short labels for the buttons; the menus keep the full wording. Qt draws an action's
+    # iconText on a toolbar and its text in a menu, so these are the only place they differ.
+    "Connect": "Bağla",
+    "Trace": "Yol",
+    "Spine": "Omurga",
+    "Bare": "Çıplak",
+    "Insulated": "İzoleli",
+    "Jumper": "Üst Jumper",
+    "Auto-place": "Oto-yerleşim",
+    "Autoroute": "Oto-yol",
     "Rotate": "Döndür",
     "Mirror": "Aynala",
-    "Flip Side": "Yüzü Çevir",
+    "Delete": "Sil",
+    # "Flip Side" was here until the toolbar stopped making its own action for it and
+    # started sharing the View menu's, whose button label is "Flip".
+    "Flip": "Çevir",
+    "Ratsnest": "Bağlantı Ağı",
+    "3D": "3B",
     "Fit": "Sığdır",
+    # -- the connect tool ------------------------------------------------------
+    "Connecting": "Bağlanıyor",
+    "click the first pin, Esc cancels": "ilk pine tıkla, Esc iptal eder",
+    "Connecting from": "Bağlantı başlangıcı:",
+    "click the pin it joins, Esc cancels": "birleşeceği pine tıkla, Esc iptal eder",
     # -- docks ---------------------------------------------------------------
     "Parts": "Parçalar",
     "Nets": "Netler",

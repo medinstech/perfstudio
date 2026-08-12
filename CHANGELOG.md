@@ -22,6 +22,37 @@ closed without a bump.
 
 ### Added
 
+- **Two clicks join two pins.** `Net ▸ Connect Two Pins` (C, and the first button on the
+  toolbar) is the netlist reduced to what a person is actually doing: pointing at two legs
+  and saying *those* go together. Click one pin, click another, and they end up on the
+  same net — an existing one if either pin is already on it, or a new one named `N1` for
+  you if neither is. Declaring a net, filling it and then routing it is still the honest
+  model, and it was also four steps deep in two menus before a single pin could be joined
+  to anything.
+  - It produces exactly the documents the long way round does: one command per pair, on
+    the same bus, undoing one pair at a time.
+  - **Both pins already on different nets is refused**, naming both. Merging two nets is a
+    change to the circuit, and not one a two-click tool may make on its own.
+  - The tool stays armed, because a board is a list of connections rather than one, and a
+    refused pair clears the half-made connection — otherwise the next click joins something
+    the user has stopped thinking about.
+
+- **A toolbar with pictures on it.** Every tool is now on the bar — connect, new net, all
+  five conductor kinds, auto-place, autoroute, rotate, mirror, delete, flip, ratsnest, 3D,
+  fit — each with an icon and a short label under it. The old bar was eleven identical grey
+  rectangles of text that had to be read left to right every time, which is how the tools
+  ended up being hunted for in the menus, which is the thing a toolbar exists to prevent.
+  - **The icons are drawn in code** (`ui/icons.py`), from the same palette as the rest of
+    the chrome, so they cannot fall out of step with the window and there is no asset
+    directory, resource system or licence to track.
+  - **The four conductor icons share one drawing** and differ only in what runs between the
+    two pads — a solid bar for solder, a thin line for bare wire, a sleeved line for
+    insulated, an arc that lifts off the board for a top jumper. That difference is what
+    this application is about, so it is what the icons are built around.
+  - Buttons carry a short label and menus keep the full wording (Qt draws `iconText` on a
+    toolbar and `text` in a menu), without which sixteen tools at menu length run off the
+    end of a 1600 px window and half of them end up behind an overflow arrow.
+
 - **The window now says what state it is in.** Placing, drawing and picking pins each arm
   a mode in which a click means something other than what it usually means, and the only
   place any of them said so was the status bar — the bottom edge of a window a metre wide,

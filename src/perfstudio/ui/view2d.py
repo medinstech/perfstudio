@@ -46,6 +46,7 @@ from PySide6.QtWidgets import (
 from perfstudio.command import CommandBus, DispatchResult
 from perfstudio.commands import (
     AddConductorPayload,
+    AddNetPayload,
     ConnectPinsPayload,
     MoveComponentPayload,
     NewConductor,
@@ -790,6 +791,21 @@ def next_reference(document: PerfDocument, footprint_id: str) -> str:
     while f"{prefix}{index}" in used:
         index += 1
     return f"{prefix}{index}"
+
+
+def next_net_name(document: PerfDocument) -> str:
+    """The next free automatic net name, e.g. "N3".
+
+    Counted from the document for the same reason ``next_reference`` is: a hidden counter
+    would disagree with it after an undo, and the bus would refuse the name for a reason
+    nobody could see. Short and neutral on purpose -- it is a placeholder for whatever the
+    net turns out to be called, and renaming it is one dialog away.
+    """
+    used = {net.name for net in document.nets}
+    index = 1
+    while f"N{index}" in used:
+        index += 1
+    return f"N{index}"
 
 
 def _pin_holes_of(
@@ -1637,6 +1653,12 @@ class BoardScene(QGraphicsScene):
     netPinRejected = Signal(str)
     #: Emitted with the DispatchResult of the committed net.connect.
     netPinsCommitted = Signal(object)
+    #: Emitted when the two-click connect tool is armed or disarmed.
+    connectArmed = Signal(bool)
+    #: Emitted with the pin waiting for its partner, as a one-item list, or empty.
+    connectProgress = Signal(list)
+    #: Emitted with the DispatchResult of a pair that was joined.
+    pinsConnected = Signal(object)
     #: (col, row) under the cursor. The whole tool speaks hole addresses, so the status
     #: bar has to be able to say which one the pointer is on -- otherwise you count.
     hoveredHole = Signal(int, int)
@@ -1673,6 +1695,10 @@ class BoardScene(QGraphicsScene):
         self._net_pin_picks: list[tuple[str, str]] = []
         self._net_pin_holes: list[HoleCoord] = []
         self._net_pin_item: PickedPinsItem | None = None
+        self._connect_armed = False
+        self._connect_first: tuple[str, str] | None = None
+        self._connect_hole: HoleCoord | None = None
+        self._connect_item: PickedPinsItem | None = None
         self._ghost: PlacementGhostItem | None = None
         #: Whether the last placement landed somewhere already occupied. Read by the host to
         #: say so, since the bus allows it and only DRC objects.
@@ -1740,6 +1766,7 @@ class BoardScene(QGraphicsScene):
         # happens on every command and the mode survives one: a half-collected net whose
         # picks vanished off the board reads as the clicks having been lost.
         self._net_pin_item = None
+        self._connect_item = None
         board = self.document.board
         outline = _outline_rect(board)
         # Room outside the substrate is reserved for the ruler, so it is only needed when
@@ -1837,6 +1864,10 @@ class BoardScene(QGraphicsScene):
             self._net_pin_item = PickedPinsItem(board, self.side)
             self._net_pin_item.set_holes(self._net_pin_holes)
             self.addItem(self._net_pin_item)
+        if self._connect_first is not None and self._connect_hole is not None:
+            self._connect_item = PickedPinsItem(board, self.side)
+            self._connect_item.set_holes([self._connect_hole])
+            self.addItem(self._connect_item)
 
     # -- ratsnest -----------------------------------------------------------
 
@@ -1948,6 +1979,7 @@ class BoardScene(QGraphicsScene):
         if kind is not None:
             self.arm_placement(None)  # The board modes are mutually exclusive.
             self._disarm_net_pins()
+            self._disarm_connect()
             self._draw_preview = DrawPreviewItem(kind, self.document.board, self.side)
             self.addItem(self._draw_preview)
         self.drawArmed.emit(kind or "")
@@ -2067,9 +2099,10 @@ class BoardScene(QGraphicsScene):
         if net_id is not None and not any(n.id == net_id for n in self.document.nets):
             net_id = None
         if net_id is not None:
-            # The three board modes are mutually exclusive: a click means one thing.
+            # The board modes are mutually exclusive: a click means one thing.
             self.arm_placement(None)
             self.arm_drawing(None)
+            self._disarm_connect()
         self._clear_net_pins()
         self._net_pin_target = net_id
         if net_id is not None:
@@ -2158,6 +2191,125 @@ class BoardScene(QGraphicsScene):
             self._net_pin_item.set_holes(self._net_pin_holes)
         self.netPinsChanged.emit([f"{r}.{p}" for r, p in self._net_pin_picks])
 
+    # -- joining two pins, which is the whole job in two clicks --------------
+    #
+    # Naming a net, then filling it, then routing it is the honest model and it was also
+    # four steps deep in two menus before a single pin could be joined to anything. Most
+    # of the time the user is not thinking "I shall declare a net"; they are pointing at
+    # two legs and saying THOSE go together. This is that, and it produces exactly the
+    # same documents the long way round does -- one command per pair, on the same bus.
+
+    def arm_connect(self, on: bool) -> None:
+        """Arm (or disarm) joining pins by clicking two of them."""
+        if on:
+            self.arm_placement(None)
+            self.arm_drawing(None)
+            self._disarm_net_pins()
+        self._clear_connect()
+        self._connect_armed = on
+        self.connectArmed.emit(on)
+        self.connectProgress.emit([])
+
+    @property
+    def connect_armed(self) -> bool:
+        return self._connect_armed
+
+    def connect_from(self) -> tuple[str, str] | None:
+        """The pin waiting for its partner, if a pair is half made. For the banner, and
+        what the seam tests assert on."""
+        return self._connect_first
+
+    def _disarm_connect(self) -> None:
+        if not self._connect_armed:
+            return
+        self._clear_connect()
+        self._connect_armed = False
+        self.connectArmed.emit(False)
+
+    def _clear_connect(self) -> None:
+        self._connect_first = None
+        self._connect_hole = None
+        if self._connect_item is not None:
+            self.removeItem(self._connect_item)
+            self._connect_item = None
+
+    def connect_click(self, at: HoleCoord) -> DispatchResult | None:
+        """Take the first pin, or join the second to it.
+
+        Four outcomes, and each is stated rather than guessed at:
+          - neither pin is on a net  -> a new net, named for you, holding both
+          - one of them is           -> the other joins THAT net, which is what a person
+                                        pointing at a pin and then at a rail means
+          - both, and the same net   -> nothing to do, and it says so
+          - both, different nets     -> refused, naming both. Merging two nets is a
+                                        decision about the circuit, not about two clicks,
+                                        and it is not one this tool may take on its own.
+        """
+        if not self._connect_armed:
+            return None
+
+        found = self._pin_at(at)
+        if found is None:
+            self.netPinRejected.emit(f"No component pin at {format_hole(at)}.")
+            return None
+
+        first = self._connect_first
+        if first is None:
+            self._connect_first = found
+            self._connect_hole = at
+            self._connect_item = PickedPinsItem(self.document.board, self.side)
+            self._connect_item.set_holes([at])
+            self.addItem(self._connect_item)
+            self.connectProgress.emit([f"{found[0]}.{found[1]}"])
+            return None
+
+        if found == first:
+            self.netPinRejected.emit(f"{found[0]}.{found[1]} is already the pin you started from.")
+            return None
+
+        result = self._join_pins(first, found)
+        # Cleared either way: a refused pair is not a pair you are still in the middle of,
+        # and leaving the first pin armed would make the next click join something the
+        # user has stopped thinking about.
+        self._clear_connect()
+        self.connectProgress.emit([])
+        if result is not None:
+            self.pinsConnected.emit(result)
+        return result
+
+    def _join_pins(
+        self, first: tuple[str, str], second: tuple[str, str]
+    ) -> DispatchResult | None:
+        if self.bus is None:
+            return None
+        net_a = self._net_holding(*first)
+        net_b = self._net_holding(*second)
+        a = NetNode(component_ref=first[0], pin=first[1])
+        b = NetNode(component_ref=second[0], pin=second[1])
+
+        if net_a is not None and net_b is not None:
+            if net_a.id == net_b.id:
+                self.netPinRejected.emit(
+                    f"{first[0]}.{first[1]} and {second[0]}.{second[1]} are both already on "
+                    f"{net_a.name}."
+                )
+            else:
+                self.netPinRejected.emit(
+                    f"{first[0]}.{first[1]} is on {net_a.name} and {second[0]}.{second[1]} is "
+                    f"on {net_b.name}. Joining two nets is a change to the circuit — "
+                    f"disconnect one of the pins first."
+                )
+            return None
+
+        if net_a is not None:
+            return self.bus.dispatch("net.connect", ConnectPinsPayload(id=net_a.id, nodes=(b,)))
+        if net_b is not None:
+            return self.bus.dispatch("net.connect", ConnectPinsPayload(id=net_b.id, nodes=(a,)))
+        return self.bus.dispatch(
+            "net.add",
+            AddNetPayload(name=next_net_name(self.document), net_class="signal", nodes=(a, b)),
+        )
+
     def commit_net_pins(self) -> DispatchResult | None:
         """Dispatch ONE ``net.connect`` for everything picked. Nothing picked is a cancel.
 
@@ -2198,6 +2350,7 @@ class BoardScene(QGraphicsScene):
         self._clear_ghost()
         if self._armed_footprint is not None:
             self._disarm_net_pins()
+            self._disarm_connect()
             self._ghost = PlacementGhostItem(self._armed_footprint, self.document.board, self.side)
             self.addItem(self._ghost)
         self.placementArmed.emit(self._armed_id or "")
@@ -2245,6 +2398,14 @@ class BoardScene(QGraphicsScene):
         super().mouseMoveEvent(event)
 
     def mousePressEvent(self, event: Any) -> None:
+        if self._connect_armed:
+            at = screen_to_hole(event.scenePos(), self.document.board, self.side)
+            if event.button() == Qt.MouseButton.LeftButton:
+                self.connect_click(at)
+            elif event.button() == Qt.MouseButton.RightButton:
+                self._disarm_connect()
+            event.accept()
+            return
         if self._net_pin_target is not None:
             at = screen_to_hole(event.scenePos(), self.document.board, self.side)
             if event.button() == Qt.MouseButton.LeftButton:
@@ -2326,6 +2487,10 @@ class BoardScene(QGraphicsScene):
             Qt.Key.Key_Up: (0, -1),
             Qt.Key.Key_Down: (0, 1),
         }
+        if self._connect_armed and event.key() == Qt.Key.Key_Escape:
+            self._disarm_connect()
+            event.accept()
+            return
         if self._net_pin_target is not None and event.key() == Qt.Key.Key_Escape:
             self._disarm_net_pins()
             event.accept()
