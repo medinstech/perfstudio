@@ -272,6 +272,12 @@ closed without a bump.
     exists. Linux installs the X, GL and dbus libraries Qt and VTK link against, and runs
     under `xvfb` — Qt's offscreen platform is not the same thing as a GL context, and the
     build guide's step images need a real one.
+  - **Linux on every push; the whole matrix on `main`, on tags, and on request.** The
+    repository is private, so runner minutes are metered, and not evenly: Windows bills
+    at 2× and macOS at 10×. The full matrix everywhere costs upwards of sixty billed
+    minutes per push, which for a thirty-second test suite is an allowance spent
+    re-proving that Windows survived a docstring edit. A platform-specific fault still
+    cannot reach a release without being seen, which is the property worth paying for.
   - **`mypy --strict src`**, and `src` deliberately: the engine is strict-clean and must
     stay that way, while the tests are not and never have been. Gating on something
     already broken teaches everyone to ignore the red tick.
