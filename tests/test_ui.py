@@ -1896,3 +1896,49 @@ def test_board_features_dialog_removes_the_selected_feature() -> None:
     assert bus.document.mounting_holes == ()
     assert len(bus.document.edge_connectors) == 1
     assert dialog.tree.topLevelItemCount() == 1
+
+
+# ---------------------------------------------------------------------------
+# Assembly playback
+# ---------------------------------------------------------------------------
+
+
+def test_the_two_ends_of_the_assembly_slider_mean_different_things() -> None:
+    """The bare board and the finished board are the two states somebody actually asks
+    for, and they are not the same state. The first version returned -1 for both, so the
+    left-hand end of the slider drew a complete board.
+    """
+    from perfstudio.ui.main import assembly_step_for
+
+    assert assembly_step_for(0, 5) == -1, "nothing fitted yet, and no step to highlight"
+    assert assembly_step_for(5, 5) is None, "the finished board, as the panel normally is"
+    assert assembly_step_for(6, 5) is None, "and past the end is still the finished board"
+
+
+def test_the_slider_counts_things_fitted_not_steps_done() -> None:
+    """Value 1 is "one thing on the board", which is step 0 having just been done."""
+    from perfstudio.ui.main import assembly_step_for
+
+    assert [assembly_step_for(v, 4) for v in (0, 1, 2, 3, 4)] == [-1, 0, 1, 2, None]
+
+
+def test_each_slider_position_shows_what_its_caption_claims() -> None:
+    """The property the whole thing rests on: at position N the board carries N things,
+    and the step being highlighted is the one that put the last of them there."""
+    from perfstudio.guide import all_steps, build_guide, document_at_step, step_focus
+    from perfstudio.ui.main import assembly_step_for
+
+    doc = _load_dense()
+    guide = build_guide(doc, footprint_lookup())
+    steps = all_steps(guide)
+    maximum = len(steps)
+
+    for value in range(maximum + 1):
+        index = assembly_step_for(value, maximum)
+        if index is None:
+            continue
+        shown = document_at_step(doc, guide, index)
+        assert len(shown.components) + len(shown.conductors) == value
+        if index >= 0:
+            present = {c.id for c in shown.components} | {c.id for c in shown.conductors}
+            assert step_focus(steps[index]) in present

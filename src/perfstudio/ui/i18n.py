@@ -169,6 +169,16 @@ TURKISH: Mapping[str, str] = {
     "Fingers": "Parmak sayısı",
     "That inset does not fit on this board.": "Bu kaçıklık bu karta sığmıyor.",
     "&Exploded View": "&Patlatılmış Görünüm",
+    "Play": "Oynat",
+    "Pause": "Duraklat",
+    "Play the build from here, one step at a time.": (
+        "Montajı buradan itibaren adım adım oynatır."
+    ),
+    "Drag back to see the board part-way through the build.": (
+        "Geriye sürükleyerek kartın montajın ortasındaki hâlini görün."
+    ),
+    "Finished board": "Bitmiş kart",
+    "Bare board": "Boş kart",
     "Lift every part off the board, with a line down to the holes it goes in.": (
         "Her parçayı karttan kaldırır; girdiği deliklere inen bir çizgi ile birlikte."
     ),

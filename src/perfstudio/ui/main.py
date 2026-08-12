@@ -30,7 +30,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
-from PySide6.QtCore import QEventLoop, QRectF, Qt, QThread
+from PySide6.QtCore import QEventLoop, QRectF, Qt, QThread, QTimer
 from PySide6.QtGui import QAction, QColor, QImage, QKeySequence, QPainter
 from PySide6.QtWidgets import (
     QApplication,
@@ -42,6 +42,7 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
+    QHBoxLayout,
     QHeaderView,
     QLabel,
     QLineEdit,
@@ -49,6 +50,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressDialog,
     QPushButton,
+    QSlider,
     QSpinBox,
     QStatusBar,
     QToolBar,
@@ -107,7 +109,7 @@ from perfstudio.geometry import (
     preset_edge_connectors,
     preset_mounting_holes,
 )
-from perfstudio.guide import build_guide
+from perfstudio.guide import Guide, GuideStep, all_steps, build_guide, document_at_step, step_focus
 from perfstudio.guide import describe as describe_guide
 from perfstudio.guide_export import bom_to_csv, cut_list_to_csv, guide_to_html, guide_to_json
 from perfstudio.lvs import LvsIssue, LvsResult, run_lvs, stale_conductor_ids
@@ -778,6 +780,26 @@ def _find_repo_root() -> Path:
 # ---------------------------------------------------------------------------
 
 
+def assembly_step_for(value: int, maximum: int) -> int | None:
+    """What a position on the assembly slider means.
+
+    The slider counts THINGS FITTED, not steps, so its two ends are the two states a
+    person actually asks for: 0 is the bare board out of the envelope, and ``maximum`` is
+    the finished one. Step *k* is therefore at value *k+1*.
+
+    ``None`` means the finished board — the whole document, nothing picked out, which is
+    what the panel shows when nobody has touched the slider.
+
+    Separated from the widget because the arithmetic is where this goes wrong: the first
+    version returned ``value - 1`` throughout, so the BARE-BOARD end produced -1, met the
+    same "show everything" branch as the finished end, and drew a complete board at the
+    position that means nothing has been fitted yet.
+    """
+    if value >= maximum:
+        return None
+    return value - 1
+
+
 class MainWindow(QMainWindow):
     def __init__(self, document: PerfDocument, path: Path | None = None) -> None:
         super().__init__()
@@ -796,6 +818,12 @@ class MainWindow(QMainWindow):
         #: The document changed while the 3D panel was hidden, so it needs re-actoring
         #: before it is shown again.
         self._3d_stale = False
+        #: Assembly playback. The slider and its friends do not exist until the 3D panel
+        #: is first opened, so everything that reads them checks for None first.
+        self.assembly_slider: Any = None
+        self._assembly_doc: PerfDocument | None = None
+        self._assembly_guide: Guide | None = None
+        self._assembly_cached: tuple[GuideStep, ...] = ()
         #: Advanced by "Try Another Arrangement". Held on the window rather than passed
         #: in, so pressing it repeatedly keeps exploring instead of re-running the same
         #: search and reporting the same answer.
@@ -930,11 +958,129 @@ class MainWindow(QMainWindow):
             self.vtk_widget = widget
             self._3d_placeholder.hide()
             self._3d_layout.addWidget(widget)
+            self._3d_layout.addWidget(self._build_assembly_bar())
             self._3d_stale = False
         except Exception as exc:  # pragma: no cover - environment dependent
             print(f"[3D] Qt/VTK widget unavailable: {exc}", file=sys.stderr)
             self._vtk_renderer = None
             self._3d_placeholder.setText(f"3D view unavailable:\n{exc}")
+
+    # -- assembly playback (PLAN.md D7) --------------------------------------
+    #
+    # THERE IS NO "ANIMATION MODE". The slider's maximum is the finished board, which is
+    # where it sits, so the panel behaves exactly as it did before anyone touches it.
+    # Dragging left rewinds the build. A mode would mean a way to be stuck in it, and a
+    # second thing to remember to turn off before the view means what it looks like it
+    # means.
+
+    #: One step per this many milliseconds while playing. Slow enough to read the caption,
+    #: fast enough that a 40-step board is not a chore.
+    ASSEMBLY_FRAME_MS = 650
+
+    _assembly_timer: QTimer
+
+    def _build_assembly_bar(self) -> QWidget:
+        bar = QWidget()
+        row = QHBoxLayout(bar)
+        row.setContentsMargins(6, 2, 6, 4)
+
+        self.act_play = QPushButton(t("Play"))
+        self.act_play.setCheckable(True)
+        self.act_play.setToolTip(t("Play the build from here, one step at a time."))
+        self.act_play.toggled.connect(self._on_play_toggled)
+
+        self.assembly_slider = QSlider(Qt.Orientation.Horizontal)
+        self.assembly_slider.setToolTip(
+            t("Drag back to see the board part-way through the build.")
+        )
+        self.assembly_slider.valueChanged.connect(self._on_assembly_moved)
+
+        self.assembly_label = QLabel()
+        self.assembly_label.setMinimumWidth(160)
+
+        row.addWidget(self.act_play)
+        row.addWidget(self.assembly_slider, 1)
+        row.addWidget(self.assembly_label)
+
+        self._assembly_timer = QTimer(self)
+        self._assembly_timer.setInterval(self.ASSEMBLY_FRAME_MS)
+        self._assembly_timer.timeout.connect(self._on_assembly_tick)
+
+        self._sync_assembly_range()
+        return bar
+
+    def _assembly_steps(self) -> tuple[GuideStep, ...]:
+        """The build order for the document as it stands, rebuilt when it changes.
+
+        Cached on the document OBJECT, which is free to compare because documents are
+        immutable and every edit produces a new one. Building it costs a couple of
+        milliseconds -- it runs DRC and LVS -- which is worth paying only once per edit.
+        """
+        if self._assembly_doc is not self.bus.document:
+            self._assembly_doc = self.bus.document
+            self._assembly_guide = build_guide(self.bus.document, self.lookup)
+            self._assembly_cached = all_steps(self._assembly_guide)
+        return self._assembly_cached
+
+    def _sync_assembly_range(self) -> None:
+        """Fit the slider to the current build and send it to the end.
+
+        Back to the end on every edit, deliberately. A position part-way through a build
+        that no longer exists is not a position: adding a part renumbers everything after
+        it, so holding the index would show a different moment than the one the user was
+        looking at, without saying so.
+        """
+        steps = self._assembly_steps()
+        blocked = self.assembly_slider.blockSignals(True)
+        self.assembly_slider.setRange(0, max(1, len(steps)))
+        self.assembly_slider.setValue(max(1, len(steps)))
+        self.assembly_slider.setEnabled(bool(steps))
+        self.assembly_slider.blockSignals(blocked)
+        self.act_play.setEnabled(bool(steps))
+        self._update_assembly_label()
+
+    def _assembly_index(self) -> int | None:
+        """Which step the slider is showing, or ``None`` for "the finished board".
+
+        Asks the slider and nothing else. It deliberately does NOT check whether the 3D
+        panel is live: this answer is also what the caption reads, and a caption that
+        depends on whether a renderer happens to exist is a caption that lies about where
+        the slider is. ``_refresh_3d`` does its own check before rendering anything.
+        """
+        if self.assembly_slider is None or not self.assembly_slider.isEnabled():
+            return None
+        return assembly_step_for(self.assembly_slider.value(), self.assembly_slider.maximum())
+
+    def _update_assembly_label(self) -> None:
+        steps = self._assembly_cached
+        index = self._assembly_index()
+        if index is None:
+            self.assembly_label.setText(t("Finished board"))
+        elif index < 0:
+            self.assembly_label.setText(t("Bare board"))
+        else:
+            self.assembly_label.setText(f"{index + 1}/{len(steps)} · {steps[index].title}")
+
+    def _on_assembly_moved(self, _value: int) -> None:
+        self._update_assembly_label()
+        self._refresh_3d()
+
+    def _on_play_toggled(self, playing: bool) -> None:
+        if playing:
+            # From the beginning when the board is already finished, because "play" on a
+            # complete board can only sensibly mean "show me how it got there".
+            if self.assembly_slider.value() >= self.assembly_slider.maximum():
+                self.assembly_slider.setValue(0)
+            self._assembly_timer.start()
+        else:
+            self._assembly_timer.stop()
+        self.act_play.setText(t("Pause") if playing else t("Play"))
+
+    def _on_assembly_tick(self) -> None:
+        if self.assembly_slider.value() >= self.assembly_slider.maximum():
+            self.act_play.setChecked(False)
+            return
+        self.assembly_slider.setValue(self.assembly_slider.value() + 1)
 
     def _3d_is_live(self) -> bool:
         return self.vtk_widget is not None and self.dock_3d.isVisible()
@@ -950,11 +1096,24 @@ class MainWindow(QMainWindow):
         if not self.dock_3d.isVisible():
             self._3d_stale = True
             return
+        index = self._assembly_index()
+        if index is None:
+            document = self.bus.document
+            highlight = None
+        else:
+            steps = self._assembly_steps()
+            guide = self._assembly_guide
+            assert guide is not None  # _assembly_steps just built it
+            document = document_at_step(self.bus.document, guide, index)
+            # Nothing is picked out at the bare-board end: there is no step there yet.
+            highlight = step_focus(steps[index]) if 0 <= index < len(steps) else None
+
         view3d.populate_renderer(
             self._vtk_renderer,
-            self.bus.document,
+            document,
             self.lookup,
             exploded_mm=view3d.EXPLODED_LIFT_MM if self.act_exploded.isChecked() else 0.0,
+            highlight=highlight,
         )
         self.vtk_widget.GetRenderWindow().Render()
         self._3d_stale = False
@@ -1460,6 +1619,10 @@ class MainWindow(QMainWindow):
         # After the rebuild, so it reads the fresh document: a rotate has to show its new
         # angle, and a deleted part has to stop being described as selected.
         self._refresh_selection_state()
+        if self.assembly_slider is not None:
+            # Before the 3D refresh, so the panel repaints once with the new build rather
+            # than once against the old step order and again against the new one.
+            self._sync_assembly_range()
         self._refresh_3d()
 
         self._refresh_title()

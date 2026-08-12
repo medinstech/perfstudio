@@ -263,6 +263,23 @@ closed without a bump.
   step card's illustration. Highlighting dims the other parts and the copper and never
   the board — a step card says which holes a part goes in, and a reader who cannot see
   the holes has been handed the answer with the question rubbed out.
+- **Assembly playback in the 3D panel** (PLAN.md D7, closing milestone M4): a slider and
+  a Play button under the view. Drag back and the parts and copper come off in reverse
+  build order; press Play and the board assembles itself a step at a time, with the step
+  being done picked out and named in the caption beside it.
+  - **There is no "animation mode".** The slider's maximum is the finished board, which
+    is where it sits, so an untouched panel behaves exactly as it did before. A mode
+    would mean a way to be stuck in one, and a second thing to remember to turn off
+    before the view means what it looks like it means.
+  - The slider counts **things fitted**, not steps done, so its two ends are the two
+    states anybody actually asks for: a bare board at 0 and a finished one at the top.
+    `assembly_step_for` is a plain function for that arithmetic, because the first
+    version returned -1 at both ends and drew a complete board at the position that means
+    nothing has been fitted yet.
+  - It returns to the end on every edit. A position part-way through a build that no
+    longer exists is not a position: adding a part renumbers everything after it, so
+    holding the index would quietly show a different moment than the one being looked at.
+  - The camera is left alone throughout, as everywhere else in this view.
 - **The build guide has pictures** (PLAN.md §7.2), one per step: the board as it stands
   at that point with the thing that step asks for picked out of it. Written by
   **File → Export Build Guide**, by headless mode, and by the MCP `generate_guide`.
