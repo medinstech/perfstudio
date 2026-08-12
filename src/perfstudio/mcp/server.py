@@ -12,7 +12,7 @@ module configures logging to stderr before anything else, and nothing anywhere u
 render tools pull in are the real risk, which is another reason they are imported lazily
 inside the tools rather than at module scope.
 
-THIRTY-ONE TOOLS, against PLAN.md Sec 2's "~25, deliberately narrow", and the overage is
+THIRTY-THREE TOOLS, against PLAN.md Sec 2's "~25, deliberately narrow", and the overage is
 stated rather than hidden. Each tool is a verb an agent cannot compose from the others,
 and the surface was trimmed rather than grown: the history listing folded into
 ``get_status``, and "solder bridge" is not a separate tool from ``add_solder_trace``
@@ -20,6 +20,14 @@ because a bridge is a two-pad trace and one concept should not have two names.
 ``get_board_info`` stayed separate from ``get_status`` for a reason worth knowing --
 status runs DRC, LVS and the ratsnest, and an agent that only wants the pitch should not
 pay for that.
+
+The most recent two were argued the same way. ``check_heights`` is named in PLAN.md
+Sec 9.2 and answers a question no other tool can: how tall the build stands, which is
+what decides the enclosure, and which is invisible in both render tools because a part
+too tall looks exactly like one that is not. ``set_height_limit`` exists because without
+it that limit can only be typed into the GUI, leaving one DRC rule permanently silent
+for an agent -- and folding the limit into ``check_heights`` as an argument would make a
+read tool mutate the document, off the command bus and outside the undo stack.
 
 The two the plan singles out as critical are here and are worth every byte of their
 schema: ``render_2d_view``/``render_3d_view``, because an agent editing a board it
@@ -330,6 +338,22 @@ def run_lvs() -> dict[str, Any]:
     shorts and floating copper, named down to the pin. This is the machine answer to
     "is it actually right"."""
     return session.run_lvs()
+
+
+@mcp.tool()
+def check_heights() -> dict[str, Any]:
+    """How tall the finished board stands, part by part, tallest first — and which parts
+    are over the declared height limit, if one is set. The question a 2D view cannot
+    answer and the one that decides which enclosure the board fits."""
+    return session.check_heights()
+
+
+@mcp.tool()
+def set_height_limit(height_limit_mm: float | None = None) -> dict[str, Any]:
+    """Declare the clear height available above the component side, in mm — the inside
+    of the case the board has to fit. DRC then reports any part taller than this. Pass
+    nothing (or null) to remove the limit."""
+    return session.set_height_limit(height_limit_mm)
 
 
 # ---------------------------------------------------------------------------

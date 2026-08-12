@@ -282,6 +282,30 @@ BodyArchetype: TypeAlias = Literal[
     "generic-box",
 ]
 
+#: Archetypes that get hot enough to matter to a neighbour.
+#:
+#: Here rather than in the two modules that act on it, because "a TO-220 runs hot" is a
+#: fact about the part and not a policy either of them owns. `placer.py` prices it into
+#: the arrangement it searches for and `drc.py` reports it on the arrangement it is
+#: given, and the two disagreeing would mean the optimiser working to avoid something the
+#: checker never mentions -- or, worse, moving parts apart for a reason the user is never
+#: told.
+HEAT_SOURCE_ARCHETYPES: frozenset[BodyArchetype] = frozenset({"to220", "relay-box"})
+
+#: Archetypes whose life is measurably shortened by sitting next to one. An electrolytic
+#: loses electrolyte with temperature; the usual rule of thumb is halved life per 10 °C.
+HEAT_SENSITIVE_ARCHETYPES: frozenset[BodyArchetype] = frozenset({"radial-electrolytic"})
+
+#: Body-centre spacing below which a heat source starts costing its neighbour, in mm.
+HEAT_CLEARANCE_MM: Mm = 12.0
+
+
+def is_heat_pair(a: BodyArchetype, b: BodyArchetype) -> bool:
+    """Whether one of these two archetypes cooks the other. Symmetric, by construction."""
+    return (a in HEAT_SOURCE_ARCHETYPES and b in HEAT_SENSITIVE_ARCHETYPES) or (
+        b in HEAT_SOURCE_ARCHETYPES and a in HEAT_SENSITIVE_ARCHETYPES
+    )
+
 
 @dataclass(frozen=True, slots=True)
 class BodySpec:
@@ -492,6 +516,17 @@ class PerfDocument:
     #: replacement.
     mounting_holes: tuple[MountingHole, ...] = ()
     edge_connectors: tuple[EdgeConnector, ...] = ()
+    #: Clear height available above the component side, in mm — the inside of the case
+    #: the finished board has to fit, measured from the board surface to whatever is
+    #: over it. ``None`` means unconstrained, which is the honest default: most boards
+    #: are built before anyone has chosen a box.
+    #:
+    #: On the document rather than on ``board`` because it is not a property of the
+    #: stock you bought — the same 5 x 7 board goes in a slim case one week and a deep
+    #: one the next. It is the one constraint in this file that only the third dimension
+    #: can check: a part that is too tall looks exactly like a part that is not, from
+    #: directly above.
+    height_limit_mm: Mm | None = None
     format_version: int = DOCUMENT_FORMAT_VERSION
 
 

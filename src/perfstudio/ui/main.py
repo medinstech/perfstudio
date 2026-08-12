@@ -85,6 +85,7 @@ from perfstudio.commands import (
     PlaceComponentPayload,
     RotateComponentPayload,
     SetBoardPayload,
+    SetHeightLimitPayload,
     UpdateComponentPayload,
     create_document_id_generator,
     create_empty_document,
@@ -561,6 +562,27 @@ class BoardFeaturesDialog(QDialog):
         add_connector = QPushButton(t("Add Edge Connector"))
         add_connector.clicked.connect(self._on_add_connector)
 
+        # 0 means "no limit", which is why the range starts there rather than at a
+        # buildable height: with no case chosen there is no height to be too tall for,
+        # and a spin box cannot be empty. The suffix says so, so it does not read as a
+        # limit of zero.
+        self.height_limit = QDoubleSpinBox()
+        self.height_limit.setRange(0.0, 200.0)
+        self.height_limit.setSingleStep(1.0)
+        self.height_limit.setDecimals(1)
+        self.height_limit.setSpecialValueText(t("No limit"))
+        self.height_limit.setSuffix(" mm")
+        self.height_limit.setToolTip(
+            t("Clear height inside the case, above the board. Taller parts are reported by DRC.")
+        )
+
+        apply_height = QPushButton(t("Set Height Limit"))
+        apply_height.clicked.connect(self._on_set_height_limit)
+
+        height = QFormLayout()
+        height.addRow(t("Height limit"), self.height_limit)
+        height.addRow("", apply_height)
+
         mounting = QFormLayout()
         mounting.addRow(t("Hole diameter"), self.mount_diameter)
         mounting.addRow(t("Inset (holes)"), self.mount_inset)
@@ -584,6 +606,7 @@ class BoardFeaturesDialog(QDialog):
         layout.addWidget(self.act_remove)
         layout.addLayout(mounting)
         layout.addLayout(connector)
+        layout.addLayout(height)
         layout.addWidget(self.note)
         layout.addWidget(buttons)
         self._reload()
@@ -618,6 +641,9 @@ class BoardFeaturesDialog(QDialog):
         for column in range(3):
             self.tree.resizeColumnToContents(column)
         self.act_remove.setEnabled(self.tree.topLevelItemCount() > 0)
+        # Read back rather than left as typed, so the box shows what the document says
+        # after an undo -- the dialog stays open while the board changes underneath it.
+        self.height_limit.setValue(doc.height_limit_mm if doc.height_limit_mm else 0.0)
 
     def _say(self, result: DispatchResult) -> None:
         """Report a refusal in place. The bus refuses for reasons a user can act on --
@@ -693,6 +719,15 @@ class BoardFeaturesDialog(QDialog):
                     start=self.finger_start.value(),
                     count=self.finger_count.value(),
                 ),
+            )
+        )
+
+    def _on_set_height_limit(self) -> None:
+        value = self.height_limit.value()
+        self._say(
+            self.bus.dispatch(
+                "height-limit.set",
+                SetHeightLimitPayload(height_limit_mm=None if value <= 0 else value),
             )
         )
 

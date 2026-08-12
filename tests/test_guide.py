@@ -46,6 +46,7 @@ from perfstudio.guide import (
     PHASE_BY_CONDUCTOR,
     PHASE_TITLES,
     ConductorStep,
+    Guide,
     GuideOptions,
     PartStep,
     all_checkpoints,
@@ -692,3 +693,101 @@ def test_default_options_are_the_documented_ones() -> None:
     assert DEFAULT_GUIDE_OPTIONS.strip_length_mm == 5.0
     assert DEFAULT_GUIDE_OPTIONS.bend_allowance_mm == 3.0
     assert DEFAULT_GUIDE_OPTIONS.resistance_check_min_pads == 5
+
+
+# ---------------------------------------------------------------------------
+# What the two rules only 3D can see change about the BUILD
+# ---------------------------------------------------------------------------
+
+
+def test_a_jumper_trapped_under_a_part_is_soldered_before_that_part() -> None:
+    """A top jumper is normally phase 7, soldered to pins already fitted. One running
+    under a part cannot be: by phase 7 the part is on the board. Left alone, the guide
+    would hand somebody an order they physically cannot follow."""
+    doc = make_doc(
+        components=(component("U1", "dip-8", hole(10, 10)),),
+        conductors=(
+            WireConductor(id="j1", path=(hole(5, 11), hole(20, 11)), kind="top-jumper", side="top"),
+        ),
+    )
+
+    guide = build_guide(doc, REGISTRY)
+    phase_of = {
+        step.conductor_id: phase.number
+        for phase in guide.phases
+        for step in phase.steps
+        if isinstance(step, ConductorStep)
+    }
+
+    assert phase_of["j1"] == 1
+
+
+def test_an_ordinary_jumper_stays_where_soldering_to_a_fitted_pin_is_easier() -> None:
+    doc = make_doc(
+        components=(component("U1", "dip-8", hole(10, 10)),),
+        conductors=(
+            WireConductor(id="j1", path=(hole(2, 2), hole(2, 20)), kind="top-jumper", side="top"),
+        ),
+    )
+
+    guide = build_guide(doc, REGISTRY)
+    phase_of = {
+        step.conductor_id: phase.number
+        for phase in guide.phases
+        for step in phase.steps
+        if isinstance(step, ConductorStep)
+    }
+
+    assert phase_of["j1"] == 7
+
+
+def test_the_part_over_a_trapped_jumper_is_told_to_check_it_is_down() -> None:
+    doc = make_doc(
+        components=(component("U1", "dip-8", hole(10, 10)),),
+        conductors=(
+            WireConductor(id="j1", path=(hole(5, 11), hole(20, 11)), kind="top-jumper", side="top"),
+        ),
+    )
+
+    guide = build_guide(doc, REGISTRY)
+    step = _part_step_for(guide, "U1")
+
+    assert any("j1" in note for note in step.notes)
+
+
+def test_an_electrolytic_next_to_a_to220_is_told_which_capacitor_to_reach_for() -> None:
+    """The note goes on the part it is advice about, and it is advice that can still be
+    acted on with the board laid out: fit the higher-rated part."""
+    doc = make_doc(
+        components=(
+            component("Q1", "to220", hole(10, 10)),
+            component("C1", "c-elec-d5-p2", hole(12, 10)),
+        )
+    )
+
+    guide = build_guide(doc, REGISTRY)
+
+    assert any("105" in note for note in _part_step_for(guide, "C1").notes)
+    assert not any("105" in note for note in _part_step_for(guide, "Q1").notes)
+
+
+def test_a_declared_height_limit_replaces_the_guides_own_guess() -> None:
+    """Without a limit the guide guesses at 10 mm and says "check it clears anything".
+    With one it stops guessing and says what will not fit."""
+    components = (component("C1", "c-elec-d6.3-p2", hole(4, 4)),)
+
+    guessed = _part_step_for(build_guide(make_doc(components=components), REGISTRY), "C1")
+    assert any("check it clears" in note for note in guessed.notes)
+
+    doc = dataclasses.replace(make_doc(components=components), height_limit_mm=8.0)
+    told = _part_step_for(build_guide(doc, REGISTRY), "C1")
+    assert any("will not fit" in note for note in told.notes)
+    assert not any("check it clears" in note for note in told.notes)
+
+
+def _part_step_for(guide: Guide, ref: str) -> PartStep:
+    for phase in guide.phases:
+        for step in phase.steps:
+            if isinstance(step, PartStep) and step.ref == ref:
+                return step
+    raise AssertionError(f"no part step for {ref}")

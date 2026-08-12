@@ -42,6 +42,7 @@ from perfstudio.commands import (
     NewWireConductor,
     PlaceComponentPayload,
     RotateComponentPayload,
+    SetHeightLimitPayload,
     UpdateComponentPayload,
     create_document_id_generator,
     create_empty_document,
@@ -285,7 +286,48 @@ class BoardSession:
                 }
                 for connector in self.document.edge_connectors
             ]
+        if self.document.height_limit_mm is not None:
+            info["height_limit_mm"] = self.document.height_limit_mm
         return info
+
+    def check_heights(self) -> dict[str, Any]:
+        """How tall the build stands, and what does not fit under the declared limit.
+
+        Separate from ``run_drc`` because it answers a question rather than reporting a
+        fault: an agent choosing an enclosure needs the tallest part whether or not any
+        limit has been set, and with no limit set the height rule is silent by design.
+        """
+        parts: list[dict[str, Any]] = []
+        unknown: list[str] = []
+        for component in self.document.components:
+            footprint = self.lookup(component.footprint_id)
+            if footprint is None:
+                unknown.append(component.ref)
+                continue
+            parts.append(
+                {
+                    "ref": component.ref,
+                    "at": format_hole(component.anchor),
+                    "height_mm": footprint.body_height,
+                    "archetype": footprint.body.archetype,
+                }
+            )
+        # Tallest first: the answer to "what decides the case height" is the first row.
+        parts.sort(key=lambda p: (-float(p["height_mm"]), str(p["ref"])))
+
+        limit = self.document.height_limit_mm
+        over = [p["ref"] for p in parts if limit is not None and float(p["height_mm"]) > limit]
+        return {
+            "height_limit_mm": limit,
+            "tallest_mm": parts[0]["height_mm"] if parts else 0,
+            "tallest_ref": parts[0]["ref"] if parts else None,
+            "over_limit": over,
+            "parts": parts,
+            # Named rather than silently omitted: a part whose footprint is unknown has
+            # no height, and an agent must not read "nothing is too tall" as "everything
+            # was measured".
+            "unknown_footprints": sorted(unknown),
+        }
 
     def list_components(self) -> list[dict[str, Any]]:
         return [self._component_summary(c) for c in self.document.components]
@@ -462,6 +504,11 @@ class BoardSession:
         return result
 
     # -- editing -----------------------------------------------------------
+
+    def set_height_limit(self, height_limit_mm: float | None) -> dict[str, Any]:
+        return self._dispatch(
+            "height-limit.set", SetHeightLimitPayload(height_limit_mm=height_limit_mm)
+        )
 
     def place_component(
         self,

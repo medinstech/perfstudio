@@ -139,6 +139,32 @@ physical board. `geometry.STANDARD_PRESETS` carries the sizes suppliers stock, k
 the advertised centimetres; `board_from_preset` *solves* the border from the size and the
 hole count rather than quoting it.
 
+### Three rules only the third dimension can see
+
+`component-too-tall`, `jumper-under-body` and `heat-proximity` are why the 3D view is a
+checking tool and not a picture (PLAN.md §8.4). Each of them has a second consumer that
+must not be allowed to disagree with it:
+
+- **`heat-proximity` and the placer** read one set of facts —
+  `model.HEAT_SOURCE_ARCHETYPES` / `HEAT_SENSITIVE_ARCHETYPES` / `HEAT_CLEARANCE_MM` —
+  and both measure between **body-box centres**, never anchors. An anchor is pin 1,
+  which on a TO-220 is one end of the tab: rotating the part moves the body and not the
+  anchor. Two numbers here would mean the optimiser separating parts to a standard DRC
+  declines to confirm. `EDGE_SEEKING_ARCHETYPES` stays in `placer.py` on purpose — it is
+  a placement preference, not a fact any rule checks.
+- **`jumper-under-body` and the router** both ask `occupancy.body_covers`. The router
+  refuses to lay such a jumper at all, so DRC deliberately checks *less*: only holes
+  strictly between the jumper's ends, because a body's bounding box covers its own pin
+  holes and counting the ends would flag every jumper that lands on a part. DRC must
+  never object to copper the router was willing to lay.
+- **`jumper-under-body` and the build guide.** A flagged jumper moves from phase 7 to
+  phase 1, because by phase 7 the part standing over it is already soldered down. The
+  phase and the part-step note both come from `guide.trapped_jumper_ids`, so the order
+  and the note cannot drift.
+
+`doc.height_limit_mm` is `None` until someone says otherwise, and `component-too-tall` is
+silent until then — with no case chosen there is nothing to be too tall for.
+
 ### A pad is not always round, and the board may say where it is
 
 `board.pad_shape` can be `oblong`, which gives a pad **two different neighbour gaps** —

@@ -442,7 +442,7 @@ def build_guide(
     nets_by_id: dict[str, Net] = {net.id: net for net in doc.nets}
     color_by_net = _assign_colors(doc)
 
-    part_steps = _part_steps(doc, lookup)
+    part_steps = _part_steps(doc, lookup, violations)
     conductor_steps, cut_list, spine_list = _conductor_steps(
         doc, nets_by_id, color_by_net, violations, options
     )
@@ -546,7 +546,7 @@ def _phase_summary(number: PhaseNumber, doc: PerfDocument) -> str:
 
 
 def _part_steps(
-    doc: PerfDocument, lookup: FootprintLookup
+    doc: PerfDocument, lookup: FootprintLookup, violations: list[DrcViolation]
 ) -> list[tuple[PartStep, PhaseNumber]]:
     """One step per placed component, in build order.
 
@@ -554,12 +554,19 @@ def _part_steps(
     matters physically, and the reference is what makes the order stable rather than
     dependent on document order.
     """
+    extra_notes = _part_notes_from_drc(doc, violations)
     entries: list[tuple[PhaseNumber, Mm, str, PartStep]] = []
     for component in doc.components:
         footprint = lookup(component.footprint_id)
         if footprint is None:
             continue  # Reported as a warning; nothing can be said about where it goes.
-        step = _part_step(component, footprint, doc.board)
+        step = _part_step(
+            component,
+            footprint,
+            doc.board,
+            doc.height_limit_mm,
+            extra_notes.get(component.id, ()),
+        )
         phase = PHASE_BY_ARCHETYPE.get(footprint.body.archetype, 5)
         entries.append((phase, footprint.body_height, component.ref, step))
 
@@ -567,7 +574,46 @@ def _part_steps(
     return [(step, phase) for phase, _height, _ref, step in entries]
 
 
-def _part_step(component: ComponentInstance, footprint: Footprint, board: Board) -> PartStep:
+def _part_notes_from_drc(
+    doc: PerfDocument, violations: list[DrcViolation]
+) -> dict[str, tuple[str, ...]]:
+    """The DRC findings that change how a part is FITTED, moved onto that part's step.
+
+    Only the two that are instructions rather than complaints. Everything else DRC says
+    is about the design and belongs in the warning list, not in the middle of a step
+    somebody is following with an iron in their hand.
+    """
+    ref_by_id = {component.id: component.ref for component in doc.components}
+    notes: dict[str, list[str]] = {}
+
+    for violation in violations:
+        if violation.rule == "jumper-under-body" and violation.component_ids:
+            jumpers = ", ".join(violation.conductor_ids)
+            notes.setdefault(violation.component_ids[0], []).append(
+                f"Jumper {jumpers} runs underneath this part, so it has to be soldered "
+                f"first — it is in phase 1 for that reason. Check it is down and lying "
+                f"flat before this goes in."
+            )
+        elif violation.rule == "heat-proximity" and len(violation.component_ids) == 2:
+            source_ref = ref_by_id.get(violation.component_ids[0], "the part next to it")
+            # On the part that suffers, not the one that gets hot: this is advice about
+            # which capacitor to reach for, and it is only useful while fitting that one.
+            notes.setdefault(violation.component_ids[1], []).append(
+                f"{source_ref} runs hot and sits close by. Fit a 105 °C-rated part here "
+                f"if you have one — an 85 °C electrolytic beside a heatsink is the first "
+                f"thing on the board to dry out."
+            )
+
+    return {component_id: tuple(lines) for component_id, lines in notes.items()}
+
+
+def _part_step(
+    component: ComponentInstance,
+    footprint: Footprint,
+    board: Board,
+    height_limit_mm: Mm | None = None,
+    extra_notes: tuple[str, ...] = (),
+) -> PartStep:
     holes = all_pin_holes(component, footprint)
     pin_holes = tuple((pin.number, at) for pin, at in holes)
 
@@ -582,11 +628,20 @@ def _part_step(component: ComponentInstance, footprint: Footprint, board: Board)
             "This part is mirrored: it goes in from the SOLDER side, not the component "
             "side. Check the pin order against the board before soldering."
         )
-    if footprint.body_height >= 10:
+    if height_limit_mm is not None and footprint.body_height > height_limit_mm:
+        notes.append(
+            f"{footprint.body_height:g} mm tall, and this build has {height_limit_mm:g} mm "
+            f"of room. It will not fit as it stands — lay it down or swap it before you "
+            f"solder it in."
+        )
+    elif footprint.body_height >= 10:
+        # The guess, kept only for a board that has not said what it has to fit inside.
+        # Once there is a real number the real number wins.
         notes.append(
             f"{footprint.body_height:.0f} mm tall — check it clears anything meant to go "
             "over the board before you solder it down."
         )
+    notes.extend(extra_notes)
 
     return PartStep(
         kind="part",
@@ -713,6 +768,7 @@ def _conductor_steps(
     against, so they want to exist and be verified first.
     """
     risks_by_conductor = _risks_by_conductor(violations)
+    trapped = trapped_jumper_ids(violations)
     class_order: dict[NetClass, int] = {"ground": 0, "power": 1, "signal": 2}
 
     entries: list[tuple[PhaseNumber, int, str, str, ConductorStep]] = []
@@ -741,6 +797,13 @@ def _conductor_steps(
             spine_list.append(step.spine)
 
         phase = PHASE_BY_CONDUCTOR.get(conductor.kind, 6)
+        if conductor.id in trapped:
+            # A top jumper normally goes in at phase 7, soldered to pins that are already
+            # fitted. One that runs UNDER a part cannot: by phase 7 the part is on the
+            # board and the wire has nowhere to go. So the ones DRC flagged move to phase
+            # 1, which is where PLAN.md Sec 7.1 puts top-side jumpers in the first place,
+            # and the rest stay where soldering to a fitted pin is easier.
+            phase = 1
         entries.append((phase, class_order[net_class], net_name, conductor.id, step))
 
     entries.sort(key=lambda entry: (entry[0], entry[1], entry[2], entry[3]))
@@ -902,6 +965,22 @@ def _assign_colors(doc: PerfDocument) -> dict[str, str]:
             colors[net.id] = SIGNAL_COLORS[signal_index % len(SIGNAL_COLORS)]
             signal_index += 1
     return colors
+
+
+def trapped_jumper_ids(violations: list[DrcViolation]) -> frozenset[ConductorId]:
+    """Top jumpers DRC found running under a part, read off the rule rather than
+    recomputed.
+
+    Public because both the phase order and the part-step note need the same answer, and
+    a guide that worked it out its own way would eventually schedule a jumper for after
+    the part it has to go under while printing a note saying it must come first.
+    """
+    return frozenset(
+        conductor_id
+        for violation in violations
+        if violation.rule == "jumper-under-body"
+        for conductor_id in violation.conductor_ids
+    )
 
 
 def _risks_by_conductor(violations: list[DrcViolation]) -> dict[ConductorId, tuple[RiskNote, ...]]:

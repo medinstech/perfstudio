@@ -31,9 +31,11 @@ are readable as exchange rates against wire length (see :class:`PlacementWeights
                 come back in.
   EDGE          connectors, headers, pots and switches want a board edge: something
                 plugs into them, or a finger reaches them.
-  HEAT          a TO-220 or a relay next to an electrolytic. PLAN.md Sec 5.2 rule 9
-                names it as a DRC warning; DRC does not implement it yet, so for now
-                this is the only place in the codebase that knows about it.
+  HEAT          a TO-220 or a relay next to an electrolytic (PLAN.md Sec 5.2 rule 9).
+                Which parts those are, and how close is too close, come from model.py,
+                because drc.py reports the same pairs by the same measure -- an
+                optimiser that avoids a hazard its own checker never names is one the
+                user has no way to learn from.
 
 DETERMINISM IS NOT NEGOTIABLE (PLAN.md Sec 6.3). The RNG is seeded from the options and
 nothing else. Same document, same seed, same result -- byte for byte, run after run,
@@ -70,6 +72,9 @@ from .commands import (
 from .connectivity import FootprintLookup
 from .geometry import format_hole, transform_offset
 from .model import (
+    HEAT_CLEARANCE_MM,
+    HEAT_SENSITIVE_ARCHETYPES,
+    HEAT_SOURCE_ARCHETYPES,
     VALID_ROTATIONS,
     BodyArchetype,
     ComponentId,
@@ -89,15 +94,9 @@ EDGE_SEEKING_ARCHETYPES: frozenset[BodyArchetype] = frozenset(
     {"screw-terminal", "pin-header", "potentiometer", "tactile-switch"}
 )
 
-#: Parts that get hot enough to matter to a neighbour.
-HEAT_SOURCE_ARCHETYPES: frozenset[BodyArchetype] = frozenset({"to220", "relay-box"})
-
-#: Parts whose life is measurably shortened by sitting next to one. Electrolytics lose
-#: electrolyte with temperature; the rule of thumb is halved life per 10 degrees.
-HEAT_SENSITIVE_ARCHETYPES: frozenset[BodyArchetype] = frozenset({"radial-electrolytic"})
-
-#: Below this centre-to-centre distance a heat source starts costing its neighbour.
-HEAT_CLEARANCE_MM: float = 12.0
+# Which parts run hot, which parts mind, and how close is too close all live in
+# model.py: they are facts about the part, and drc.py acts on the same ones. Edge-seeking
+# stays here because it is the opposite -- a placement PREFERENCE that no rule checks.
 
 
 # ---------------------------------------------------------------------------
@@ -346,6 +345,17 @@ class _Box:
     max_x: float
     min_y: float
     max_y: float
+
+
+def _body_centre(box: _Box | None, anchor_x: float, anchor_y: float) -> tuple[float, float]:
+    """Centre of a part's body in board mm, given its anchor.
+
+    Falls back to the anchor for a footprint carrying no outline, which is the only
+    position such a part has.
+    """
+    if box is None:
+        return anchor_x, anchor_y
+    return anchor_x + (box.min_x + box.max_x) / 2, anchor_y + (box.min_y + box.max_y) / 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -637,15 +647,16 @@ class _Scorer:
         sides, so this module and DRC never disagree about whether two parts touch.
         """
         part_a, part_b = state.parts[a], state.parts[b]
-        touching = 0
-        overlap = 0.0
         box_a = part_a.rel_box[state.rot[a]]
         box_b = part_b.rel_box[state.rot[b]]
+        ax = state.col[a] * self.board_pitch
+        ay = state.row[a] * self.board_pitch
+        bx = state.col[b] * self.board_pitch
+        by = state.row[b] * self.board_pitch
+
+        touching = 0
+        overlap = 0.0
         if box_a is not None and box_b is not None:
-            ax = state.col[a] * self.board_pitch
-            ay = state.row[a] * self.board_pitch
-            bx = state.col[b] * self.board_pitch
-            by = state.row[b] * self.board_pitch
             dx = min(box_a.max_x + ax, box_b.max_x + bx) - max(box_a.min_x + ax, box_b.min_x + bx)
             dy = min(box_a.max_y + ay, box_b.max_y + by) - max(box_a.min_y + ay, box_b.min_y + by)
             if dx > 0 and dy > 0:
@@ -657,10 +668,15 @@ class _Scorer:
             part_b.heat_source and part_a.heat_sensitive
         )
         if hot:
-            dx_mm = (state.col[a] - state.col[b]) * self.board_pitch
-            dy_mm = (state.row[a] - state.row[b]) * self.board_pitch
-            distance = math.hypot(dx_mm, dy_mm)
-            heat = max(0.0, HEAT_CLEARANCE_MM - distance)
+            # Between the BODIES, not the anchors. An anchor is pin 1, which on a TO-220
+            # is at one end of a 10 mm tab and on a DIP is a corner -- measuring from it
+            # puts the heat source millimetres from where it physically is, in a
+            # direction that depends on the rotation. drc.py measures this same pair the
+            # same way, so a board the annealer scores as clear is one DRC agrees is
+            # clear.
+            acx, acy = _body_centre(box_a, ax, ay)
+            bcx, bcy = _body_centre(box_b, bx, by)
+            heat = max(0.0, HEAT_CLEARANCE_MM - math.hypot(acx - bcx, acy - bcy))
         return touching, overlap, heat
 
     # -- full and local evaluation -----------------------------------------

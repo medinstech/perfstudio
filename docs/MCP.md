@@ -72,16 +72,23 @@ conductor at a time.
 | **Reading** | `get_status` · `get_board_info` · `list_components` · `get_component` · `get_nets` · `get_net_connections` · `list_footprints` |
 | **Seeing** | `render_2d_view` · `render_3d_view` |
 | **Documents** | `new_document` · `open_document` · `save_document` · `import_netlist` |
-| **Editing** | `place_component` · `move_component` · `rotate_component` · `set_component_locked` · `delete_component` · `add_wire` · `add_solder_trace` · `remove_stale_conductors` |
+| **Editing** | `place_component` · `move_component` · `rotate_component` · `set_component_locked` · `delete_component` · `add_wire` · `add_solder_trace` · `remove_stale_conductors` · `set_height_limit` |
 | **Planning** | `autoroute` · `optimize_placement` |
-| **Verifying** | `run_drc` · `run_lvs` |
+| **Verifying** | `run_drc` · `run_lvs` · `check_heights` |
 | **Output** | `generate_guide` · `export_pdf` |
 | **State** | `snapshot` · `restore` · `undo` · `redo` |
 
-Thirty-one, against PLAN.md §2's "~25, deliberately narrow". Each is a verb that cannot
+Thirty-three, against PLAN.md §2's "~25, deliberately narrow". Each is a verb that cannot
 be composed from the others, and the surface was trimmed rather than grown: the history
 listing folded into `get_status`, and there is no separate "add solder bridge" because a
 bridge is a two-pad solder trace and one concept should not have two names.
+
+`check_heights` is the one from PLAN.md §9.2's list that neither render tool can stand
+in for: a part too tall for the case looks exactly like one that fits, from every angle
+a picture is taken from. It reports every part tallest-first whether or not a limit is
+set, because "what decides the enclosure height" is a question worth asking before there
+is an enclosure. `set_height_limit` is what makes DRC's `component-too-tall` reachable
+without the GUI; it goes through the command bus, so it undoes like everything else.
 
 The two that matter most are the ones PLAN.md §9.2 calls out. `render_2d_view` /
 `render_3d_view`, because an agent editing a board it cannot see is working blind — the

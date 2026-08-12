@@ -22,6 +22,51 @@ closed without a bump.
 
 ### Added
 
+- **The last two DRC rules, which are the two a top-down view cannot see.** PLAN.md
+  §5.2's table had eleven rows and nine of them were implemented; the missing pair
+  (rule 8, height and envelope, and rule 9, heat proximity) were both missing for the
+  same reason, which is that from directly above — every view a 2D editor can offer — a
+  20 mm TO-220 and a 2.3 mm resistor look identical. This is PLAN.md §8.4's first
+  functional justification for having a third dimension at all, and it is now a rule
+  rather than a picture.
+  - **`heat-proximity`**: a TO-220 or a relay sitting within 12 mm of an electrolytic,
+    which loses roughly half its rated life for every 10 °C it runs hotter. The
+    placement optimiser has priced this since it was written and DRC said nothing, so
+    auto-place moved parts apart for a reason the user was never told, and a board
+    placed by hand got no warning at all. Which parts run hot, which mind, and how close
+    is too close now live in `model.py` and both modules read them.
+  - **Measured between bodies, not anchors** — and the placer was changed to match. An
+    anchor is pin 1, which on a TO-220 is one end of a 10 mm tab and on a DIP is a
+    corner. Rotating a TO-220 180° swings its body to the other side of an anchor that
+    has not moved, and the old measure reported the same distance for two placements
+    that differ by a centimetre in the only way that matters. There is now one number
+    with two consumers, and a test that fails if they drift apart.
+  - **`component-too-tall`**, against a `heightLimitMm` the document now carries — the
+    clear height inside the case, set from **File → Board Features…**, from the
+    `height-limit.set` command, or from MCP. Silent until one is declared, which is the
+    honest default: with no case chosen there is nothing to be too tall for. The build
+    guide's own note stops guessing when the real number exists — it used to say "10 mm
+    or over, check it clears anything meant to go over the board", and now says what
+    will not fit.
+  - **`jumper-under-body`**, a top-side jumper that has to run beneath a part. The
+    router has always refused to lay one and asks `occupancy.body_covers` to decide;
+    DRC did not know the rule existed, so **moving a part on top of an existing jumper
+    was completely silent** — the copper was legal when it was laid and nothing looked
+    at it again. A warning rather than an error, because it is buildable: a wire
+    threaded under a DIP socket is ordinary practice. What it is not is buildable in any
+    order, which turned out to matter — see below.
+  - Only holes strictly *between* a jumper's ends count. For a DIP, an electrolytic or a
+    TO-92 the body's bounding box covers its own pin holes, so counting the ends would
+    flag every jumper that lands on a part. That makes the rule a strict subset of the
+    router's guard, which is the right direction: DRC never objects to copper the router
+    was willing to lay.
+- **`check_heights`** and **`set_height_limit`** on the MCP server, taking it to 33
+  tools. `check_heights` is named in PLAN.md §9.2 and answers what neither render tool
+  can: how tall the build stands, tallest part first, whether or not a limit is set —
+  because "what decides the enclosure height" is a question worth asking before there is
+  an enclosure. Parts whose footprint is unknown are named rather than skipped, so an
+  empty `over_limit` cannot be read as "everything was measured".
+
 - **The board can now be described as the ones people actually buy** — three features
   that a bare grid of round pads cannot express, added together because each of them
   changes what the other layers say.
@@ -200,7 +245,19 @@ closed without a bump.
   unchanged. The rule in this project is that the format version moves when an older file
   needs *migrating in order to load*, and none does. The cost is that a build predating
   these features will silently drop them from a file that does use them; the migration
-  seam in `persist.py` is where that would be addressed if it ever bites.
+  seam in `persist.py` is where that would be addressed if it ever bites. `heightLimitMm`
+  follows the same rule, and a hand-edited zero or negative loads with a warning and is
+  dropped rather than reporting every part on the board as too tall.
+- **`jumper-under-body` joins `conductor-crossing` in `PYTHON_ONLY_RULES`**, and for a
+  stronger reason: the TypeScript engine has no counterpart to disagree with, so no
+  fixture records anything for it and the expected files cannot be regenerated to include
+  it. It fires 15 times across 6 of the 15 fixtures — `dense` earns 6 on its own, because
+  `cond-12` is a 29-hole top jumper straight across row 18 of a board that already has
+  six overlapping bodies, and it runs over a header, a TO-92 and an LED on the way. A
+  test pins those counts, so the divergence stays an improvement rather than becoming a
+  hole in the proof. `heat-proximity` and `component-too-tall` fire nowhere in the
+  fixtures — none carries a TO-220, a relay or a height limit — so the golden DRC data is
+  untouched by them.
 - **The editor's ruler stands down when the board prints its own addresses.** Drawing
   both put the same twenty-four letters on screen twice, a few millimetres apart and in
   two different styles, which reads as a rendering fault rather than as two features. The
@@ -245,6 +302,15 @@ closed without a bump.
   are moulded into the top of a part and cannot be seen from below.
 
 ### Fixed
+
+- **The build guide scheduled top jumpers after the parts they run under**, which is an
+  order nobody can follow. Jumpers sit in phase 7 because they are usually soldered to
+  pins already fitted, and that is still right for almost all of them — but by phase 7 a
+  part standing over a jumper is on the board and the wire has nowhere to go. The ones
+  `jumper-under-body` flags now move to phase 1, where PLAN.md §7.1 puts top-side
+  jumpers in the first place, and the part standing over one gets a note saying to check
+  it is down and lying flat first. Both read the same rule result, so the order and the
+  note cannot disagree.
 
 - `bodies.polarity_pin_offset`'s docstring claimed pin 1 is "the cathode of a diode or
   LED", which the registry contradicts for the LED (its pin 1 is named `A`). The drawing

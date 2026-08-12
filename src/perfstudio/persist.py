@@ -193,6 +193,7 @@ DOCUMENT_KEY_ORDER: tuple[str, ...] = (
     "cuts",
     "mountingHoles",
     "edgeConnectors",
+    "heightLimitMm",
     "nets",
 )
 META_KEY_ORDER: tuple[str, ...] = ("name", "created", "modified")
@@ -490,6 +491,11 @@ def serialize_document(doc: PerfDocument) -> str:
                     ]
                 }
                 if edge_connectors
+                else {}
+            ),
+            **(
+                {"heightLimitMm": _num("heightLimitMm", doc.height_limit_mm)}
+                if doc.height_limit_mm is not None
                 else {}
             ),
         },
@@ -1168,6 +1174,21 @@ def _parse_document(raw_input: object) -> tuple[PerfDocument, list[str]]:
     nets_raw = _expect_array(_require_field(migrated, "nets", ""), "nets")
     nets = tuple(_parse_net(item, _index_path("nets", i), warnings) for i, item in enumerate(nets_raw))
 
+    height_limit_raw = migrated.get("heightLimitMm")
+    height_limit_mm = (
+        None if height_limit_raw is None else _expect_number(height_limit_raw, "heightLimitMm")
+    )
+    if height_limit_mm is not None and height_limit_mm <= 0:
+        # A warning rather than a refusal, following validate_orthogonal_chain's example:
+        # a hand-edited number nobody can build under should not lock the user out of the
+        # rest of their board. Dropped, so the height rule stays quiet instead of
+        # reporting every part on the board.
+        warnings.append(
+            f"heightLimitMm is {height_limit_mm}, which is not a height anything fits "
+            f"under. Ignored; the board is treated as having no height limit."
+        )
+        height_limit_mm = None
+
     document = PerfDocument(
         meta=meta,
         board=board,
@@ -1177,6 +1198,7 @@ def _parse_document(raw_input: object) -> tuple[PerfDocument, list[str]]:
         nets=nets,
         mounting_holes=mounting_holes,
         edge_connectors=edge_connectors,
+        height_limit_mm=height_limit_mm,
         format_version=CURRENT_FORMAT_VERSION,
     )
     return document, warnings

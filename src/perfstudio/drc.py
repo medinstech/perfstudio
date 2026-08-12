@@ -15,6 +15,11 @@ rules here fall into two groups:
    reliability, and a minimal "pin touches nothing" connectivity check (full LVS
    is lvs.py's job, not this module's).
 
+The last three rules are the ones a top-down view cannot see, and they are why the
+3D view is a checking tool rather than a picture (PLAN.md §8.4): a part too tall for
+its case, a jumper trapped under a body, and a part cooking its neighbour all look
+perfectly fine from directly above.
+
 Pure and deterministic: no I/O, no clock, no randomness. `run_drc` sorts its
 output so two calls on the same document always return the same list, in the
 same order -- see `_violation_sort_key`.
@@ -42,6 +47,7 @@ from .geometry import (
     format_hole,
     hole_key,
     hole_to_mm,
+    holes_under_line,
     is_inside_board,
     manhattan,
     mounting_head_covers,
@@ -54,6 +60,8 @@ from .geometry import (
     validate_orthogonal_chain,
 )
 from .model import (
+    HEAT_CLEARANCE_MM,
+    HEAT_SOURCE_ARCHETYPES,
     Board,
     BoardSide,
     ComponentId,
@@ -70,8 +78,10 @@ from .model import (
     SolderTraceConductor,
     contacts_every_path_hole,
     is_crossing_blocked,
+    is_heat_pair,
     is_solder_trace,
 )
+from .occupancy import build_occupancy
 
 # ---------------------------------------------------------------------------
 # Public types
@@ -168,6 +178,13 @@ class DrcOptions:
     #: neighbouring part under handling.
     max_lead_bend_holes: int
 
+    #: Body-centre spacing (mm) below which rule 13 reports a heat source sitting
+    #: next to a heat-sensitive part. Defaults to model.HEAT_CLEARANCE_MM, which
+    #: is the same number placer.py prices into the arrangement it searches for:
+    #: two numbers here would mean the optimiser separating parts to a standard
+    #: this file then declines to confirm, or clearing a warning it then reports.
+    heat_clearance_mm: float
+
 
 DEFAULT_DRC_OPTIONS: DrcOptions = DrcOptions(
     pad_lifting_max_solder_trace_pads=6,
@@ -178,6 +195,7 @@ DEFAULT_DRC_OPTIONS: DrcOptions = DrcOptions(
     max_current_density_a_per_mm2=5.0,
     creepage_voltage_threshold_v=300.0,
     max_lead_bend_holes=4,
+    heat_clearance_mm=HEAT_CLEARANCE_MM,
 )
 
 # ---------------------------------------------------------------------------
@@ -1107,6 +1125,201 @@ def _check_unconnected_pins(
 
 
 # ---------------------------------------------------------------------------
+# Rule 13 -- heat proximity (warning) -- PLAN.md §5.2 rule 9
+# ---------------------------------------------------------------------------
+
+
+def _check_heat_proximity(
+    doc: PerfDocument, lookup: FootprintLookup, options: DrcOptions
+) -> list[DrcViolation]:
+    """A part that runs hot sitting too close to one that minds.
+
+    Measured between BODY CENTRES, not anchors. An anchor is pin 1, which on a TO-220 is
+    at one end of a 10 mm tab and on a DIP is a corner: measuring from it reports a
+    distance that changes when the part is merely rotated. placer.py uses the same
+    measure and the same clearance, so a board it hands back as clear does not come
+    straight back here as a warning.
+    """
+    violations: list[DrcViolation] = []
+
+    boxes: list[tuple[ComponentInstance, Footprint, _Aabb]] = []
+    for component in doc.components:
+        footprint = lookup(component.footprint_id)
+        if footprint is None:
+            continue
+        box = _component_aabb(component, footprint, doc.board)
+        if box is not None:
+            boxes.append((component, footprint, box))
+
+    for (a_component, a_footprint, a_box), (b_component, b_footprint, b_box) in (
+        itertools.combinations(boxes, 2)
+    ):
+        a_archetype = a_footprint.body.archetype
+        b_archetype = b_footprint.body.archetype
+        if not is_heat_pair(a_archetype, b_archetype):
+            continue
+
+        # Name the hot part first regardless of document order, so the message reads the
+        # same way every time and the sort key does not depend on which was placed first.
+        if a_archetype in HEAT_SOURCE_ARCHETYPES:
+            source, source_box, source_archetype = a_component, a_box, a_archetype
+            victim, victim_box, victim_archetype = b_component, b_box, b_archetype
+        else:
+            source, source_box, source_archetype = b_component, b_box, b_archetype
+            victim, victim_box, victim_archetype = a_component, a_box, a_archetype
+
+        distance = math.hypot(
+            (source_box.min_x + source_box.max_x) / 2 - (victim_box.min_x + victim_box.max_x) / 2,
+            (source_box.min_y + source_box.max_y) / 2 - (victim_box.min_y + victim_box.max_y) / 2,
+        )
+        if distance >= options.heat_clearance_mm:
+            continue
+
+        violations.append(
+            DrcViolation(
+                rule="heat-proximity",
+                severity="warning",
+                message=(
+                    f"{victim.ref} ({victim_archetype}, at {_safe_hole(victim.anchor)}) sits "
+                    f"{distance:.1f} mm from {source.ref} ({source_archetype}, at "
+                    f"{_safe_hole(source.anchor)}), inside the "
+                    f"{options.heat_clearance_mm:g} mm heat clearance. An electrolytic loses "
+                    f"roughly half its rated life for every 10 °C it runs hotter — move it, "
+                    f"turn the tab away, or expect to replace it."
+                ),
+                holes=(source.anchor, victim.anchor),
+                component_ids=(source.id, victim.id),
+            )
+        )
+    return violations
+
+
+# ---------------------------------------------------------------------------
+# Rule 14 -- part taller than the build allows (warning) -- PLAN.md §5.2 rule 8
+# ---------------------------------------------------------------------------
+
+
+def _check_component_height(doc: PerfDocument, lookup: FootprintLookup) -> list[DrcViolation]:
+    """Parts standing taller than the clear height the document declares.
+
+    Silent until ``doc.height_limit_mm`` is set, which is the honest default: with no
+    case chosen there is no height to be too tall for, and inventing one would mean
+    warning about a board that is fine.
+
+    This is the rule PLAN.md §8.4 gives as 3D's first functional justification. From
+    directly above — which is every view a 2D editor can offer — a 20 mm TO-220 and a
+    2.3 mm resistor look identical, and the part that does not fit the box is found when
+    the lid does not close.
+    """
+    limit = doc.height_limit_mm
+    if limit is None:
+        return []
+
+    violations: list[DrcViolation] = []
+    for component in doc.components:
+        footprint = lookup(component.footprint_id)
+        if footprint is None:
+            continue
+        if footprint.body_height <= limit:
+            continue
+
+        violations.append(
+            DrcViolation(
+                rule="component-too-tall",
+                severity="warning",
+                message=(
+                    f"{component.ref} ({footprint.name}, at {_safe_hole(component.anchor)}) stands "
+                    f"{footprint.body_height:g} mm above the board, over the {limit:g} mm of clear "
+                    f"height this build declares. Lay it down, choose a lower-profile part, or "
+                    f"raise the limit if the case turned out to be deeper."
+                ),
+                holes=(component.anchor,),
+                component_ids=(component.id,),
+            )
+        )
+    return violations
+
+
+# ---------------------------------------------------------------------------
+# Rule 15 -- top jumper trapped under a body (warning) -- PLAN.md §5.2 rule 8
+# ---------------------------------------------------------------------------
+
+
+def _check_jumper_under_body(doc: PerfDocument, lookup: FootprintLookup) -> list[DrcViolation]:
+    """A component-side jumper that has to run underneath a part.
+
+    The router already refuses to lay one (see router.py's top-jumper branch, which asks
+    ``occupancy.body_covers`` exactly as this does), so a routed board never contains
+    one. Two things still produce them and neither said a word before this rule existed:
+    drawing a jumper by hand, and — the common one — MOVING A PART ON TOP OF AN EXISTING
+    JUMPER, where the copper was legal when it was laid and is not any more.
+
+    A warning rather than an error, because it IS buildable: a wire threaded under a DIP
+    socket is ordinary perfboard practice. What it is not is buildable in any order —
+    the jumper has to go down before the part does, which is what the guide's phase 1
+    already assumes. So this reports a constraint on the build, not a defect in it.
+
+    Only holes STRICTLY BETWEEN the jumper's ends count. A jumper terminating on a pin is
+    soldered into that hole, and for most footprints — a DIP, an electrolytic, a TO-92 —
+    the body's bounding box covers its own pin holes, so counting the ends would flag
+    every jumper that lands on a part. That makes this rule a strict subset of the
+    router's guard, which is the right direction: DRC never objects to copper the router
+    was willing to lay.
+    """
+    jumpers = [c for c in doc.conductors if c.kind == "top-jumper" and len(c.path) >= 2]
+    if not jumpers:
+        return []
+
+    occupancy = build_occupancy(doc, lookup)
+    components_by_id: dict[ComponentId, ComponentInstance] = {c.id: c for c in doc.components}
+    heights: dict[ComponentId, float] = {}
+    for component in doc.components:
+        footprint = lookup(component.footprint_id)
+        if footprint is not None:
+            heights[component.id] = footprint.body_height
+
+    violations: list[DrcViolation] = []
+    for conductor in jumpers:
+        path = conductor.path
+        ends = {hole_key(path[0]), hole_key(path[-1])}
+
+        # First hole under each part, in path order: one violation per part crossed,
+        # not one per hole, so running the length of a DIP is a single message.
+        first_hole: dict[ComponentId, HoleCoord] = {}
+        for from_, to in itertools.pairwise(path):
+            for hole in holes_under_line(from_, to):
+                if hole_key(hole) in ends:
+                    continue
+                component_id = occupancy.body_covers(hole)
+                if component_id is not None and component_id not in first_hole:
+                    first_hole[component_id] = hole
+
+        for component_id, hole in first_hole.items():
+            crossed_part = components_by_id.get(component_id)
+            if crossed_part is None:
+                continue
+            height = heights.get(component_id)
+            height_note = f"{height:g} mm tall" if height is not None else "a part"
+            violations.append(
+                DrcViolation(
+                    rule="jumper-under-body",
+                    severity="warning",
+                    message=(
+                        f"Top jumper {conductor.id} ({_safe_hole(path[0])} to "
+                        f"{_safe_hole(path[-1])}) passes under {crossed_part.ref}, which is "
+                        f"{height_note} and covers {_safe_hole(hole)} [axis-aligned "
+                        f"bounding-box check]. Solder the jumper before fitting "
+                        f"{crossed_part.ref}, or the part has to come off to reach it."
+                    ),
+                    holes=(hole, crossed_part.anchor),
+                    component_ids=(crossed_part.id,),
+                    conductor_ids=(conductor.id,),
+                )
+            )
+    return violations
+
+
+# ---------------------------------------------------------------------------
 # Aggregation and deterministic ordering
 # ---------------------------------------------------------------------------
 
@@ -1164,6 +1377,9 @@ def run_drc(
         *_check_creepage(doc, options, node_index),
         *_check_lead_bend_length(doc, options),
         *_check_unconnected_pins(doc, lookup, physical_nets),
+        *_check_heat_proximity(doc, lookup, options),
+        *_check_component_height(doc, lookup),
+        *_check_jumper_under_body(doc, lookup),
     ]
 
     violations.sort(key=_violation_sort_key)

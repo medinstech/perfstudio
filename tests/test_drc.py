@@ -13,13 +13,14 @@ Two layers, mirroring test_connectivity.py's structure and priorities:
    not just "my own idea of correct".
 
 2. Hand-built unit tests translated from packages/core/src/drc.test.ts. These
-   matter more here than they did for connectivity: of the 12 rules, the 15
+   matter more here than they did for connectivity: of the 15 rules, the 15
    golden fixtures only ever exercise 7 (component-body-overlap,
    component-off-board, duplicate-pin-hole, pad-lifting-risk,
    pin-not-connected, solder-trace-proximity, solder-trace-too-long) --
    crossing-conductors, solder-trace-invalid-path, current-capacity,
-   creepage-clearance and lead-bend-too-long never fire in any of the 15
-   fixtures. The unit tests below are what actually exercises those five.
+   creepage-clearance, lead-bend-too-long, heat-proximity and
+   component-too-tall never fire in any of the 15 fixtures. The unit tests
+   below are what actually exercises those seven.
 
 The `_load_golden` helper is deliberately minimal, private test scaffolding,
 copied from test_connectivity.py's approach and extended to also parse `nets`
@@ -44,7 +45,9 @@ from perfstudio.drc import (
     run_drc,
 )
 from perfstudio.footprints import footprint_lookup
+from perfstudio.occupancy import build_occupancy
 from perfstudio.model import (
+    HEAT_CLEARANCE_MM,
     Board,
     BoardSide,
     ComponentInstance,
@@ -245,7 +248,7 @@ def _violation_to_jsonable(v: DrcViolation) -> dict[str, Any]:
 #: silently disagree. The divergence is deliberate, recorded, and pinned by
 #: test_the_python_only_crossing_rule_fires_where_typescript_was_blind below -- never merely
 #: filtered away.
-PYTHON_ONLY_RULES = frozenset({"conductor-crossing"})
+PYTHON_ONLY_RULES = frozenset({"conductor-crossing", "jumper-under-body"})
 
 
 @pytest.mark.parametrize("case_name", GOLDEN_CASE_NAMES)
@@ -283,11 +286,17 @@ def test_golden_case_count_is_fifteen() -> None:
     assert {p.stem for p in perf_files} == set(GOLDEN_CASE_NAMES)
 
 
-def test_golden_fixtures_exercise_seven_of_twelve_rules() -> None:
+def test_golden_fixtures_exercise_seven_of_fifteen_rules() -> None:
     """Documents which rules the golden data actually covers, so the gap is
-    visible rather than silently assumed. The other five (crossing-conductors,
+    visible rather than silently assumed. The other eight (crossing-conductors,
     solder-trace-invalid-path, current-capacity, creepage-clearance,
-    lead-bend-too-long) are covered by the unit tests below instead.
+    lead-bend-too-long, heat-proximity, component-too-tall, jumper-under-body)
+    are covered by the unit tests below instead.
+
+    The last three are the rules a top-down view cannot see, and the fixtures
+    cannot cover them by construction: none carries a TO-220 or a relay, none
+    declares a height limit, and jumper-under-body has no counterpart in the
+    TypeScript engine the expected files came from (see PYTHON_ONLY_RULES).
     """
     seen_rules: set[str] = set()
     for case_name in GOLDEN_CASE_NAMES:
@@ -396,12 +405,17 @@ def lead_bend(
     )
 
 
+def top_jumper(cond_id: str, path: tuple[HoleCoord, ...]) -> WireConductor:
+    return WireConductor(id=cond_id, path=path, kind="top-jumper", side="top")
+
+
 def make_doc(
     *,
     board_: Board = BOARD,
     components: tuple[ComponentInstance, ...] = (),
     conductors: tuple[Conductor, ...] = (),
     nets: tuple[Net, ...] = (),
+    height_limit_mm: float | None = None,
 ) -> PerfDocument:
     return PerfDocument(
         meta=DocumentMeta(
@@ -411,6 +425,7 @@ def make_doc(
         components=components,
         conductors=conductors,
         nets=nets,
+        height_limit_mm=height_limit_mm,
     )
 
 
@@ -737,11 +752,201 @@ def test_default_drc_options_is_a_stable_fully_populated_defaults_object() -> No
     assert DEFAULT_DRC_OPTIONS.solder_trace_feasibility_max_pads == 6
     assert DEFAULT_DRC_OPTIONS.creepage_voltage_threshold_v == 300
     assert DEFAULT_DRC_OPTIONS.max_lead_bend_holes == 4
+    assert DEFAULT_DRC_OPTIONS.heat_clearance_mm == 12
     assert isinstance(DEFAULT_DRC_OPTIONS, DrcOptions)
 
 
+def test_the_heat_clearance_is_the_number_the_placer_optimises_against() -> None:
+    """One number, two consumers. The placer moves parts apart to this standard and this
+    file confirms the result against it; two constants would let them drift, and the
+    symptom would be an auto-placed board that comes back with a warning the optimiser
+    believed it had cleared."""
+    assert DEFAULT_DRC_OPTIONS.heat_clearance_mm == HEAT_CLEARANCE_MM
+
+
 # ---------------------------------------------------------------------------
-# The one place the port deliberately reports more than the original
+# Rules 13-15: the three a top-down view cannot see. No golden fixture carries a
+# TO-220, a relay or a height limit, so these are the only coverage they have.
+# ---------------------------------------------------------------------------
+
+
+def test_heat_proximity_flags_an_electrolytic_beside_a_to220() -> None:
+    doc = make_doc(
+        components=(
+            make_component("cmp-1", "Q1", "to220", hole(10, 10)),
+            make_component("cmp-2", "C1", "c-elec-d5-p2", hole(12, 10)),
+        )
+    )
+
+    found = by_rule(run_drc(doc, _FOOTPRINT_LOOKUP), "heat-proximity")
+
+    assert len(found) == 1
+    assert found[0].severity == "warning"
+    assert "C1" in found[0].message and "Q1" in found[0].message
+    # The hot part is named first regardless of document order, so the message and the
+    # sort key do not depend on which was placed first.
+    assert found[0].component_ids == ("cmp-1", "cmp-2")
+
+
+def test_heat_proximity_does_not_flag_an_electrolytic_a_board_away() -> None:
+    doc = make_doc(
+        components=(
+            make_component("cmp-1", "Q1", "to220", hole(2, 2)),
+            make_component("cmp-2", "C1", "c-elec-d5-p2", hole(30, 30)),
+        )
+    )
+
+    assert by_rule(run_drc(doc, _FOOTPRINT_LOOKUP), "heat-proximity") == []
+
+
+def test_heat_proximity_ignores_two_parts_that_do_not_form_a_pair() -> None:
+    """Two resistors touching are a courtyard problem, not a thermal one; two TO-220s
+    side by side are a heatsink question this rule has no opinion about."""
+    doc = make_doc(
+        components=(
+            make_component("cmp-1", "Q1", "to220", hole(10, 10)),
+            make_component("cmp-2", "Q2", "to220", hole(13, 10)),
+            make_component("cmp-3", "R1", "r-axial-4", hole(10, 20)),
+            make_component("cmp-4", "R2", "r-axial-4", hole(10, 21)),
+        )
+    )
+
+    assert by_rule(run_drc(doc, _FOOTPRINT_LOOKUP), "heat-proximity") == []
+
+
+def test_heat_proximity_is_measured_between_bodies_not_anchors() -> None:
+    """A TO-220's anchor is one of three pins along a 10 mm tab. Rotating it 180 degrees
+    swings the body to the other side of the anchor without moving the anchor at all, so
+    a rule measuring anchors would report the same distance for two placements that are
+    centimetres apart in the only way that matters."""
+    near = make_doc(
+        components=(
+            make_component("cmp-1", "Q1", "to220", hole(10, 10), rotation=0),
+            make_component("cmp-2", "C1", "c-elec-d5-p2", hole(14, 10)),
+        )
+    )
+    far = make_doc(
+        components=(
+            make_component("cmp-1", "Q1", "to220", hole(10, 10), rotation=180),
+            make_component("cmp-2", "C1", "c-elec-d5-p2", hole(14, 10)),
+        )
+    )
+
+    assert len(by_rule(run_drc(near, _FOOTPRINT_LOOKUP), "heat-proximity")) == 1
+    assert by_rule(run_drc(far, _FOOTPRINT_LOOKUP), "heat-proximity") == []
+
+
+def test_component_too_tall_is_silent_until_a_limit_is_declared() -> None:
+    components = (make_component("cmp-1", "Q1", "to220", hole(10, 10)),)
+
+    unlimited = run_drc(make_doc(components=components), _FOOTPRINT_LOOKUP)
+    assert by_rule(unlimited, "component-too-tall") == []
+
+    limited = make_doc(components=components, height_limit_mm=15.0)
+    found = by_rule(run_drc(limited, _FOOTPRINT_LOOKUP), "component-too-tall")
+
+    assert len(found) == 1
+    assert found[0].severity == "warning"
+    assert "20 mm" in found[0].message and "15 mm" in found[0].message
+
+
+def test_component_too_tall_lets_a_part_exactly_at_the_limit_through() -> None:
+    """A 20 mm part under a 20 mm lid fits, just. Strictly greater, so the boundary is
+    not a warning -- otherwise a limit measured off the part it was chosen for reports
+    that part."""
+    doc = make_doc(
+        components=(make_component("cmp-1", "Q1", "to220", hole(10, 10)),),
+        height_limit_mm=20.0,
+    )
+
+    assert by_rule(run_drc(doc, _FOOTPRINT_LOOKUP), "component-too-tall") == []
+
+
+def test_component_too_tall_names_every_offender_and_leaves_the_rest_alone() -> None:
+    doc = make_doc(
+        components=(
+            make_component("cmp-1", "Q1", "to220", hole(4, 4)),
+            make_component("cmp-2", "K1", "relay-spdt", hole(20, 4)),
+            make_component("cmp-3", "R1", "r-axial-4", hole(4, 20)),
+            make_component("cmp-4", "U1", "dip-8", hole(20, 20)),
+        ),
+        height_limit_mm=10.0,
+    )
+
+    found = by_rule(run_drc(doc, _FOOTPRINT_LOOKUP), "component-too-tall")
+
+    assert sorted(v.component_ids[0] for v in found) == ["cmp-1", "cmp-2"]
+
+
+def test_jumper_under_body_flags_a_jumper_crossing_a_part() -> None:
+    """The case that motivates the rule: the copper was legal when it was laid, and a
+    part has since been moved on top of it."""
+    doc = make_doc(
+        components=(make_component("cmp-1", "U1", "dip-8", hole(10, 10)),),
+        conductors=(top_jumper("j1", (hole(5, 11), hole(20, 11))),),
+    )
+
+    found = by_rule(run_drc(doc, _FOOTPRINT_LOOKUP), "jumper-under-body")
+
+    assert len(found) == 1
+    assert found[0].severity == "warning"
+    assert found[0].conductor_ids == ("j1",)
+    assert found[0].component_ids == ("cmp-1",)
+    assert "U1" in found[0].message
+
+
+def test_jumper_under_body_reports_once_per_part_not_once_per_hole() -> None:
+    """A jumper down the length of a DIP covers several of its holes. That is one thing
+    to fix, so it is one message."""
+    doc = make_doc(
+        components=(make_component("cmp-1", "U1", "dip-8", hole(10, 10)),),
+        conductors=(top_jumper("j1", (hole(5, 11), hole(20, 11))),),
+    )
+
+    found = by_rule(run_drc(doc, _FOOTPRINT_LOOKUP), "jumper-under-body")
+
+    assert len(found) == 1
+
+
+def test_jumper_under_body_does_not_flag_a_jumper_that_merely_lands_on_a_pin() -> None:
+    """A DIP's bounding box covers its own pin holes, so counting the jumper's ends would
+    flag every jumper that connects to a part -- which is most of them."""
+    doc = make_doc(
+        components=(make_component("cmp-1", "U1", "dip-8", hole(10, 10)),),
+        conductors=(top_jumper("j1", (hole(10, 10), hole(4, 4))),),
+    )
+
+    assert by_rule(run_drc(doc, _FOOTPRINT_LOOKUP), "jumper-under-body") == []
+
+
+def test_jumper_under_body_ignores_conductors_on_the_solder_side() -> None:
+    """A bare wire runs on the other face. Whatever stands on the component side is not
+    in its way, and DRC saying so would be reporting a board that is fine."""
+    doc = make_doc(
+        components=(make_component("cmp-1", "U1", "dip-8", hole(10, 10)),),
+        conductors=(bare_wire("w1", (hole(5, 11), hole(20, 11))),),
+    )
+
+    assert by_rule(run_drc(doc, _FOOTPRINT_LOOKUP), "jumper-under-body") == []
+
+
+def test_jumper_under_body_agrees_with_the_router_that_refuses_to_lay_one() -> None:
+    """The rule and router.py's top-jumper guard ask occupancy the same question, so a
+    board the router produced never comes back with this warning. Checked here by asking
+    occupancy directly for the same hole the rule reported."""
+    doc = make_doc(
+        components=(make_component("cmp-1", "U1", "dip-8", hole(10, 10)),),
+        conductors=(top_jumper("j1", (hole(5, 11), hole(20, 11))),),
+    )
+
+    found = by_rule(run_drc(doc, _FOOTPRINT_LOOKUP), "jumper-under-body")
+    occupancy = build_occupancy(doc, _FOOTPRINT_LOOKUP)
+
+    assert occupancy.body_covers(found[0].holes[0]) == "cmp-1"
+
+
+# ---------------------------------------------------------------------------
+# The two places the port deliberately reports more than the original
 # ---------------------------------------------------------------------------
 
 
@@ -764,6 +969,35 @@ def test_the_python_only_crossing_rule_fires_where_typescript_was_blind() -> Non
             fired[case_name] = count
 
     assert fired == {"random-01": 1, "random-04": 1}
+
+
+def test_the_python_only_jumper_rule_fires_where_typescript_had_no_rule_at_all() -> None:
+    """The other half of PYTHON_ONLY_RULES, and a different kind of divergence: this rule
+    has no TypeScript counterpart to disagree with, so no fixture records anything for it
+    and the golden files cannot be regenerated to include it.
+
+    ``dense`` earns six on its own — cond-12 is a 29-hole top jumper straight across row
+    18 of a board that already has six overlapping bodies, and it runs over a header, a
+    TO-92 and an LED on the way. That the deliberately awful fixture is the worst
+    offender is the result reading correctly.
+    """
+    fired: dict[str, int] = {}
+    for case_name in GOLDEN_CASE_NAMES:
+        doc, _expected = _load_golden(case_name)
+        count = sum(
+            1 for v in run_drc(doc, _FOOTPRINT_LOOKUP) if v.rule == "jumper-under-body"
+        )
+        if count:
+            fired[case_name] = count
+
+    assert fired == {
+        "dense": 6,
+        "random-04": 2,
+        "random-08": 4,
+        "random-10": 1,
+        "random-11": 1,
+        "random-12": 1,
+    }
 
 
 def test_a_geometric_crossing_is_reported_as_an_error() -> None:

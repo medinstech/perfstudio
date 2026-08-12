@@ -406,6 +406,13 @@ class SetBoardPayload:
 
 
 @dataclass(frozen=True, slots=True)
+class SetHeightLimitPayload:
+    """``None`` clears the limit, which is a different thing from a limit of zero."""
+
+    height_limit_mm: Mm | None
+
+
+@dataclass(frozen=True, slots=True)
 class ApplyBoardPresetPayload:
     """A whole board product: the stock, and the features it is sold with.
 
@@ -1295,6 +1302,26 @@ class _DeleteEdgeConnector:
         return f"Remove edge connector {p.id}"
 
 
+class _SetHeightLimit:
+    type = "height-limit.set"
+
+    def apply(
+        self, doc: PerfDocument, p: SetHeightLimitPayload, ctx: CommandContext
+    ) -> PerfDocument:
+        if p.height_limit_mm is not None and not (p.height_limit_mm > 0):
+            raise CommandError(
+                "invalid-height-limit",
+                f"A height limit must be a positive number of millimetres; got "
+                f"{p.height_limit_mm}. Pass null to remove the limit instead.",
+            )
+        return dataclasses.replace(doc, height_limit_mm=p.height_limit_mm)
+
+    def describe(self, p: SetHeightLimitPayload, doc: PerfDocument) -> str:
+        if p.height_limit_mm is None:
+            return "Remove the build height limit"
+        return f"Limit build height to {p.height_limit_mm:g} mm"
+
+
 # ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
@@ -1322,6 +1349,7 @@ add_mounting_holes: CommandDefinition[AddMountingHolesPayload] = _AddMountingHol
 delete_mounting_hole: CommandDefinition[DeleteMountingHolePayload] = _DeleteMountingHole()
 add_edge_connector: CommandDefinition[AddEdgeConnectorPayload] = _AddEdgeConnector()
 delete_edge_connector: CommandDefinition[DeleteEdgeConnectorPayload] = _DeleteEdgeConnector()
+set_height_limit: CommandDefinition[SetHeightLimitPayload] = _SetHeightLimit()
 
 # Typed with Any because CommandDefinition's payload is contravariant, so a specific
 # command is deliberately NOT assignable to CommandDefinition[object]. See the note on
@@ -1350,6 +1378,7 @@ STANDARD_COMMANDS: tuple[CommandDefinition[Any], ...] = (
     delete_mounting_hole,
     add_edge_connector,
     delete_edge_connector,
+    set_height_limit,
 )
 
 

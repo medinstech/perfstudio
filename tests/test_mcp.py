@@ -28,12 +28,14 @@ corrupts the stdio protocol and produces a baffling, unrelated error at the clie
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from pathlib import Path
 
 import pytest
 
 from perfstudio.mcp.session import BoardSession, SessionError, new_board
+from perfstudio.model import ComponentInstance, HoleCoord
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 GOLDEN = REPO_ROOT / "tools" / "diffcheck" / "golden" / "ne555.perf"
@@ -473,7 +475,7 @@ def test_the_tool_surface_is_registered_and_stays_narrow() -> None:
     tools = asyncio.run(server.mcp.list_tools())
     names = {tool.name for tool in tools}
 
-    assert len(tools) <= 32, f"{len(tools)} tools; see the note in server.py before adding more"
+    assert len(tools) <= 34, f"{len(tools)} tools; see the note in server.py before adding more"
     for critical in ("render_2d_view", "render_3d_view", "snapshot", "restore"):
         assert critical in names, f"{critical} is named in PLAN.md Sec 9.2 as load-bearing"
     assert all(tool.description for tool in tools), "a tool with no description is unusable"
@@ -552,3 +554,78 @@ def test_an_unknown_routing_style_lists_the_real_ones(session: BoardSession) -> 
     with pytest.raises(SessionError) as err:
         session.autoroute(style="magic")
     assert "solder" in str(err.value) and "balanced" in str(err.value)
+
+
+# ---------------------------------------------------------------------------
+# Heights: the question a render cannot answer
+# ---------------------------------------------------------------------------
+
+
+def test_check_heights_answers_before_any_limit_is_set(session: BoardSession) -> None:
+    """The tallest part decides which enclosure to buy, which is a thing to know BEFORE
+    there is an enclosure. So this reports whether or not a limit exists."""
+    session.place_component("Q1", "to220", "C3")
+    session.place_component("R1", "r-axial-4", "H3")
+
+    heights = session.check_heights()
+
+    assert heights["height_limit_mm"] is None
+    assert heights["tallest_ref"] == "Q1"
+    assert heights["tallest_mm"] == 20
+    assert heights["over_limit"] == []
+    assert [p["ref"] for p in heights["parts"]] == ["Q1", "R1"]
+
+
+def test_check_heights_names_what_is_over_the_limit(session: BoardSession) -> None:
+    session.place_component("Q1", "to220", "C3")
+    session.place_component("R1", "r-axial-4", "H3")
+    assert session.set_height_limit(15.0)["ok"]
+
+    heights = session.check_heights()
+
+    assert heights["height_limit_mm"] == 15.0
+    assert heights["over_limit"] == ["Q1"]
+
+
+def test_a_height_limit_reaches_drc_and_undoes_like_anything_else(
+    session: BoardSession,
+) -> None:
+    session.place_component("Q1", "to220", "C3")
+    assert not [v for v in session.run_drc()["violations"] if v["rule"] == "component-too-tall"]
+
+    session.set_height_limit(15.0)
+    flagged = [v for v in session.run_drc()["violations"] if v["rule"] == "component-too-tall"]
+    assert len(flagged) == 1
+    assert "Q1" in flagged[0]["message"]
+
+    session.undo()
+    assert session.get_board_info().get("height_limit_mm") is None
+
+
+def test_check_heights_will_not_let_an_unmeasured_part_read_as_a_pass() -> None:
+    """A component whose footprint is not in the library has no height. Saying nothing
+    about it would let "over_limit is empty" mean two different things.
+
+    The document is built rather than placed through the session, because the session
+    refuses an unknown footprint outright — the only way to hold one is to open a file
+    that references it, which is exactly when this matters.
+    """
+    document = new_board(cols=24, rows=16)
+    document = dataclasses.replace(
+        document,
+        components=(
+            ComponentInstance(
+                id="cmp-1", ref="R1", value="", footprint_id="r-axial-4",
+                anchor=HoleCoord(2, 2), rotation=0, mirrored=False, locked=False,
+            ),
+            ComponentInstance(
+                id="cmp-2", ref="X1", value="", footprint_id="not-a-real-footprint",
+                anchor=HoleCoord(8, 2), rotation=0, mirrored=False, locked=False,
+            ),
+        ),
+    )
+
+    heights = BoardSession(document=document).check_heights()
+
+    assert heights["unknown_footprints"] == ["X1"]
+    assert [p["ref"] for p in heights["parts"]] == ["R1"]

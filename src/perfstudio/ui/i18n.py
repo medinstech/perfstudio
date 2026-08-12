@@ -168,6 +168,13 @@ TURKISH: Mapping[str, str] = {
     "First hole": "İlk delik",
     "Fingers": "Parmak sayısı",
     "That inset does not fit on this board.": "Bu kaçıklık bu karta sığmıyor.",
+    "Height limit": "Yükseklik sınırı",
+    "No limit": "Sınırsız",
+    "Set Height Limit": "Yükseklik Sınırını Uygula",
+    "Clear height inside the case, above the board. Taller parts are reported by DRC.": (
+        "Kutunun içinde, kartın üstünde kalan net yükseklik. "
+        "Daha yüksek parçaları DRC bildirir."
+    ),
     "Unsaved changes": "Kaydedilmemiş değişiklikler",
     "Open failed": "Açılamadı",
     "Import failed": "İçe aktarılamadı",

@@ -47,6 +47,7 @@ from perfstudio.commands import (
     ReplaceConductorsPayload,
     RotateComponentPayload,
     SetBoardPayload,
+    SetHeightLimitPayload,
     UpdateComponentPayload,
     create_document_id_generator,
     create_empty_document,
@@ -1042,3 +1043,46 @@ def test_replace_can_reuse_a_hole_the_removed_conductor_occupied():
     )
 
     assert result.ok, result.message
+
+
+# ---------------------------------------------------------------------------
+# height-limit.set
+# ---------------------------------------------------------------------------
+
+
+def test_setting_a_height_limit_records_what_it_did():
+    bus = new_bus()
+
+    result = bus.dispatch("height-limit.set", SetHeightLimitPayload(height_limit_mm=22.0))
+
+    assert result.ok, result.message
+    assert bus.document.height_limit_mm == 22.0
+    assert result.description == "Limit build height to 22 mm"
+
+
+def test_clearing_a_height_limit_is_a_separate_undo_step():
+    """None is not zero: it removes the constraint rather than setting an impossible one,
+    and it goes on the history like any other edit so it can be taken back."""
+    bus = new_bus()
+    bus.dispatch("height-limit.set", SetHeightLimitPayload(height_limit_mm=22.0))
+
+    result = bus.dispatch("height-limit.set", SetHeightLimitPayload(height_limit_mm=None))
+
+    assert result.ok, result.message
+    assert bus.document.height_limit_mm is None
+    assert result.description == "Remove the build height limit"
+
+    bus.undo()
+    assert bus.document.height_limit_mm == 22.0
+
+
+def test_a_height_limit_of_zero_or_less_is_refused():
+    """Nothing fits under it, so every part on the board would be reported. Refused at
+    the bus rather than reported by DRC, because it is not a document anybody meant."""
+    bus = new_bus()
+
+    for value in (0.0, -5.0):
+        result = bus.dispatch("height-limit.set", SetHeightLimitPayload(height_limit_mm=value))
+        assert result.ok is False
+        assert result.code == "invalid-height-limit"
+        assert bus.document.height_limit_mm is None

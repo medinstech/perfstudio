@@ -455,3 +455,51 @@ def test_round_trip_is_idempotent_across_all_golden_files() -> None:
         once = persist.parse_document_or_throw(original)
         twice = persist.parse_document_or_throw(persist.serialize_document(once))
         assert persist.serialize_document(once) == persist.serialize_document(twice), perf_path.name
+
+
+# ---------------------------------------------------------------------------
+# The build height limit -- a document-level scalar, optional like every field
+# added after format version 1 was frozen
+# ---------------------------------------------------------------------------
+
+
+def test_no_height_limit_leaves_no_trace_in_the_file() -> None:
+    """The same rule every field added since format 1 follows: a document that does not
+    use it serializes to the bytes a build predating it wrote. This is what lets the 15
+    golden fixtures keep round-tripping byte for byte."""
+    assert "heightLimitMm" not in persist.serialize_document(_minimal_document())
+
+
+def test_a_height_limit_survives_a_round_trip() -> None:
+    doc = _minimal_document(height_limit_mm=18.5)
+    text = persist.serialize_document(doc)
+    result = persist.deserialize_document(text)
+
+    assert result.ok is True
+    assert not result.warnings
+    assert result.document.height_limit_mm == 18.5
+    assert persist.serialize_document(result.document) == text
+
+
+def test_a_height_limit_nobody_can_build_under_warns_rather_than_refusing() -> None:
+    """A hand-edited zero or negative would report every part on the board as too tall.
+    Dropped with a warning, the same way a diagonal solder-trace step is: the user should
+    see the problem, not be locked out of their project."""
+    doc = _minimal_document_json()
+    doc["heightLimitMm"] = 0
+
+    result = persist.deserialize_document(json.dumps(doc))
+
+    assert result.ok is True
+    assert result.document.height_limit_mm is None
+    assert any("heightLimitMm" in w for w in result.warnings)
+
+
+def test_a_file_written_before_the_height_limit_existed_still_loads() -> None:
+    doc = _minimal_document_json()
+    assert "heightLimitMm" not in doc
+
+    result = persist.deserialize_document(json.dumps(doc))
+
+    assert result.ok is True
+    assert result.document.height_limit_mm is None
