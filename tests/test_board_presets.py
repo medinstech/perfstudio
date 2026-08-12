@@ -23,6 +23,7 @@ Those three, each of which started as a visible mismatch:
 from __future__ import annotations
 
 import dataclasses
+import math
 import os
 
 import pytest
@@ -38,6 +39,7 @@ from perfstudio.commands import (
 )
 from perfstudio.footprints import footprint_lookup
 from perfstudio.geometry import (
+    FINGER_BORE_CLEARANCE_MM,
     STANDARD_PRESETS,
     board_edge_margin_mm,
     board_from_preset,
@@ -46,6 +48,7 @@ from perfstudio.geometry import (
     consumed_holes,
     edge_connector_holes,
     edge_finger_rect,
+    format_hole,
     hole_key,
     holes_without_grid_pad,
     legend_strip_mm,
@@ -488,3 +491,50 @@ def test_a_connector_finger_has_no_hole_through_it() -> None:
 
 def test_a_board_with_no_fingers_has_every_hole_drilled() -> None:
     assert undrilled_holes(_doc(BOARD)) == frozenset()
+
+
+def test_no_preset_drills_a_screw_hole_through_its_own_finger_strip() -> None:
+    """A bore removes copper, so a corner hole overlapping the end of a strip destroys a
+    contact — on a board the program itself produced, before the user has touched it.
+
+    Run the strip the full width and that is exactly what happens: measured at 0.21 mm of
+    overlap on the 2 x 8 and 6 x 8 presets. The 5 x 7 was clear only by luck of the
+    arithmetic, which is why the first version of this looked fine.
+
+    Clearance, not merely absence of overlap. Trimming to first contact left 0.01 mm of
+    board between copper and drill on the 5 x 7; a hole drilled that close breaks out into
+    the pad.
+    """
+    checked = 0
+    for preset in STANDARD_PRESETS:
+        board = board_from_preset(preset, DEFAULT_BOARD)
+        connectors = preset_edge_connectors(preset, board)
+        mounts = preset_mounting_holes(preset, board)
+        if not connectors or not mounts:
+            continue
+        checked += 1
+        for mount in mounts:
+            centre = mounting_hole_centre_mm(mount, board)
+            for connector in connectors:
+                for hole in edge_connector_holes(connector, board):
+                    rect = edge_finger_rect(connector, hole, board)
+                    near_x = min(max(centre.x, rect.x), rect.x + rect.width)
+                    near_y = min(max(centre.y, rect.y), rect.y + rect.height)
+                    gap = math.hypot(centre.x - near_x, centre.y - near_y) - mount.diameter / 2
+                    assert gap >= FINGER_BORE_CLEARANCE_MM, (
+                        f"{preset.name}: {mount.id} is {gap:.2f} mm from the finger at "
+                        f"{format_hole(hole)}"
+                    )
+    assert checked >= 4, "no preset has both fingers and corner holes; this proved nothing"
+
+
+def test_a_trimmed_strip_still_runs_most_of_the_board() -> None:
+    """Trimming is meant to clear the screws, not to leave a token strip."""
+    for preset in STANDARD_PRESETS:
+        board = board_from_preset(preset, DEFAULT_BOARD)
+        connectors = preset_edge_connectors(preset, board)
+        if not connectors or not preset_mounting_holes(preset, board):
+            continue
+        for connector in connectors:
+            span = board.cols if connector.edge in ("top", "bottom") else board.rows
+            assert connector.count >= span - 2, f"{preset.name} lost too many fingers"

@@ -418,6 +418,19 @@ closed without a bump.
   - And they are **solder-side only** on a single-sided board. `face: "both"` had put a
     strip of contacts on the bare phenolic face, where the board has nothing but
     substrate.
+- **A corner screw hole was drilled through the end of the finger strip.** The strips ran
+  the full width of the board and the corner holes went in independently, so nothing
+  reconciled them: measured at 0.21 mm of overlap on the 2 × 8 and 6 × 8 presets, on a
+  board the program produced before anybody had touched it. A bore removes copper, so
+  that is a destroyed contact. The strip is trimmed to clear them now, and
+  `preset_edge_connectors` asks `preset_mounting_holes` itself rather than leaving two
+  features to be combined by a caller with no way to know they interfere.
+  - **Clearance, not merely not-overlapping.** Trimming to first contact left 0.01 mm of
+    board between copper and drill on the 5 × 7 and 0.09 mm on the 4 × 6, which is not a
+    gap — a hole drilled that close breaks out into the pad. `FINGER_BORE_CLEARANCE_MM`
+    is 0.3 mm and every preset now clears by at least 2.3 mm.
+  - The 5 × 7 was clear by luck of the arithmetic before any of this, which is why it
+    looked fine: it is the board that gets rendered when something is being checked.
 - **A phenolic board wore FR-4's gold pads.** `BoardScheme` described the substrate and
   the silkscreen but not the copper, so one global gold served every board. The finish is
   one of the two things you notice first: a plated FR-4 board is yellow, a cheap phenolic

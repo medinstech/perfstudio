@@ -618,6 +618,13 @@ STANDARD_PRESETS: tuple[BoardPreset, ...] = (
 FINGER_INSET_MM: Mm = 1.5
 #: An M2 clearance hole, which is what fits in these boards' corners.
 CORNER_HOLE_MM: Mm = 2.2
+#: Substrate a finger strip leaves between itself and a corner bore.
+#:
+#: Not merely "does not overlap". Trimming to first contact left the 5 x 7 preset with
+#: 0.01 mm of board between the copper and the drill and the 4 x 6 with 0.09 mm, which is
+#: not clearance -- a hole drilled that close to the edge of a pad in paper phenolic
+#: breaks out into it. 0.3 mm is the smallest gap these boards are made with.
+FINGER_BORE_CLEARANCE_MM: Mm = 0.3
 
 
 def board_from_preset(preset: BoardPreset, base: Board) -> Board:
@@ -672,19 +679,63 @@ def preset_strip_edges(board: Board) -> tuple[BoardEdge, ...]:
     return ("top", "bottom") if width <= height else ("left", "right")
 
 
+def _finger_run_clear_of_bores(
+    board: Board, edge: BoardEdge, mounts: tuple[MountingHole, ...]
+) -> tuple[int, int]:
+    """(start, count) for a finger strip that stops short of the corner screw holes.
+
+    A bore removes copper. Run the strip the full width of the board and the corner holes
+    are drilled through the end contacts of it -- measured at 0.21 mm of overlap on the
+    2 x 8 and 6 x 8 presets, and clear on the 5 x 7 only by luck of the arithmetic. On
+    the real boards the strip stops and the screw goes outside it.
+
+    Trimmed rather than shifted: the strip is where it is, and what changes is how far
+    along it runs.
+    """
+    span = board.rows if edge in ("left", "right") else board.cols
+    probe = EdgeConnector(id="probe", edge=edge, start=0, count=span, inset_mm=FINGER_INSET_MM)
+    clear: list[int] = []
+    for index, hole in enumerate(edge_connector_holes(probe, board)):
+        rect = edge_finger_rect(probe, hole, board)
+        if not any(_bore_touches_rect(mount, rect, board) for mount in mounts):
+            clear.append(index)
+    if not clear:
+        return 0, 0
+    # One contiguous run: the obstructions are corner holes, so what is left is the
+    # middle. Taking first..last rather than the individual indices keeps the model's
+    # "a connector is a run of fingers" invariant.
+    return clear[0], clear[-1] - clear[0] + 1
+
+
+def _bore_touches_rect(mount: MountingHole, rect: RectMm, board: Board) -> bool:
+    centre = mounting_hole_centre_mm(mount, board)
+    near_x = min(max(centre.x, rect.x), rect.x + rect.width)
+    near_y = min(max(centre.y, rect.y), rect.y + rect.height)
+    return (
+        math.hypot(centre.x - near_x, centre.y - near_y)
+        < mount.diameter / 2 + FINGER_BORE_CLEARANCE_MM
+    )
+
+
 def preset_edge_connectors(preset: BoardPreset, board: Board) -> tuple[EdgeConnector, ...]:
     """The finger strips a preset's board is sold with.
 
     BOTH families have them, on their two short edges. The phenolic board was given none
     at all at first, on the reasoning that it is the stripped-down product -- and it is,
     but not of these.
+
+    The run stops clear of the board's own corner screw holes, which is why this asks
+    :func:`preset_mounting_holes` rather than leaving the two to be combined by a caller
+    who has no way to know they interfere.
     """
+    mounts = preset_mounting_holes(preset, board)
+    runs = {edge: _finger_run_clear_of_bores(board, edge, mounts) for edge in preset_strip_edges(board)}
     return tuple(
         EdgeConnector(
             id=f"ec-{edge}",
             edge=edge,
-            start=0,
-            count=board.rows if edge in ("left", "right") else board.cols,
+            start=runs[edge][0],
+            count=runs[edge][1],
             finger_width=round(min(2.0, board.pitch * 0.8), 3),
             inset_mm=FINGER_INSET_MM,
             # A single-sided board has copper on ONE face, and its fingers are no
