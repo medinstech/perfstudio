@@ -55,11 +55,13 @@ class BoardScheme:
 #: green, blue and black prototyping boards are finished with.
 _GOLD = ("#c8a951", "#8a7331", "#e4cd83", (0.80, 0.66, 0.32))
 
-#: BARE copper, unmasked and unplated, which is what a phenolic board has. Pink-brown
-#: rather than yellow, and only a little lighter than the substrate it sits on -- these
-#: boards genuinely are low-contrast in the hand, and drawing them otherwise makes the
-#: screen easier to read than the object it is a picture of.
-_BARE_COPPER = ("#c87f4e", "#7a4526", "#e0a173", (0.78, 0.50, 0.30))
+#: BARE copper, unmasked and unplated, which is what a phenolic board has: pale warm
+#: metal rather than yellow gold.
+#:
+#: MEASURED, not chosen. Sampled off product photographs of the boards themselves, which
+#: put the pads at hue 25-28 degrees and saturation around 0.35 -- warm, so copper and
+#: not tin, but much paler and less saturated than the pink-brown this first guessed at.
+_BARE_COPPER = ("#e2a877", "#a86a3c", "#f6d0aa", (0.886, 0.659, 0.467))
 
 SCHEMES: tuple[BoardScheme, ...] = (
     BoardScheme("green", "Green (FR-4)", "#2e6b3f", "#0d1a12", (0.16, 0.36, 0.21), "#e8f0ea", *_GOLD),
@@ -68,11 +70,12 @@ SCHEMES: tuple[BoardScheme, ...] = (
     BoardScheme("red", "Red", "#8c2a26", "#2e0b0a", (0.50, 0.13, 0.12), "#f6e6e5", *_GOLD),
     BoardScheme("purple", "Purple", "#4a2a72", "#170d24", (0.26, 0.14, 0.42), "#ece4f6", *_GOLD),
     BoardScheme("white", "White", "#d8d6ce", "#a09c90", (0.84, 0.83, 0.79), "#3a3a36", *_GOLD),
-    # Paper-phenolic: a warm mid-brown with a yellow cast, closer to thick cardboard than
-    # to the pumpkin orange this used to be. The old value read as a colour a board is
-    # PAINTED; this is the colour a board IS.
+    # Paper-phenolic, and ORANGE -- measured off photographs of the boards, which sample
+    # at #c67a3f, #c17c58 and #bb7441 across three of them. It was briefly changed to a
+    # brown on the reasoning that "pertinax is the colour of cardboard"; the boards say
+    # otherwise, and this is the one colour in this file anybody can check.
     BoardScheme(
-        "phenolic", "Orange (phenolic)", "#b9894b", "#3a2a12", (0.72, 0.54, 0.30), "#2c2115",
+        "phenolic", "Orange (phenolic)", "#c47a41", "#3a2410", (0.769, 0.478, 0.255), "#2c2115",
         *_BARE_COPPER,
     ),
 )

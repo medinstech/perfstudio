@@ -420,11 +420,16 @@ closed without a bump.
     substrate.
 - **A phenolic board wore FR-4's gold pads.** `BoardScheme` described the substrate and
   the silkscreen but not the copper, so one global gold served every board. The finish is
-  one of the two things you notice first: a plated FR-4 board is yellow, and a cheap
-  phenolic board's pads are **bare copper**, pink-brown and only a little lighter than
-  the substrate. The copper is part of the scheme now, and the phenolic substrate itself
-  went from a pumpkin orange to the warm mid-brown the board actually is — the old value
-  read as a colour a board is *painted* rather than the colour a board *is*.
+  one of the two things you notice first: a plated FR-4 board is yellow, a cheap phenolic
+  board's pads are **bare copper**. The copper is part of the scheme now.
+  - **The values are measured, not chosen.** Sampled off photographs of the boards: the
+    substrate lands at `#c67a3f`, `#c17c58` and `#bb7441` across three of them, and the
+    pads at hue 25-28° with saturation around 0.35 — warm, so copper rather than tin, and
+    much paler than a first guess at "pink-brown" had them.
+  - That same measurement caught a wrong turn in this changelog. The substrate was
+    briefly changed to a mid-brown, on the reasoning that pertinax is the colour of
+    cardboard. It is not; it is orange, near enough to what was there before, and the
+    boards say so. It is the one colour in that file anybody can check.
 - **The orange pertinax board had no printed addresses, and it should have.** The preset
   gave a legend to the green double-sided board and withheld it from the phenolic one, on
   the reasoning that the phenolic board is the stripped-down product — no fingers, no
