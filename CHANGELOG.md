@@ -303,6 +303,55 @@ closed without a bump.
 
 ### Fixed
 
+- **The orange pertinax board had no printed addresses, and it should have.** The preset
+  gave a legend to the green double-sided board and withheld it from the phenolic one, on
+  the reasoning that the phenolic board is the stripped-down product — no fingers, no
+  corner holes, copper on one face. That was wrong about the one thing it is not stripped
+  of: these boards carry the same `A`..`Z` / `01`..`NN` print, and it is the cheapest
+  marking on a board to apply.
+  - It is not a cosmetic miss, which is why it was worth chasing. With no legend the 2D
+    editor falls back to **its own ruler** — drawn outside the board, sized in screen
+    pixels — so the addresses existed on the screen and not on the board in your hand,
+    and they were absent from the 3D view and the 1:1 printout altogether. The board on
+    screen stopped being the board you are holding, which is the one thing this view has
+    to get right.
+  - There was room all along: the 5 × 7 phenolic preset leaves 2.46 mm and 2.30 mm of
+    bare substrate outside the outer pads, so the legend prints at the full 1.15 mm cap
+    height a real board uses, with nothing clipped.
+  - `test_every_preset_prints_its_own_addresses` now holds it for **every** preset in
+    both families, rather than two tests pinning the old answer for one family each.
+- **The application opened on a board nobody sells.** With no file to open, and behind
+  **File → New Board**, it used `DEFAULT_BOARD` — a bare 60 × 40 grid with a zero border.
+  A zero border leaves nowhere to print an address, so the very first board a user saw
+  had no legend and fell back to the editor's ruler, and the 3D view and the 1:1 printout
+  showed no addresses at all because neither has a ruler to fall back on. It now opens on
+  the 5 × 7 cm double-sided board via `commands.create_starter_document`, as a **product**
+  — printed legend, a finger strip down each of the two edges with room for one, and a
+  screw hole in each corner. `DEFAULT_BOARD` stays exactly as it was: a bare grid is the
+  right *engine* default and the wrong thing to open an application on.
+  - Built directly rather than dispatched as `board.applyPreset`, so a new document does
+    not open with an undo step already on its stack.
+  - **File → New Board** now applies a chosen preset's fingers and corner holes too. It
+    read `dialog.board()` and ignored `dialog.preset_features()`, so picking a preset
+    there produced the grid and none of the product — the half-applied state
+    `board.applyPreset` exists to make unreachable.
+- **Column letters were printed underneath the connector fingers.** The legend's position
+  was measured out from the grid pad, which is correct until the copper on that edge is
+  an elongated finger reaching most of the way to the board edge. Ink is drawn under
+  copper, so the letters did not come out faint — they did not come out at all, and the
+  board showed row numbers and no letters. Both renderers now measure **in from the board
+  edge**, which is the same answer on a plain board and the right one on a board with
+  fingers; `legend_strip_mm` already reported the correct width there and this is the
+  position to match it. The existing border test could not catch it: its band runs from
+  the grid pad to the board edge, and the middle of a finger is inside that band.
+- **The 3D legend read backwards on the underside.** Both faces were built from one set
+  of glyphs at two different depths, so turning the board over showed every address
+  mirrored — on the view whose whole job is checking the solder side. The bottom face is
+  now reflected about the hole span, the same axis `view2d.hole_to_screen` mirrors about,
+  so `A` still sits on the hole it names. 2D deliberately does the opposite for the face
+  it is seeing *through* the board, and the two are not in conflict: 3D is looking at ink
+  directly, 2D is looking at it through 1.6 mm of phenolic.
+
 - **The build guide scheduled top jumpers after the parts they run under**, which is an
   order nobody can follow. Jumpers sit in phase 7 because they are usually soldered to
   pins already fitted, and that is still right for almost all of them — but by phase 7 a

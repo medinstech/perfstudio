@@ -103,22 +103,37 @@ def test_a_preset_border_is_not_the_same_on_both_axes() -> None:
 
 
 def test_the_two_board_families_differ_in_the_ways_that_matter() -> None:
-    """A phenolic board is single-sided with no printed legend; an FR-4 one is neither.
-    That is what separates the families, so the preset settles it rather than leaving it
-    to be set twice and disagreed about once."""
+    """A phenolic board is single-sided FR-2; an FR-4 one is neither. That is what
+    separates the families, so the preset settles it rather than leaving it to be set
+    twice and disagreed about once."""
     fr4 = board_from_preset(
         next(p for p in STANDARD_PRESETS if p.name == "5 x 7 cm"), DEFAULT_BOARD
     )
     assert not fr4.single_sided
-    assert fr4.labels is not None
     assert fr4.material == "FR4"
 
     phenolic = board_from_preset(
         next(p for p in STANDARD_PRESETS if p.single_sided), DEFAULT_BOARD
     )
     assert phenolic.single_sided
-    assert phenolic.labels is None
     assert phenolic.material == "FR2"
+
+
+def test_every_preset_prints_its_own_addresses() -> None:
+    """The legend is NOT one of the ways the families differ, which is the correction
+    this test exists to hold. The orange pertinax board carries the same A..Z / 01..NN
+    print the green one does — it is the cheapest marking on a board to apply, and every
+    one of these you can buy has it.
+
+    Getting it wrong is not a cosmetic miss. With no legend the editor falls back to its
+    own ruler, which is drawn OUTSIDE the board in screen pixels; the addresses then
+    exist on the screen and not on the board in your hand, and they are missing from the
+    3D view and the 1:1 printout entirely.
+    """
+    for preset in STANDARD_PRESETS:
+        board = board_from_preset(preset, DEFAULT_BOARD)
+        assert board.labels is not None, f"{preset.name} ({preset.family}) prints nothing"
+        assert board.labels.row_digits == 2, "these boards print 01, not 1"
 
 
 def test_a_preset_does_not_disturb_the_pitch_or_the_pad() -> None:
@@ -319,16 +334,16 @@ def test_a_green_board_arrives_with_its_finger_strips_and_corner_holes() -> None
     assert board.labels is not None
 
 
-def test_an_orange_phenolic_board_arrives_with_none_of_it() -> None:
-    """Copper on one face, round pads everywhere, no legend, no fingers, no corner holes.
-    That is the whole difference between the two families."""
+def test_an_orange_phenolic_board_arrives_with_its_legend_and_nothing_else() -> None:
+    """Copper on one face, round pads everywhere, no fingers, no corner holes — but the
+    printed addresses are there, because they are on the real board."""
     preset = next(p for p in STANDARD_PRESETS if p.single_sided)
     board = board_from_preset(preset, DEFAULT_BOARD)
 
     assert preset_edge_connectors(preset, board) == ()
     assert preset_mounting_holes(preset, board) == ()
     assert board.single_sided
-    assert board.labels is None
+    assert board.labels is not None
     assert board.pad_shape == "round"
 
 

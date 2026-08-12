@@ -23,6 +23,7 @@ import vtk  # type: ignore[import-untyped]
 from perfstudio.connectivity import FootprintLookup
 from perfstudio.geometry import (
     all_pin_holes,
+    board_edge_margin_mm,
     board_size_mm,
     column_label,
     consumed_holes,
@@ -378,11 +379,12 @@ def build_legend(doc: PerfDocument) -> list[vtk.vtkActor]:
     # whole margin, which the pads eat half their extent of. Same reasoning, and the same
     # arithmetic, as view2d.BoardLegendItem._free_strip_mm: the two views have to print the
     # legend in the same place or the 3D board stops matching the one being edited.
-    extent_x, extent_y = pad_extent_mm(board)
     # Asked of the DOCUMENT, not the board: an edge carrying connector fingers has only
     # whatever inset those fingers left, and the 2D legend measures it the same way.
     strip_x = legend_strip_mm(doc, "horizontal")
     strip_y = legend_strip_mm(doc, "vertical")
+    margin_x = board_edge_margin_mm(board, "horizontal")
+    margin_y = board_edge_margin_mm(board, "vertical")
     height = min(1.15, min(strip_x, strip_y) * 0.6)
     faces: tuple[BoardSide, ...] = (
         ("top", "bottom") if labels.face == "both" else (labels.face,)
@@ -394,13 +396,17 @@ def build_legend(doc: PerfDocument) -> list[vtk.vtkActor]:
         # (text, x, y, widest it may be) -- the width limits differ between the two runs
         # because their free axes are swapped, exactly as in the 2D legend.
         # 3D y runs up where board rows run down, so the top border is at POSITIVE y here.
+        #
+        # Measured IN FROM THE BOARD EDGE, exactly as view2d does and for the same reason:
+        # out from the pad puts the column letters on top of the connector fingers, which
+        # reach most of the way to the edge on the board this application opens on.
         span_w = (board.cols - 1) * board.pitch
         span_h = (board.rows - 1) * board.pitch
-        column_ys = [extent_y / 2 + strip_y / 2]
-        row_xs = [-(extent_x / 2 + strip_x / 2)]
+        column_ys = [margin_y - strip_y / 2]
+        row_xs = [-(margin_x - strip_x / 2)]
         if labels.all_edges:
-            column_ys.append(-span_h - extent_y / 2 - strip_y / 2)
-            row_xs.append(span_w + extent_x / 2 + strip_x / 2)
+            column_ys.append(-span_h - margin_y + strip_y / 2)
+            row_xs.append(span_w + margin_x - strip_x / 2)
         # Row numbers are turned on their side, as they are on the real boards and in the
         # 2D view: the strip beside a row is narrow across and a whole pitch deep, so a
         # turned number fits where an upright one has to shrink.
@@ -440,8 +446,29 @@ def build_legend(doc: PerfDocument) -> list[vtk.vtkActor]:
             append.AddInputData(placed.GetOutput())
         append.Update()
 
+        printed = append.GetOutputPort()
+        if face == "bottom":
+            # Ink on the underside, being looked at from underneath. Both the glyphs and
+            # their positions have to reflect, or turning the board over in 3D shows the
+            # legend written backwards -- and this is the one view where the text is a
+            # physical object being seen directly rather than an annotation drawn over a
+            # picture. (view2d deliberately does the opposite for the face it is seeing
+            # THROUGH the board: reversed 1 mm text is noise, and what the reader wants
+            # off a label there is the address, not the reflection.)
+            #
+            # Reflected about the HOLE SPAN, the axis view2d.hole_to_screen mirrors about,
+            # so both views agree which hole a label belongs to.
+            flip = vtk.vtkTransform()
+            flip.Translate(span_w, 0.0, 0.0)
+            flip.Scale(-1.0, 1.0, 1.0)
+            mirrored = vtk.vtkTransformPolyDataFilter()
+            mirrored.SetTransform(flip)
+            mirrored.SetInputConnection(append.GetOutputPort())
+            mirrored.Update()
+            printed = mirrored.GetOutputPort()
+
         mapper = vtk.vtkPolyDataMapper()
-        mapper.SetInputConnection(append.GetOutputPort())
+        mapper.SetInputConnection(printed)
         actor = vtk.vtkActor()
         actor.SetMapper(mapper)
         # Just clear of the substrate, on whichever face carries the print. Silkscreen is

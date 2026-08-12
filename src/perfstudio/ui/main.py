@@ -72,7 +72,6 @@ from perfstudio.autoroute import (
 )
 from perfstudio.command import CommandBus, CommandContext, DispatchResult, HistoryEntry
 from perfstudio.commands import (
-    DEFAULT_BOARD,
     AddEdgeConnectorPayload,
     AddMountingHolesPayload,
     ApplyBoardPresetPayload,
@@ -90,6 +89,7 @@ from perfstudio.commands import (
     create_document_id_generator,
     create_empty_document,
     create_standard_registry,
+    create_starter_document,
 )
 from perfstudio.drc import DrcViolation, run_drc
 from perfstudio.footprints import footprint_lookup, standard_footprints
@@ -2276,13 +2276,25 @@ class MainWindow(QMainWindow):
         """Start a blank board, after asking about anything unsaved."""
         if not self._offer_to_save():
             return
-        dialog = BoardSetupDialog(DEFAULT_BOARD, self, title=t("New Board"))
+        starter = create_starter_document(
+            DocumentMeta(name="untitled", created=_now_iso(), modified=_now_iso())
+        )
+        dialog = BoardSetupDialog(starter.board, self, title=t("New Board"))
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
+        # The fingers and corner holes come with the board, as they do in Board Setup.
+        # Without this a preset chosen here produced the grid and none of the product,
+        # which is the state `board.applyPreset` exists to make unreachable.
+        features = dialog.preset_features()
         document = create_empty_document(
             DocumentMeta(name="untitled", created=_now_iso(), modified=_now_iso()),
             dialog.board(),
         )
+        if features is not None:
+            connectors, holes = features
+            document = dataclasses.replace(
+                document, edge_connectors=connectors, mounting_holes=holes
+            )
         self.current_path = None
         self.bus = self._new_bus(document)
         self._subscribe_bus()
@@ -2900,7 +2912,9 @@ def main() -> int:
         document = result.document
     else:
         path = None
-        document = create_empty_document(DocumentMeta(name="untitled", created=_now_iso(), modified=_now_iso()))
+        document = create_starter_document(
+            DocumentMeta(name="untitled", created=_now_iso(), modified=_now_iso())
+        )
 
     window = MainWindow(document, path)
     window.show()

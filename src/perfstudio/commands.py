@@ -39,11 +39,15 @@ from .command import (
     create_id_generator,
 )
 from .geometry import (
+    STANDARD_PRESETS,
     board_edge_margin_mm,
+    board_from_preset,
     default_finger_length_mm,
     edge_connector_holes,
     format_hole,
     is_inside_board,
+    preset_edge_connectors,
+    preset_mounting_holes,
     validate_orthogonal_chain,
 )
 from .model import (
@@ -134,6 +138,38 @@ def create_empty_document(meta: DocumentMeta, board: Board = DEFAULT_BOARD) -> P
         cuts=(),
         nets=(),
         format_version=DOCUMENT_FORMAT_VERSION,
+    )
+
+
+#: The board a new document opens on: the 5 x 7 cm double-sided one, which is the board
+#: most people have a stack of.
+STARTER_PRESET_NAME = "5 x 7 cm"
+
+
+def create_starter_document(meta: DocumentMeta) -> PerfDocument:
+    """A new document on a board somebody actually sells.
+
+    ``create_empty_document`` gives a bare grid, which is the right *engine* default and
+    the wrong thing to open the application on. ``DEFAULT_BOARD`` has no border, so there
+    is nowhere on it to print an address: the editor falls back to drawing its own ruler
+    outside the board, and the first board a user sees is one that does not exist,
+    addressed by an annotation instead of by its own ink -- and carrying nothing at all
+    in the 3D view or the 1:1 printout, which have no ruler to fall back on.
+
+    A preset is a PRODUCT, so this returns the whole of one: the grid, the printed
+    legend, a finger strip down each of the two edges with room for one, and a screw hole
+    in each corner. Built here rather than dispatched as ``board.applyPreset`` because
+    there is no history yet to put it in -- a new document should not open with an undo
+    step already on the stack.
+    """
+    preset = next(
+        p for p in STANDARD_PRESETS if p.name == STARTER_PRESET_NAME and not p.single_sided
+    )
+    board = board_from_preset(preset, DEFAULT_BOARD)
+    return dataclasses.replace(
+        create_empty_document(meta, board),
+        edge_connectors=preset_edge_connectors(preset, board),
+        mounting_holes=preset_mounting_holes(preset, board),
     )
 
 

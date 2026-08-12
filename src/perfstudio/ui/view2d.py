@@ -55,6 +55,7 @@ from perfstudio.connectivity import FootprintLookup
 from perfstudio.drc import DrcViolation
 from perfstudio.geometry import (
     all_pin_holes,
+    board_edge_margin_mm,
     board_outline_mm,
     column_label,
     edge_connector_holes,
@@ -588,7 +589,8 @@ class BoardLegendItem(QGraphicsItem):
         board = self.board
         color = QColor(LEGEND_INK if self.near_side else LEGEND_INK_FAR)
         strip_x, strip_y = self._free_strip_mm()
-        extent_x, extent_y = pad_extent_mm(board)
+        margin_x = board_edge_margin_mm(board, "horizontal")
+        margin_y = board_edge_margin_mm(board, "vertical")
         height = self._text_height_mm()
 
         painter.save()
@@ -600,18 +602,25 @@ class BoardLegendItem(QGraphicsItem):
         # does not carry its address, which is where counting starts again.
         #
         # Each run is centred in ITS OWN free strip, which is why the two offsets differ:
-        # a column letter clears the pads above it, a row number clears them to its left.
+        # a column letter clears the copper above it, a row number clears it to its left.
+        #
+        # MEASURED IN FROM THE BOARD EDGE, not out from the pad. The two agree on a plain
+        # board and do not on one with connector fingers, where the copper reaches most of
+        # the way to the edge: measured from the pad, the letters land ON the fingers, and
+        # since ink is drawn under copper they vanish entirely. `legend_strip_mm` already
+        # reports the right WIDTH there (the fingers' inset); this is the matching
+        # position for it.
         #
         # THE NUMBERS ARE TURNED ON THEIR SIDE, as they are on the real boards, and for a
         # reason rather than as decoration: the strip beside a row is narrow across and a
         # whole pitch deep, so an upright "07" has to shrink to fit while a turned one
         # does not.
         span_w, span_h = hole_span_mm(board)
-        column_ys = [-(extent_y / 2 + strip_y / 2)]
-        row_xs = [-(extent_x / 2 + strip_x / 2)]
+        column_ys = [-(margin_y - strip_y / 2)]
+        row_xs = [-(margin_x - strip_x / 2)]
         if self.labels.all_edges:
-            column_ys.append(span_h + extent_y / 2 + strip_y / 2)
-            row_xs.append(span_w + extent_x / 2 + strip_x / 2)
+            column_ys.append(span_h + margin_y - strip_y / 2)
+            row_xs.append(span_w + margin_x - strip_x / 2)
         elif self.side == "bottom":
             # A one-edge legend is on a PHYSICAL edge, and turning the board over moves
             # that edge to the other side of the screen. Reflected about the hole span

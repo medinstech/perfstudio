@@ -1355,6 +1355,48 @@ def test_the_board_has_holes_from_underneath() -> None:
     assert view3d.build_pads(doc.board, "bottom") is not None
 
 
+def test_the_legend_on_the_underside_reads_the_right_way_round() -> None:
+    """Ink on the bottom face, looked at from underneath, has to read normally. Both
+    faces were built from one set of glyphs at two different depths, so turning the board
+    over in 3D showed the addresses written backwards.
+
+    Reflected about the HOLE SPAN, the axis everything else mirrors about, so A stays on
+    the hole A names. Checked on the geometry rather than on pixels: the two faces must
+    span the same width, and the bottom one must put A where the top one puts the last
+    column.
+    """
+    import dataclasses
+
+    from perfstudio.model import BoardLabels
+
+    from perfstudio.ui import view3d
+
+    doc = _load_dense()
+    board = dataclasses.replace(
+        doc.board, cols=6, rows=4, labels=BoardLabels(row_digits=2)
+    )
+    doc = dataclasses.replace(doc, board=board, components=(), conductors=())
+    span_w = (board.cols - 1) * board.pitch
+
+    top, bottom = view3d.build_legend(doc)
+
+    def points(actor: object) -> set[tuple[float, float]]:
+        data = actor.GetMapper().GetInput()  # type: ignore[attr-defined]
+        return {
+            (round(data.GetPoint(i)[0], 3), round(data.GetPoint(i)[1], 3))
+            for i in range(data.GetNumberOfPoints())
+        }
+
+    top_points = points(top)
+    bottom_points = points(bottom)
+    reflected = {(round(span_w - x, 3), y) for x, y in top_points}
+
+    assert bottom_points == reflected
+    # Not a vacuous assertion: A and R are different shapes, so an unreflected copy is a
+    # genuinely different point set. This is the comparison that fails if the flip goes.
+    assert bottom_points != top_points
+
+
 def test_solder_and_wire_are_not_the_same_grey() -> None:
     """PLAN.md Sec 8.3 makes telling them apart at a glance a requirement of this view.
     They were (0.72, 0.74, 0.77) and (0.85, 0.87, 0.89) -- the same grey."""
@@ -1584,6 +1626,44 @@ def test_the_legend_is_printed_in_the_border_and_not_over_the_pads(monkeypatch) 
             left = within(-margin_x, -extent_x / 2, centre.x(), height_mm / 2)
             right = within(span_w + extent_x / 2, span_w + margin_x, centre.x(), height_mm / 2)
             assert left or right, f"row number {text} is not in a left/right border strip"
+
+
+def test_a_legend_on_a_finger_edge_is_printed_outside_the_fingers(monkeypatch) -> None:
+    """Ink goes on the substrate and copper goes on top of it, so a label printed where a
+    finger is does not come out faint — it does not come out at all.
+
+    The position used to be measured OUT FROM THE PAD, which is right until the copper on
+    that edge is an elongated finger reaching most of the way to the board edge. The board
+    this application now opens on has fingers along two entire edges, so every column
+    letter was being printed underneath one and the board came up with numbers and no
+    letters. The test above does not catch it: its band runs from the grid pad to the
+    board edge, and the middle of a finger is inside that band.
+    """
+    from perfstudio.commands import create_starter_document
+    from perfstudio.geometry import board_edge_margin_mm, hole_span_mm, legend_strip_mm
+    from perfstudio.model import DocumentMeta
+
+    doc = create_starter_document(DocumentMeta(name="t", created="", modified=""))
+    assert {c.edge for c in doc.edge_connectors} == {"top", "bottom"}, "wrong board for this test"
+
+    margin_y = board_edge_margin_mm(doc.board, "vertical")
+    inset = legend_strip_mm(doc, "vertical")
+    _span_w, span_h = hole_span_mm(doc.board)
+
+    letters = [
+        (text, centre, height)
+        for text, centre, height, _w in _legend_labels_drawn(doc, monkeypatch)
+        if text.isalpha()
+    ]
+    assert len(letters) == doc.board.cols * 2, "the letters are not being laid down at all"
+
+    for text, centre, height in letters:
+        near = -margin_y < centre.y() - height / 2 and centre.y() + height / 2 < -margin_y + inset
+        far = (
+            span_h + margin_y - inset < centre.y() - height / 2
+            and centre.y() + height / 2 < span_h + margin_y
+        )
+        assert near or far, f"column letter {text} is printed under a connector finger"
 
 
 def test_board_setup_dialog_round_trips_the_new_board_fields() -> None:
