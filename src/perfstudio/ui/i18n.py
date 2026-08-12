@@ -52,6 +52,9 @@ TURKISH: Mapping[str, str] = {
     # the same accelerator means one of them cannot be reached from the keyboard at all.
     "&Board Setup…": "Kart Ayar&ları…",
     "Board &Features…": "Kart &Öğeleri…",
+    "Open &Recent": "&Son Kullanılanlar",
+    "(nothing yet)": "(henüz yok)",
+    "&Clear List": "Listeyi &Temizle",
     "&Import KiCad Netlist…": "KiCad Netlist &İçe Aktar…",
     "Export &Build Guide…": "&Montaj Rehberini Dışa Aktar…",
     "Export 1:1 PDF (component + solder side)…": "1:1 PDF Dışa Aktar (komponent + lehim yüzü)…",
@@ -127,7 +130,35 @@ TURKISH: Mapping[str, str] = {
     "Purple": "Mor",
     "White": "Beyaz",
     "Orange (phenolic)": "Turuncu (pertinaks)",
+    "&Keyboard Shortcuts…": "&Klavye Kısayolları…",
     "&About PerfStudio": "PerfStudio &Hakkında",
+    # -- the shortcut card, the mode banner and the empty-board guidance -------
+    "Keyboard Shortcuts": "Klavye Kısayolları",
+    "Action": "Eylem",
+    "Shortcut": "Kısayol",
+    "On the board": "Kart üzerinde",
+    "Undo": "Geri al:",
+    "Nothing to undo": "Geri alınacak bir şey yok",
+    "Redo the command you just took back": "Az önce geri aldığın komutu yinele",
+    "Nothing to redo": "Yinelenecek bir şey yok",
+    "Placing": "Yerleştiriliyor:",
+    "click a hole, Esc cancels": "bir deliğe tıkla, Esc iptal eder",
+    "Drawing": "Çiziliyor:",
+    "click both ends, Esc cancels": "iki ucu da tıkla, Esc iptal eder",
+    "click each pad, Enter or right-click finishes, Esc cancels":
+        "her pede tıkla, Enter veya sağ tık bitirir, Esc iptal eder",
+    "Adding pins to": "Pin ekleniyor:",
+    "Enter or right-click finishes, Esc cancels": "Enter veya sağ tık bitirir, Esc iptal eder",
+    "no pins yet": "henüz pin yok",
+    "Nothing on this board yet.": "Bu kartta henüz bir şey yok.",
+    "Pick a part from the Parts panel and click a hole to place it.":
+        "Parçalar panelinden bir parça seç ve yerleştirmek için bir deliğe tıkla.",
+    "Then Net ▸ New Net… to say what joins what, and Route ▸ Autoroute.":
+        "Sonra Netler ▸ Yeni Net… ile neyin neye bağlanacağını söyle, ardından Yol ▸ Otomatik.",
+    "An existing circuit comes in through File ▸ Import KiCad Netlist.":
+        "Mevcut bir devre Dosya ▸ KiCad Netlist İçe Aktar ile gelir.",
+    "Filter nets…  (gnd, power, U1)": "Netleri süz…  (gnd, power, U1)",
+    "Filter parts…  (resistor, dip, 5mm)": "Parçaları süz…  (direnç, dip, 5mm)",
     # -- toolbar -------------------------------------------------------------
     "Rotate": "Döndür",
     "Mirror": "Aynala",

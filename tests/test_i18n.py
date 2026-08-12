@@ -130,8 +130,9 @@ def test_no_two_entries_in_a_menu_claim_the_same_accelerator() -> None:
     from collections import Counter
 
     groups = {
-        "file": ["&New Board…", "&Open…", "&Save", "Save &As…", "&Board Setup…",
+        "file": ["&New Board…", "&Open…", "Open &Recent", "&Save", "Save &As…", "&Board Setup…",
                  "Board &Features…", "&Import KiCad Netlist…", "Export &Build Guide…", "&Quit"],
+        "help": ["&Keyboard Shortcuts…", "&About PerfStudio"],
         "edit": ["&Undo", "&Redo", "Rotate &Clockwise", "Rotate Counter-clock&wise",
                  "&Mirror", "Toggle &Lock", "&Delete"],
         "draw": ["&Solder Trace", "Solder Trace with S&pine", "&Bare Wire",

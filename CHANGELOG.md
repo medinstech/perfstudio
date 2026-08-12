@@ -22,6 +22,44 @@ closed without a bump.
 
 ### Added
 
+- **The window now says what state it is in.** Placing, drawing and picking pins each arm
+  a mode in which a click means something other than what it usually means, and the only
+  place any of them said so was the status bar — the bottom edge of a window a metre wide,
+  while the cursor is in the middle of the board. A mode nobody can see is
+  indistinguishable from an application that has stopped responding to clicks.
+  - **A banner over the board** names the armed mode and both ways out of it ("Adding pins
+    to GND: U1.8, C2.2 · Enter or right-click finishes, Esc cancels"). It is derived from
+    the scene on every change rather than remembered, so it cannot disagree with what the
+    next click will actually do, and it is transparent to the mouse — an overlay that ate
+    the click it was describing would be worse than no overlay.
+  - **An empty board says what to do with itself.** The application opens on a blank
+    5 × 7, and every route, check and export needs something on it first; a blank viewport
+    under a full menu bar is the one screen where a person cannot tell a tool that is ready
+    from one that is broken. It withdraws as soon as a part lands or a mode is armed.
+
+- **Recent files, and a toolbar you can save and undo from.** `File ▸ Open Recent` keeps
+  the last eight boards across runs, skipping any that have since moved — a perfboard
+  project is worked on across evenings, and hunting the same file out of a tree every time
+  was friction the application was adding for no reason. Save, Undo and Redo joined the
+  toolbar, and **undo and redo now grey out** when there is nothing behind or ahead: the
+  bus has always known, the window simply never asked, so an undo at the bottom of the
+  stack looked exactly like one that worked. Undo's tooltip names the command it would
+  take back.
+
+- **`Help ▸ Keyboard Shortcuts…` (F1), read off the real menus.** A hand-kept shortcut card
+  goes stale the first time an action moves, and a stale card teaches something that no
+  longer works, so this one is generated from the menus themselves and cannot describe a
+  binding the application does not have. It also lists the board gestures — middle-drag to
+  pan, right-click to finish a run, arrows to nudge a part a hole at a time — which are on
+  no menu at all and were previously discoverable only by reading the source. A test fails
+  if two actions ever claim one binding.
+
+- **Panel ergonomics.** A filter box on the Nets panel that matches pins as well as names,
+  because half the time the question is "what is U1.3 on" rather than "where is GND"; full
+  part names in a tooltip where the dock elides them; a wider parts column and a shorter
+  DRC panel, which was opening a quarter of the window tall to show four rows of a clean
+  board.
+
 - **A netlist you can write yourself, without KiCad.** `netlist.import` was the only way
   a net could ever enter a document, which quietly made a schematic capture package a
   prerequisite for the whole tool: with no net there is no ratsnest, and so nothing for
@@ -440,6 +478,20 @@ closed without a bump.
   are moulded into the top of a part and cannot be seen from below.
 
 ### Fixed
+
+- **The menus could be destroyed out from under the menu bar.** `QMenuBar.addMenu` hands
+  PySide a `QMenu` that Python believes it owns, and every menu in this window was held
+  only by a local variable inside the builder — so a garbage collection was free to delete
+  the real menu and leave the bar holding an action that pointed at freed memory. It
+  survived this long because nothing had ever walked the menus after building them; the
+  shortcut card is the first thing that does, and it found a destroyed `QMenu` on its
+  first run. Every menu is now referenced by the window, and a test collects garbage and
+  checks they are all still there.
+
+- **Quit had no working shortcut on Windows.** `QKeySequence.StandardKey.Quit` resolves
+  there to a key almost no keyboard has (it reports itself as "Exit"), so the binding was
+  effectively absent — and the new shortcut card printed it, which is how it was noticed.
+  It is Ctrl+Q now, which Qt maps to Cmd+Q on macOS.
 
 - **The pertinax board was still wrong in three more ways**, all corrected against the
   board in a user's hand rather than against a guess.

@@ -25,7 +25,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any, cast
 
-from PySide6.QtCore import QPointF, QRectF, Qt, Signal
+from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import (
     QBrush,
     QColor,
@@ -40,6 +40,7 @@ from PySide6.QtWidgets import (
     QGraphicsItem,
     QGraphicsScene,
     QGraphicsView,
+    QLabel,
 )
 
 from perfstudio.command import CommandBus, DispatchResult
@@ -107,6 +108,14 @@ from .bodies import (
     style_for,
 )
 from .scenetext import draw_label, draw_physical_label
+
+# The window's own palette, for the overlays that sit ON the board but belong to the
+# application rather than to the object -- see theme.py's note on why the two are apart.
+from .theme import ACCENT as THEME_ACCENT
+from .theme import BORDER as THEME_BORDER
+from .theme import PANEL as THEME_PANEL
+from .theme import TEXT as THEME_TEXT
+from .theme import TEXT_DIM as THEME_TEXT_DIM
 
 # --------------------------------------------------------------------------- theme
 
@@ -2410,7 +2419,63 @@ MIN_SCALE = 1.5
 MAX_SCALE = 90.0
 
 
+class ViewOverlay(QLabel):
+    """A line of text pinned over the board itself.
+
+    The status bar is the bottom edge of a window a metre wide and the cursor is in the
+    middle of the board, which is exactly where "why is my click doing nothing" gets
+    asked. A mode is that question's usual answer, so what is armed and how to leave it
+    has to be where the eye already is.
+
+    TRANSPARENT TO THE MOUSE, without exception. This sits over the top of the board and
+    the whole point of a mode is that the next click goes to the board -- an overlay that
+    ate the click it is describing would be worse than no overlay.
+    """
+
+    def __init__(self, parent: Any, style: str) -> None:
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setWordWrap(True)
+        self.setStyleSheet(style)
+        self.hide()
+
+    def show_text(self, text: str) -> None:
+        """Set the text and show it, or hide entirely when there is nothing to say."""
+        if not text:
+            self.hide()
+            return
+        self.setText(text)
+        self.adjustSize()
+        self.show()
+
+
+#: Armed mode. Blue: this is a state the user chose and can leave, not a problem.
+MODE_BANNER_STYLE = f"""
+    background: rgba(44, 95, 160, 235);
+    color: {THEME_TEXT};
+    border: 1px solid {THEME_ACCENT};
+    border-radius: 6px;
+    padding: 6px 14px;
+"""
+
+#: An empty board. Dim, because it is guidance rather than a message about anything wrong,
+#: and OPAQUE, because the pad grid showing through a paragraph is what makes people stop
+#: reading it. There is nothing on the board underneath worth seeing anyway -- that is the
+#: condition this block appears in.
+EMPTY_HINT_STYLE = f"""
+    background: {THEME_PANEL};
+    color: {THEME_TEXT_DIM};
+    border: 1px solid {THEME_BORDER};
+    border-radius: 8px;
+    padding: 16px 24px;
+"""
+
+
 class BoardView(QGraphicsView):
+    #: Gap between the top of the viewport and the mode banner.
+    BANNER_MARGIN_PX = 10
+
     def __init__(self, scene: BoardScene) -> None:
         super().__init__(scene)
         self.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.TextAntialiasing)
@@ -2421,6 +2486,74 @@ class BoardView(QGraphicsView):
         self.scale(6, 6)  # ~6 px per mm to start
         self._panning = False
         self._pan_origin = QPointF()
+        # Children of the VIEWPORT, not of the view: the viewport is what the scrollbars
+        # leave behind, so an overlay parented to it stays inside the board area and does
+        # not drift under a scrollbar when one appears.
+        self.mode_banner = ViewOverlay(self.viewport(), MODE_BANNER_STYLE)
+        self.empty_hint = ViewOverlay(self.viewport(), EMPTY_HINT_STYLE)
+        self.viewport().installEventFilter(self)
+
+    # -- overlays ------------------------------------------------------------
+
+    def show_mode(self, text: str) -> None:
+        """Say which mode is armed and how to leave it, or clear it with an empty string."""
+        self.mode_banner.show_text(text)
+        self._place_overlays()
+
+    def set_empty_hint(self, text: str) -> None:
+        """Guidance for a board with nothing on it. Empty text takes it away."""
+        self.empty_hint.show_text(text)
+        self._place_overlays()
+
+    #: How wide the guidance block is allowed to get. Measured rather than chosen: a line
+    #: much longer than this stops being read as a sentence and starts being skipped.
+    HINT_WIDTH_PX = 460
+
+    def _place_overlays(self) -> None:
+        area = self.viewport().rect()
+
+        # isHidden(), never isVisible(). A widget is "visible" only once every ancestor is
+        # too, so during window construction -- which is exactly when the first hint is set
+        # -- these labels are shown but not yet visible, and an isVisible() test would skip
+        # placing them and leave them where the un-laid-out viewport put them.
+        banner = self.mode_banner
+        if not banner.isHidden():
+            # One line if it fits, because the banner is a label rather than a paragraph
+            # and a two-line label reads as a warning. Only a viewport too narrow for the
+            # sentence makes it wrap.
+            banner.setWordWrap(False)
+            banner.adjustSize()
+            widest = max(area.width() - 2 * self.BANNER_MARGIN_PX, 120)
+            if banner.width() > widest:
+                banner.setWordWrap(True)
+                banner.setFixedWidth(widest)
+                banner.adjustSize()
+            banner.move(
+                area.center().x() - banner.width() // 2,
+                area.top() + self.BANNER_MARGIN_PX,
+            )
+
+        hint = self.empty_hint
+        if not hint.isHidden():
+            hint.setFixedWidth(min(self.HINT_WIDTH_PX, max(area.width() - 80, 160)))
+            hint.adjustSize()
+            hint.move(
+                area.center().x() - hint.width() // 2, area.center().y() - hint.height() // 2
+            )
+
+    def eventFilter(self, watched: Any, event: Any) -> bool:
+        """Re-place the overlays whenever the area under them changes size.
+
+        Watching the VIEWPORT rather than overriding resizeEvent on the view, because the
+        viewport is what actually changes: a scrollbar appearing takes 15 px off it without
+        the view being resized at all, and the first layout after show() resizes the
+        viewport when the view has already had its resize event. Getting this wrong leaves
+        the guidance block sitting off to one side of the board, which is exactly where a
+        first-time user is not looking.
+        """
+        if watched is self.viewport() and event.type() == QEvent.Type.Resize:
+            self._place_overlays()
+        return bool(super().eventFilter(watched, event))
 
     def current_scale(self) -> float:
         return float(self.transform().m11())

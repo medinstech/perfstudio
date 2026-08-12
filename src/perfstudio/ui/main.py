@@ -30,7 +30,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
-from PySide6.QtCore import QEventLoop, QRectF, Qt, QThread, QTimer
+from PySide6.QtCore import QEventLoop, QRectF, QSettings, Qt, QThread, QTimer
 from PySide6.QtGui import QAction, QColor, QImage, QKeySequence, QPainter
 from PySide6.QtWidgets import (
     QApplication,
@@ -161,6 +161,17 @@ from .export_pdf import export_pdf, verify_scale
 from .i18n import set_language, t
 from .theme import ERROR, OK, STYLESHEET, TEXT_DIM, WARNING
 from .view2d import RULER_MARGIN_MM, BoardScene, BoardView, next_reference
+
+
+#: Where the recent-file list is kept between runs. A function rather than a constant so a
+#: test can point it at a temporary file instead of the real user store -- a test suite has
+#: no business writing into somebody's registry, and one that did would also make the
+#: recent-files tests depend on whatever ran before them.
+def recent_files_settings() -> QSettings:
+    return QSettings("PerfStudio", "PerfStudio")
+
+
+RECENT_FILES_KEY = "recentFiles"
 
 ROLE_HOLES = int(Qt.ItemDataRole.UserRole) + 1
 ROLE_COMPONENT_IDS = int(Qt.ItemDataRole.UserRole) + 2
@@ -843,6 +854,105 @@ class NetDialog(QDialog):
         )
 
 
+class ShortcutsDialog(QDialog):
+    """Every keyboard shortcut, READ OFF THE MENU BAR rather than listed by hand.
+
+    A hand-kept list is a list that goes stale the first time an action moves, and a stale
+    shortcut card is worse than none: it teaches something that no longer works. Walking
+    the real QMenuBar means this dialog cannot describe a binding the application does not
+    have, and cannot miss one it does.
+
+    The board gestures at the top are the exception, and they are the reason this dialog
+    earns its place. Middle-drag to pan, right-click to finish a run, arrows to nudge a
+    part a hole at a time -- none of them is an action on any menu, so until now the only
+    way to find out was to read the source.
+    """
+
+    #: (gesture, what it does). Not actions, so nothing can derive them; they are listed
+    #: here because they are otherwise undiscoverable.
+    BOARD_GESTURES: tuple[tuple[str, str], ...] = (
+        ("Middle-drag", "Pan the board"),
+        ("Wheel", "Zoom about the pointer"),
+        ("Drag a part", "Move it, snapping to the nearest hole"),
+        ("Arrow keys", "Nudge the selected part one hole (Shift: five)"),
+        ("Right-click", "Finish the trace or net being drawn"),
+        ("Enter", "Finish it without moving the pointer"),
+        ("Esc", "Leave the current mode"),
+        ("Double-click a net", "Route just that net"),
+        ("Click a DRC row", "Zoom to the holes it names"),
+    )
+
+    def __init__(self, menus: Any, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(t("Keyboard Shortcuts"))
+        self.resize(560, 640)
+
+        tree = QTreeWidget()
+        tree.setHeaderLabels([t("Action"), t("Shortcut")])
+        tree.setRootIsDecorated(False)
+        tree.setAlternatingRowColors(True)
+        tree.setIndentation(12)
+        header = tree.header()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+
+        gestures = QTreeWidgetItem([t("On the board"), ""])
+        tree.addTopLevelItem(gestures)
+        for gesture, what in self.BOARD_GESTURES:
+            gestures.addChild(QTreeWidgetItem([what, gesture]))
+        gestures.setExpanded(True)
+
+        for menu_title, rows in self.menu_shortcuts(menus):
+            group = QTreeWidgetItem([menu_title, ""])
+            tree.addTopLevelItem(group)
+            for label, keys in rows:
+                group.addChild(QTreeWidgetItem([label, keys]))
+            group.setExpanded(True)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(self.reject)
+        buttons.accepted.connect(self.accept)
+
+        layout = QVBoxLayout()
+        layout.addWidget(tree)
+        layout.addWidget(buttons)
+        self.setLayout(layout)
+
+    @staticmethod
+    def menu_shortcuts(menus: Any) -> list[tuple[str, list[tuple[str, str]]]]:
+        """(menu, [(action, keys)]) for every action carrying a shortcut.
+
+        Takes the window's own list of QMenus -- which includes the submenus as entries of
+        their own -- rather than re-deriving it from the menu bar. That is not a shortcut
+        in the code: asking a menu-bar action for its ``menu()`` hands Python a QMenu it
+        believes it owns, and the next garbage collection then DESTROYS the real menu. The
+        first version of this dialog did exactly that and left the window with a menu bar
+        of actions pointing at freed menus.
+
+        Static, so a test can assert against a window's real bindings without opening a
+        dialog to do it.
+        """
+        found: list[tuple[str, list[tuple[str, str]]]] = []
+        for menu in menus:
+            rows = _shortcut_rows(menu.actions())
+            if rows:
+                found.append((_plain(menu.title()), rows))
+        return found
+
+
+def _shortcut_rows(actions: Any) -> list[tuple[str, str]]:
+    return [
+        (_plain(action.text()), action.shortcut().toString())
+        for action in actions
+        if not action.isSeparator() and not action.shortcut().isEmpty()
+    ]
+
+
+def _plain(label: str) -> str:
+    """A menu label as a person reads it: no accelerator marker, no trailing ellipsis."""
+    return label.replace("&", "").removesuffix("…").strip()
+
+
 def _preset_features(
     preset: BoardPreset | None, board: Board
 ) -> tuple[tuple[EdgeConnector, ...], tuple[MountingHole, ...]] | None:
@@ -1260,9 +1370,15 @@ class MainWindow(QMainWindow):
         act_open = file_menu.addAction(t("&Open…"))
         act_open.setShortcut(QKeySequence.StandardKey.Open)
         act_open.triggered.connect(self.on_open)
+        # Between Open and Save, where every editor puts it. A perfboard project is worked
+        # on across evenings, and hunting the same file out of a directory tree every time
+        # is friction the application was adding for no reason.
+        self.menu_recent = file_menu.addMenu(t("Open &Recent"))
+        self._refresh_recent_menu()
         act_save = file_menu.addAction(t("&Save"))
         act_save.setShortcut(QKeySequence.StandardKey.Save)
         act_save.triggered.connect(self.on_save)
+        self.act_save = act_save
         act_save_as = file_menu.addAction(t("Save &As…"))
         act_save_as.setShortcut(QKeySequence.StandardKey.SaveAs)
         act_save_as.triggered.connect(self.on_save_as)
@@ -1296,16 +1412,23 @@ class MainWindow(QMainWindow):
         act_png.triggered.connect(self.on_export_3d_png)
         file_menu.addSeparator()
         act_quit = file_menu.addAction(t("&Quit"))
-        act_quit.setShortcut(QKeySequence.StandardKey.Quit)
+        # Ctrl+Q rather than StandardKey.Quit: on Windows that standard key resolves to no
+        # usable binding at all -- it reports itself as "Exit", a key almost no keyboard
+        # has -- so Quit had no shortcut on the platform this is developed on. Qt maps
+        # Ctrl to Cmd on macOS, so spelling it out costs nothing there.
+        act_quit.setShortcut(QKeySequence("Ctrl+Q"))
         act_quit.triggered.connect(self.close)
 
         edit_menu = menu.addMenu(t("&Edit"))
-        act_undo = edit_menu.addAction(t("&Undo"))
-        act_undo.setShortcut(QKeySequence.StandardKey.Undo)
-        act_undo.triggered.connect(self.on_undo)
-        act_redo = edit_menu.addAction(t("&Redo"))
-        act_redo.setShortcut(QKeySequence("Ctrl+Shift+Z"))
-        act_redo.triggered.connect(self.on_redo)
+        # Held on the window because their enabled state is now kept in step with the
+        # history: an Undo that is greyed out says "there is nothing behind you" without
+        # anyone having to press it to find out.
+        self.act_undo = edit_menu.addAction(t("&Undo"))
+        self.act_undo.setShortcut(QKeySequence.StandardKey.Undo)
+        self.act_undo.triggered.connect(self.on_undo)
+        self.act_redo = edit_menu.addAction(t("&Redo"))
+        self.act_redo.setShortcut(QKeySequence("Ctrl+Shift+Z"))
+        self.act_redo.triggered.connect(self.on_redo)
         edit_menu.addSeparator()
 
         # The engine has had component.rotate and component.mirror since the first commit
@@ -1558,6 +1681,24 @@ class MainWindow(QMainWindow):
             self.act_colour[scheme.key] = action
 
         help_menu = menu.addMenu(t("&Help"))
+        # EVERY menu is kept referenced here, and it is not tidiness. QMenuBar.addMenu
+        # returns a QMenu that PySide hands to Python to own; with only a local holding it,
+        # the garbage collector is free to destroy the C++ menu the moment this method
+        # returns, and what is left in the menu bar is an action pointing at nothing. It
+        # survived this long because nothing ever walked the menu bar afterwards -- the
+        # shortcut card does, and found a destroyed QMenu on the first attempt.
+        self._menus = [
+            file_menu, self.menu_recent, edit_menu, draw_menu, place_menu, net_menu,
+            route_menu, style_menu, view_menu, colour_menu, help_menu,
+        ]
+        act_keys = help_menu.addAction(t("&Keyboard Shortcuts…"))
+        act_keys.setShortcut(QKeySequence("F1"))
+        act_keys.setToolTip(
+            "Every binding, read off this menu bar — plus the board gestures, which are "
+            "on no menu and were previously only in the source."
+        )
+        act_keys.triggered.connect(self.on_shortcuts)
+        help_menu.addSeparator()
         act_about = help_menu.addAction(t("&About PerfStudio"))
         act_about.triggered.connect(self.on_about)
 
@@ -1572,6 +1713,14 @@ class MainWindow(QMainWindow):
         bar.setMovable(False)
         self.addToolBar(bar)
 
+        # Save, then undo and redo, then the work. These three were reachable only from a
+        # menu or a shortcut, which is the wrong place for the two actions a person reaches
+        # for after every experiment -- and an undo you cannot see the state of is one you
+        # press hopefully.
+        bar.addAction(self.act_save)
+        bar.addAction(self.act_undo)
+        bar.addAction(self.act_redo)
+        bar.addSeparator()
         for kind in ("solder-trace", "bare-wire", "insulated-wire"):
             bar.addAction(self.act_draw[kind])
         bar.addSeparator()
@@ -1612,7 +1761,7 @@ class MainWindow(QMainWindow):
         layout.setSpacing(6)
 
         self.library_filter = QLineEdit()
-        self.library_filter.setPlaceholderText("Filter parts…  (resistor, dip, 5mm)")
+        self.library_filter.setPlaceholderText(t("Filter parts…  (resistor, dip, 5mm)"))
         self.library_filter.setClearButtonEnabled(True)
         self.library_filter.textChanged.connect(self._refresh_library)
         layout.addWidget(self.library_filter)
@@ -1656,7 +1805,12 @@ class MainWindow(QMainWindow):
             for footprint in by_archetype[archetype]:
                 leaf = QTreeWidgetItem([footprint.name, str(len(footprint.pins))])
                 leaf.setData(0, ROLE_FOOTPRINT_ID, footprint.id)
-                leaf.setToolTip(0, f"{footprint.id} — {len(footprint.pins)} pin(s)")
+                # The NAME first, because the column it sits in is the one that gets
+                # elided: "Film capa…" in a 300 px dock is the string a tooltip has to
+                # finish, and the id alone was no help at all with that.
+                leaf.setToolTip(
+                    0, f"{footprint.name}\n{footprint.id} — {len(footprint.pins)} pin(s)"
+                )
                 group.addChild(leaf)
             # Expanded only when the filter has narrowed things down, otherwise the twenty-eight
             # pin headers bury everything else.
@@ -1673,12 +1827,82 @@ class MainWindow(QMainWindow):
             self.label_place_hint.setText("Pick a part, then click the board. Esc cancels.")
             self.view.viewport().unsetCursor()
             self.library_tree.clearSelection()
+            self._refresh_mode_banner()
             return
         footprint = self.lookup(footprint_id)
         name = footprint.name if footprint is not None else footprint_id
         ref = next_reference(self.bus.document, footprint_id)
         self.label_place_hint.setText(f"Click a hole to place <b>{ref}</b> ({name}). Esc cancels.")
         self.view.viewport().setCursor(Qt.CursorShape.CrossCursor)
+        self._refresh_mode_banner()
+
+    # -- what mode am I in ----------------------------------------------------
+    #
+    # Placement, drawing and pin-picking all arm a mode over the board, and until now the
+    # only place any of them said so was the status bar -- the bottom edge of a window a
+    # metre wide, while the cursor is in the middle of the board. A mode nobody can see is
+    # indistinguishable from an application that has stopped responding to clicks, and it
+    # is the state in which every click means something other than what it usually means.
+
+    def _refresh_mode_banner(self) -> None:
+        """Put the armed mode over the board, or take the banner away.
+
+        Derived from the scene rather than remembered, so the banner cannot disagree with
+        what a click will actually do -- the scene is the thing holding the mode.
+        """
+        self.view.show_mode(self._mode_text())
+        # Somebody mid-mode is plainly not stuck, and two blocks of text over one board is
+        # one too many.
+        self._refresh_empty_hint()
+
+    def _mode_text(self) -> str:
+        net_id = self.scene.armed_net_id
+        if net_id is not None:
+            picked = self.scene.picked_pins()
+            names = ", ".join(f"{ref}.{pin}" for ref, pin in picked)
+            listed = names if picked else t("no pins yet")
+            return (
+                f"{t('Adding pins to')} {self._net_name(net_id)}: {listed}  ·  "
+                f"{t('Enter or right-click finishes, Esc cancels')}"
+            )
+
+        footprint_id = self.scene.armed_footprint_id
+        if footprint_id:
+            footprint = self.lookup(footprint_id)
+            name = footprint.name if footprint is not None else footprint_id
+            ref = next_reference(self.bus.document, footprint_id)
+            return f"{t('Placing')} {ref} ({name})  ·  {t('click a hole, Esc cancels')}"
+
+        kind = self.scene.armed_draw_kind
+        if kind:
+            two_point = kind in ("bare-wire", "insulated-wire", "top-jumper")
+            how = (
+                t("click both ends, Esc cancels")
+                if two_point
+                else t("click each pad, Enter or right-click finishes, Esc cancels")
+            )
+            return f"{t('Drawing')} {kind.replace('-', ' ')}  ·  {how}"
+
+        return ""
+
+    def _refresh_empty_hint(self) -> None:
+        """Tell a blank board what to do with itself.
+
+        The application opens on an empty 5 x 7 board, and every route, check and export
+        needs something on it first. An empty viewport with a full menu bar above it is
+        the one screen where a person cannot tell whether they are looking at a tool that
+        is ready or one that is broken.
+        """
+        document = self.bus.document
+        if document.components or document.conductors or self._mode_text():
+            self.view.set_empty_hint("")
+            return
+        self.view.set_empty_hint(
+            f"<b>{t('Nothing on this board yet.')}</b><br><br>"
+            f"{t('Pick a part from the Parts panel and click a hole to place it.')}<br>"
+            f"{t('Then Net ▸ New Net… to say what joins what, and Route ▸ Autoroute.')}<br><br>"
+            f"{t('An existing circuit comes in through File ▸ Import KiCad Netlist.')}"
+        )
 
     def _on_component_placed(self, result: DispatchResult) -> None:
         if result.ok:
@@ -1705,10 +1929,26 @@ class MainWindow(QMainWindow):
         out whether a net was finished was to read an LVS message. "Left" is the ratsnest's
         own count, so it reaches zero exactly when the net is closed.
         """
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(6)
+
+        # The same escape hatch the parts library has, for the same reason: a netlist of
+        # any size is mostly nets you are not working on, and "which of these still needs
+        # something" is a question you ask about one of them at a time.
+        self.nets_filter = QLineEdit()
+        self.nets_filter.setPlaceholderText(t("Filter nets…  (gnd, power, U1)"))
+        self.nets_filter.setClearButtonEnabled(True)
+        self.nets_filter.textChanged.connect(
+            lambda _text: self._refresh_nets_panel(self._last_ratsnest)
+        )
+        layout.addWidget(self.nets_filter)
+
         self.nets_tree = QTreeWidget()
         self.nets_tree.setHeaderLabels(["Net", "Class", "Pins", "Left"])
         self.nets_tree.setAlternatingRowColors(True)
-        self.nets_tree.setRootIsDecorated(False)
+        self.nets_tree.setRootIsDecorated(True)
         # The net name absorbs the spare width and the three narrow columns keep their
         # content. Fixed widths pushed "Left" off the edge of the dock -- which is the one
         # column the panel exists for, so it must never be the one that gets clipped.
@@ -1718,10 +1958,15 @@ class MainWindow(QMainWindow):
             header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
         self.nets_tree.itemSelectionChanged.connect(self._on_net_selection_changed)
         self.nets_tree.itemDoubleClicked.connect(self._on_net_double_clicked)
+        layout.addWidget(self.nets_tree)
+
         dock = QDockWidget(t("Nets"), self)
-        dock.setWidget(self.nets_tree)
+        dock.setWidget(panel)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
-        self.resizeDocks([dock], [300], Qt.Orientation.Horizontal)
+        self.dock_nets = dock
+        # 340 rather than 300: at 300 the parts library elides half its names, and the two
+        # left-hand docks share a column.
+        self.resizeDocks([dock], [340], Qt.Orientation.Horizontal)
 
     def _build_drc_dock(self) -> None:
         self.drc_tree = QTreeWidget()
@@ -1731,6 +1976,10 @@ class MainWindow(QMainWindow):
         dock = QDockWidget(t("DRC / LVS"), self)
         dock.setWidget(self.drc_tree)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, dock)
+        # A clean board is four rows, and this panel was opening a quarter of the window
+        # tall to show them -- taken off the board, which is the thing being worked on.
+        self.dock_drc = dock
+        self.resizeDocks([dock], [190], Qt.Orientation.Vertical)
 
     def _build_status_bar(self) -> None:
         """Separate labelled fields rather than one long sentence.
@@ -1790,6 +2039,11 @@ class MainWindow(QMainWindow):
         self._refresh_3d()
 
         self._refresh_title()
+        self._refresh_undo_actions()
+        self._refresh_empty_hint()
+        # The banner names the part about to be placed, and next_reference reads the
+        # document to work that out -- so placing R4 has to move the banner on to R5.
+        self._refresh_mode_banner()
         if entry is not None:
             self.statusBar().showMessage(entry.description, 6000)
 
@@ -1960,9 +2214,12 @@ class MainWindow(QMainWindow):
         previously = set(self._selected_net_ids())
         expanded = self._expanded_net_ids()
         nodes_by_net = {net.id: net.nodes for net in self.bus.document.nets}
+        needle = self.nets_filter.text().strip().lower()
         tree.blockSignals(True)
         tree.clear()
         for entry in nets:
+            if needle and not self._net_matches(entry, nodes_by_net.get(entry.net_id, ()), needle):
+                continue
             remaining = len(entry.links)
             item = QTreeWidgetItem(
                 [
@@ -2004,6 +2261,19 @@ class MainWindow(QMainWindow):
                 item.setSelected(True)
         tree.blockSignals(False)
         self._refresh_net_actions()
+
+    @staticmethod
+    def _net_matches(entry: NetRatsnest, nodes: tuple[NetNode, ...], needle: str) -> bool:
+        """Whether a net answers the filter box.
+
+        Matched against the pins as well as the name, because half the time the question
+        is "what is U1 pin 3 on" rather than "where is GND" -- and the pin rows are right
+        there under the net now.
+        """
+        haystack = " ".join(
+            [entry.net_name, entry.net_class, *(f"{n.component_ref}.{n.pin}" for n in nodes)]
+        ).lower()
+        return needle in haystack
 
     def _selected_net_ids(self) -> tuple[NetId, ...]:
         """The nets picked in the panel, deduplicated -- a net row and two of its pin rows
@@ -2523,6 +2793,23 @@ class MainWindow(QMainWindow):
     def on_redo(self) -> None:
         self.bus.redo()
 
+    def _refresh_undo_actions(self) -> None:
+        """Grey out undo and redo when there is nothing behind or ahead, and name what
+        they would do.
+
+        The bus has always known both -- the window simply never asked, so the two actions
+        were permanently enabled and an undo at the bottom of the stack looked identical to
+        one that worked. The label carries the command's own description, which is the same
+        string the status bar showed when it ran, so "Undo Place R4" needs no explaining.
+        """
+        history = self.bus.history()
+        self.act_undo.setEnabled(self.bus.can_undo())
+        self.act_redo.setEnabled(self.bus.can_redo())
+        last = history[-1] if history and self.bus.can_undo() else ""
+        self.act_undo.setToolTip(f"{t('Undo')} {last}" if last else t("Nothing to undo"))
+        ahead = t("Redo the command you just took back")
+        self.act_redo.setToolTip(ahead if self.bus.can_redo() else t("Nothing to redo"))
+
     # -- editing the selection ----------------------------------------------
     #
     # All three go through the bus, one command per selected part, exactly as a drag does.
@@ -2606,6 +2893,7 @@ class MainWindow(QMainWindow):
         """Keep the menu in step when the scene ends drawing by itself (Esc, or commit)."""
         for name, action in self.act_draw.items():
             action.setChecked(name == kind)
+        self._refresh_mode_banner()
 
     def _on_conductor_drawn(self, result: Any) -> None:
         if result is not None and not result.ok:
@@ -2764,6 +3052,64 @@ class MainWindow(QMainWindow):
         """
         BoardFeaturesDialog(self.bus, self).exec()
 
+    # -- the files you were last working on -----------------------------------
+
+    #: How many to keep. Eight is one screenful of menu and about as far back as anyone
+    #: recognises a file name.
+    RECENT_LIMIT = 8
+
+    def _recent_paths(self) -> list[str]:
+        stored = recent_files_settings().value(RECENT_FILES_KEY, [])
+        # QSettings hands back whatever the platform store round-tripped: a list on most
+        # of them, a bare string when exactly one entry was saved, None when the key is
+        # missing. All three have to become a list here or the menu builder inherits the
+        # problem.
+        if isinstance(stored, str):
+            return [stored]
+        if not isinstance(stored, list):
+            return []
+        return [str(entry) for entry in stored if entry]
+
+    def _remember_path(self, path: Path) -> None:
+        """Put a file at the top of the recent list, dropping any earlier mention of it."""
+        resolved = str(path.resolve())
+        kept = [entry for entry in self._recent_paths() if entry != resolved]
+        recent_files_settings().setValue(
+            RECENT_FILES_KEY, [resolved, *kept][: self.RECENT_LIMIT]
+        )
+        self._refresh_recent_menu()
+
+    def _refresh_recent_menu(self) -> None:
+        """Rebuild the submenu from the stored list, skipping files that are gone.
+
+        Skipped rather than shown greyed out: a list of names that no longer open anything
+        is a list you stop reading, and the file was moved by the user, not lost by us.
+        """
+        menu = self.menu_recent
+        menu.clear()
+        existing = [Path(entry) for entry in self._recent_paths() if Path(entry).is_file()]
+        if not existing:
+            empty = menu.addAction(t("(nothing yet)"))
+            empty.setEnabled(False)
+            return
+        for index, path in enumerate(existing, start=1):
+            # &1..&8: the accelerator is the position, so it is stable while the names
+            # underneath it are not.
+            action = menu.addAction(f"&{index}  {path.name}")
+            action.setToolTip(str(path))
+            action.triggered.connect(lambda _checked=False, p=path: self.on_open_recent(p))
+        menu.addSeparator()
+        menu.addAction(t("&Clear List")).triggered.connect(self.on_clear_recent)
+
+    def on_open_recent(self, path: Path) -> None:
+        if not self._offer_to_save():
+            return
+        self._load_path(path)
+
+    def on_clear_recent(self) -> None:
+        recent_files_settings().setValue(RECENT_FILES_KEY, [])
+        self._refresh_recent_menu()
+
     def on_open(self) -> None:
         if not self._offer_to_save():
             return
@@ -2799,6 +3145,7 @@ class MainWindow(QMainWindow):
         note = f" ({len(result.warnings)} warning(s))" if result.warnings else ""
         self.statusBar().showMessage(f"Loaded {path.name}{note}", 8000)
         self._mark_saved()
+        self._remember_path(path)
 
     # -- nets, entered by hand -----------------------------------------------
     #
@@ -2925,12 +3272,14 @@ class MainWindow(QMainWindow):
 
     def _on_net_pins_armed(self, net_id: str) -> None:
         self.act_finish_pins.setEnabled(bool(net_id))
+        self._refresh_mode_banner()
         if not net_id:
             self.statusBar().clearMessage()
             return
         self.statusBar().showMessage(f"{self._pin_session_prefix(net_id)} — {self.PIN_HINT}", 0)
 
     def _on_net_pins_changed(self, labels: list[Any]) -> None:
+        self._refresh_mode_banner()
         net_id = self.scene.armed_net_id
         if not net_id:
             return
@@ -3177,6 +3526,7 @@ class MainWindow(QMainWindow):
         stamped = dataclasses.replace(doc, meta=dataclasses.replace(doc.meta, modified=_now_iso()))
         path.write_text(persist.serialize_document(stamped), encoding="utf-8")
         self._mark_saved()
+        self._remember_path(path)
         self.statusBar().showMessage(f"Saved {path}")
 
     def on_export_pdf(self) -> None:
@@ -3266,6 +3616,9 @@ class MainWindow(QMainWindow):
                 f"Written to {written[0].parent}, with {len(guide.warnings)} thing(s) it "
                 f"could not cover:\n\n{lines}",
             )
+
+    def on_shortcuts(self) -> None:
+        ShortcutsDialog(self._menus, self).exec()
 
     def on_about(self) -> None:
         """The version, in a form someone can copy into a bug report.

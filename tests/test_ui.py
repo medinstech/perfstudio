@@ -66,6 +66,23 @@ def qapp():
     yield app
 
 
+@pytest.fixture(autouse=True)
+def _recent_files_in_a_temp_file(tmp_path, monkeypatch):
+    """Keep the recent-file list out of the real user store.
+
+    A test suite has no business writing into somebody's registry, and one that did would
+    also make these tests depend on whatever ran before them -- including on the developer
+    having opened a board that morning.
+    """
+    from PySide6.QtCore import QSettings
+
+    from perfstudio.ui import main as main_module
+
+    store = QSettings(str(tmp_path / "recent.ini"), QSettings.Format.IniFormat)
+    monkeypatch.setattr(main_module, "recent_files_settings", lambda: store)
+    yield store
+
+
 def _load_dense() -> PerfDocument:
     text = GOLDEN.read_text(encoding="utf-8")
     result = persist.deserialize_document(text)
@@ -2216,4 +2233,309 @@ def test_escape_ends_a_pin_session_even_though_it_is_the_drawing_shortcut() -> N
     window.on_draw_mode("", False)
 
     assert window.scene.armed_net_id is None
+    _close(window)
+
+
+# ---------------------------------------------------------------------------
+# Telling the user what state the board is in
+#
+# Placing, drawing and picking pins all arm a mode in which a click means something
+# other than what it usually means, and the only place any of them said so was the
+# status bar -- the bottom edge of a window a metre wide, while the cursor is in the
+# middle of the board. A mode nobody can see is indistinguishable from an application
+# that has stopped responding.
+# ---------------------------------------------------------------------------
+
+
+def test_the_armed_mode_is_named_over_the_board() -> None:
+    window = _window_on(_load_dense())
+
+    window.scene.arm_placement("r-axial-5")
+
+    assert not window.view.mode_banner.isHidden()
+    assert "Placing" in window.view.mode_banner.text()
+    window.scene.arm_placement(None)
+    assert window.view.mode_banner.isHidden()
+    _close(window)
+
+
+def test_the_banner_follows_the_pins_as_they_are_picked() -> None:
+    from perfstudio.commands import AddNetPayload
+    from perfstudio.geometry import all_pin_holes
+
+    window = _window_on(_load_dense())
+    window.bus.dispatch("net.add", AddNetPayload(name="HAND", net_class="ground"))
+    net = next(n for n in window.bus.document.nets if n.name == "HAND")
+    taken = {(node.component_ref, node.pin) for n in window.bus.document.nets for node in n.nodes}
+    free = next(
+        hole
+        for comp in window.bus.document.components
+        if (fp := window.lookup(comp.footprint_id)) is not None
+        for pin, hole in all_pin_holes(comp, fp)
+        if (comp.ref, pin.number) not in taken
+    )
+
+    window.scene.arm_net_pins(net.id)
+    assert "HAND" in window.view.mode_banner.text()
+    window.scene.net_pin_click(free)
+
+    assert "." in window.view.mode_banner.text()  # the pin it just took, "R1.2"
+    window.scene.commit_net_pins()
+    assert window.view.mode_banner.isHidden()
+    _close(window)
+
+
+def test_an_empty_board_says_what_to_do_with_itself() -> None:
+    """The application opens on a blank 5 x 7, and every route, check and export needs
+    something on it first."""
+    from perfstudio.commands import PlaceComponentPayload, create_starter_document
+    from perfstudio.model import DocumentMeta
+
+    stamp = "2026-01-01T00:00:00.000Z"
+    meta = DocumentMeta(name="t", created=stamp, modified=stamp)
+    window = _window_on(create_starter_document(meta))
+
+    assert not window.view.empty_hint.isHidden()
+
+    window.bus.dispatch(
+        "component.place",
+        PlaceComponentPayload(
+            ref="R1", value="10k", footprint_id="r-axial-5", anchor=HoleCoord(2, 2)
+        ),
+    )
+
+    assert window.view.empty_hint.isHidden()
+    _close(window)
+
+
+def test_the_guidance_gets_out_of_the_way_of_a_mode() -> None:
+    """Somebody mid-mode is plainly not stuck, and two blocks of text over one board is
+    one too many."""
+    from perfstudio.commands import create_starter_document
+    from perfstudio.model import DocumentMeta
+
+    stamp = "2026-01-01T00:00:00.000Z"
+    meta = DocumentMeta(name="t", created=stamp, modified=stamp)
+    window = _window_on(create_starter_document(meta))
+    assert not window.view.empty_hint.isHidden()
+
+    window.scene.arm_placement("r-axial-5")
+
+    assert window.view.empty_hint.isHidden()
+    window.scene.arm_placement(None)
+    assert not window.view.empty_hint.isHidden()
+    _close(window)
+
+
+def test_the_overlays_never_eat_a_click() -> None:
+    """They sit over the board, and the whole point of a mode is that the next click
+    reaches the board. An overlay that swallowed the click it was describing would be
+    worse than no overlay at all."""
+    from PySide6.QtCore import Qt as QtCore_Qt
+
+    window = _window_on(_load_dense())
+
+    for overlay in (window.view.mode_banner, window.view.empty_hint):
+        assert overlay.testAttribute(QtCore_Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+    _close(window)
+
+
+# ---------------------------------------------------------------------------
+# The files you were last working on
+# ---------------------------------------------------------------------------
+
+
+def test_opening_a_document_puts_it_on_the_recent_list(tmp_path) -> None:
+    window = _window_on(_load_dense())
+    board = tmp_path / "board.perf"
+    board.write_text(GOLDEN.read_text(encoding="utf-8"), encoding="utf-8")
+
+    window._load_path(board)
+
+    assert window._recent_paths() == [str(board.resolve())]
+    assert next(a.text() for a in window.menu_recent.actions()).endswith("board.perf")
+    _close(window)
+
+
+def test_the_recent_list_moves_a_repeat_to_the_top_rather_than_listing_it_twice(
+    tmp_path,
+) -> None:
+    window = _window_on(_load_dense())
+    first = tmp_path / "one.perf"
+    second = tmp_path / "two.perf"
+    for path in (first, second):
+        path.write_text(GOLDEN.read_text(encoding="utf-8"), encoding="utf-8")
+
+    window._remember_path(first)
+    window._remember_path(second)
+    window._remember_path(first)
+
+    assert window._recent_paths() == [str(first.resolve()), str(second.resolve())]
+    _close(window)
+
+
+def test_the_recent_list_is_capped(tmp_path) -> None:
+    window = _window_on(_load_dense())
+    for index in range(window.RECENT_LIMIT + 3):
+        path = tmp_path / f"b{index}.perf"
+        path.write_text(GOLDEN.read_text(encoding="utf-8"), encoding="utf-8")
+        window._remember_path(path)
+
+    assert len(window._recent_paths()) == window.RECENT_LIMIT
+    _close(window)
+
+
+def test_a_file_that_has_gone_away_is_left_out_of_the_menu(tmp_path) -> None:
+    """Skipped rather than shown greyed out: a list of names that no longer open anything
+    is a list you stop reading."""
+    window = _window_on(_load_dense())
+    path = tmp_path / "gone.perf"
+    path.write_text(GOLDEN.read_text(encoding="utf-8"), encoding="utf-8")
+    window._remember_path(path)
+    path.unlink()
+
+    window._refresh_recent_menu()
+
+    labels = [a.text() for a in window.menu_recent.actions()]
+    assert not any("gone.perf" in label for label in labels)
+    _close(window)
+
+
+def test_clearing_the_recent_list_empties_the_menu(tmp_path) -> None:
+    window = _window_on(_load_dense())
+    path = tmp_path / "one.perf"
+    path.write_text(GOLDEN.read_text(encoding="utf-8"), encoding="utf-8")
+    window._remember_path(path)
+
+    window.on_clear_recent()
+
+    assert window._recent_paths() == []
+    assert [a.text() for a in window.menu_recent.actions()] == ["(nothing yet)"]
+    _close(window)
+
+
+def test_undo_and_redo_say_whether_there_is_anything_to_do(tmp_path) -> None:
+    """The bus has always known both; the window simply never asked, so an undo at the
+    bottom of the stack looked identical to one that worked."""
+    from perfstudio.commands import AddNetPayload
+
+    window = _window_on(_load_dense())
+    assert window.act_undo.isEnabled() is False
+    assert window.act_redo.isEnabled() is False
+
+    window.bus.dispatch("net.add", AddNetPayload(name="HAND"))
+    assert window.act_undo.isEnabled() is True
+    assert "HAND" in window.act_undo.toolTip()
+
+    window.bus.undo()
+    assert window.act_undo.isEnabled() is False
+    assert window.act_redo.isEnabled() is True
+    _close(window)
+
+
+# ---------------------------------------------------------------------------
+# Panels
+# ---------------------------------------------------------------------------
+
+
+def test_the_nets_panel_filters_by_name_and_by_pin() -> None:
+    """Half the time the question is "what is U1 pin 3 on", not "where is GND"."""
+    window = _window_on(_load_dense())
+    all_rows = window.nets_tree.topLevelItemCount()
+    assert all_rows > 1
+
+    window.nets_filter.setText("gnd")
+    named = [
+        window.nets_tree.topLevelItem(i).text(0)
+        for i in range(window.nets_tree.topLevelItemCount())
+    ]
+    assert named and all("gnd" in name.lower() for name in named)
+
+    node = window.bus.document.nets[0].nodes[0]
+    window.nets_filter.setText(f"{node.component_ref}.{node.pin}")
+    assert window.nets_tree.topLevelItemCount() == 1
+
+    window.nets_filter.clear()
+    assert window.nets_tree.topLevelItemCount() == all_rows
+    _close(window)
+
+
+def test_a_part_whose_name_the_dock_cannot_fit_carries_it_in_a_tooltip() -> None:
+    window = _window_on(_load_dense())
+    tree = window.library_tree
+    group = tree.topLevelItem(0)
+    assert group is not None and group.childCount()
+    leaf = group.child(0)
+
+    assert leaf.text(0) in leaf.toolTip(0)
+    _close(window)
+
+
+# ---------------------------------------------------------------------------
+# The shortcut card
+# ---------------------------------------------------------------------------
+
+
+def test_the_shortcut_card_is_read_off_the_real_menu_bar() -> None:
+    """A hand-kept list goes stale the first time an action moves, and a stale shortcut
+    card teaches something that no longer works."""
+    from perfstudio.ui.main import ShortcutsDialog
+
+    window = _window_on(_load_dense())
+
+    listed = ShortcutsDialog.menu_shortcuts(window._menus)
+    flat = {label: keys for _menu, rows in listed for label, keys in rows}
+
+    assert flat["Save"] == window.act_save.shortcut().toString()
+    assert flat["Autoroute All Nets"] == "Ctrl+R"
+    assert "Rotate Clockwise" in flat
+    # Read from the menu, so an action with no binding must not appear at all.
+    assert "Finish Adding Pins" not in flat
+    _close(window)
+
+
+def test_no_two_actions_claim_the_same_shortcut() -> None:
+    """Two actions on one binding means one of them cannot be reached, and Qt reports it
+    only as an "ambiguous shortcut overload" at the moment it is pressed."""
+    from perfstudio.ui.main import ShortcutsDialog
+
+    window = _window_on(_load_dense())
+
+    seen: dict[str, str] = {}
+    clashes = []
+    for _menu, rows in ShortcutsDialog.menu_shortcuts(window._menus):
+        for label, keys in rows:
+            if keys in seen:
+                clashes.append(f"{keys}: {seen[keys]} and {label}")
+            seen[keys] = label
+
+    assert clashes == [], f"shortcuts claimed twice: {clashes}"
+    _close(window)
+
+
+def test_the_board_gestures_are_listed_because_no_menu_carries_them() -> None:
+    """Middle-drag to pan, right-click to finish a run, arrows to nudge: none of them is
+    an action anywhere, so until this dialog the only way to find out was the source."""
+    from perfstudio.ui.main import ShortcutsDialog
+
+    gestures = dict((keys, what) for keys, what in ShortcutsDialog.BOARD_GESTURES)
+
+    assert "Middle-drag" in gestures
+    assert "Esc" in gestures
+    assert "Arrow keys" in gestures
+
+
+def test_the_menus_survive_a_garbage_collection() -> None:
+    """QMenuBar.addMenu hands Python a QMenu it believes it owns, so a menu held only by a
+    local in the builder can be destroyed the moment that method returns -- leaving a menu
+    bar of actions pointing at freed menus. Found by the shortcut card, which was the
+    first thing ever to walk the menus after building them."""
+    import gc
+
+    window = _window_on(_load_dense())
+
+    gc.collect()
+
+    assert window.act_save.shortcut().toString() == "Ctrl+S"
+    assert all(menu.actions() is not None for menu in window._menus)
     _close(window)
