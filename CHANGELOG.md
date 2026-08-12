@@ -263,6 +263,27 @@ closed without a bump.
   step card's illustration. Highlighting dims the other parts and the copper and never
   the board — a step card says which holes a part goes in, and a reader who cannot see
   the holes has been handed the answer with the question rubbed out.
+- **CI** (PLAN.md §14), on every push and pull request. This project's central claim is
+  that the Python engine reproduces the retired TypeScript one byte for byte, and until
+  now nothing checked that except somebody remembering to. Three jobs:
+  - **tests** on Linux, Windows and macOS, on the Python floor `pyproject` promises and
+    on the next version up. `fail-fast` is off so every platform reports: a rendering
+    fault is usually specific to one of them, which is the whole reason the matrix
+    exists. Linux installs the X, GL and dbus libraries Qt and VTK link against, and runs
+    under `xvfb` — Qt's offscreen platform is not the same thing as a GL context, and the
+    build guide's step images need a real one.
+  - **`mypy --strict src`**, and `src` deliberately: the engine is strict-clean and must
+    stay that way, while the tests are not and never have been. Gating on something
+    already broken teaches everyone to ignore the red tick.
+  - The **headless run** on a golden fixture, which is the only thing that exercises 2D,
+    3D and the PDF export against a real board rather than against assertions about them.
+    What it drew is uploaded as an artifact.
+  - **`ruff` reports and does not block, and the reason is written into the workflow.**
+    `ruff check src tests` finds a few hundred things — overwhelmingly `E501` on message
+    strings and `RUF001` on the Turkish catalogue's dotless *i* — and `ruff format` would
+    rewrite 40 of the 57 files. Both are worth settling. Neither is worth settling by
+    surprise inside a CI change, because the answer decides whether every line of blame
+    in this repository points at a reformat.
 - **Assembly playback in the 3D panel** (PLAN.md D7, closing milestone M4): a slider and
   a Play button under the view. Drag back and the parts and copper come off in reverse
   build order; press Play and the board assembles itself a step at a time, with the step

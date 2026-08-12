@@ -1,5 +1,7 @@
 # PerfStudio
 
+[![CI](https://github.com/medinstech/perfstudio/actions/workflows/ci.yml/badge.svg)](https://github.com/medinstech/perfstudio/actions/workflows/ci.yml)
+
 Design circuits on perfboard the way you would on a PCB — then get a soldering guide
 you can actually build from.
 

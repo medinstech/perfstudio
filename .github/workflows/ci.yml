@@ -1,0 +1,121 @@
+name: CI
+
+# Every push and every pull request. This project's central claim is that the Python
+# engine reproduces the retired TypeScript one byte for byte (see the golden fixtures
+# under tools/diffcheck/), and a proof nobody runs is not a proof.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  types:
+    name: mypy --strict
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: python -m pip install --upgrade pip
+      - run: pip install -e ".[dev,mcp]"
+      # src only, and deliberately: the engine is strict-clean and must stay that way,
+      # while the tests are not and never have been. Gating on something already broken
+      # teaches everyone to ignore the red tick.
+      - run: mypy --strict src
+
+  test:
+    name: tests · ${{ matrix.os }} · py${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Every platform reports, rather than the first failure hiding the others. A
+      # rendering fault is usually specific to one of them, which is the whole reason
+      # this matrix exists.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.12"]
+        include:
+          # The floor is what pyproject promises; the ceiling is what breaks first.
+          - os: ubuntu-latest
+            python: "3.13"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      # Qt and VTK ship their own wheels but link against the system's X, GL and dbus
+      # libraries, none of which a bare runner image has. Without these the suite does
+      # not fail informatively -- PySide6 refuses to import at all.
+      - name: System libraries for Qt and VTK
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libegl1 libgl1 libglx-mesa0 libglu1-mesa \
+            libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-image0 \
+            libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 \
+            libxcb-xinerama0 libdbus-1-3 xvfb
+
+      - run: python -m pip install --upgrade pip
+      - run: pip install -e ".[dev,mcp]"
+
+      # Qt runs offscreen (tests/test_ui.py sets QT_QPA_PLATFORM itself), but VTK opens a
+      # real GL context for the build guide's step images, and offscreen is not the same
+      # thing as headless. xvfb gives it one.
+      - name: pytest
+        if: runner.os == 'Linux'
+        run: xvfb-run -a pytest -q
+      - name: pytest
+        if: runner.os != 'Linux'
+        run: pytest -q
+
+      # The end-to-end path, and the only thing that exercises 2D, 3D and the PDF export
+      # against a real board rather than against assertions about them. It renders,
+      # verifies the 1:1 scale, runs DRC and LVS, and writes the build guide.
+      - name: headless render, DRC, LVS and guide
+        if: runner.os == 'Linux'
+        run: xvfb-run -a python -m perfstudio.ui.main --headless tools/diffcheck/golden/dense.perf
+      - name: headless render, DRC, LVS and guide
+        if: runner.os != 'Linux'
+        run: python -m perfstudio.ui.main --headless tools/diffcheck/golden/dense.perf
+
+      - name: Keep what it drew
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: headless-${{ matrix.os }}-py${{ matrix.python }}
+          path: headless_out/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  lint:
+    name: ruff (not yet a gate)
+    runs-on: ubuntu-latest
+    # NOT REQUIRED, and stated rather than hidden. `ruff check src tests` currently
+    # reports a few hundred findings -- overwhelmingly E501 on message strings and RUF001
+    # on the Turkish catalogue's dotless i -- and `ruff format` would rewrite 40 of the 57
+    # files. Both are worth settling; neither is worth settling by surprise inside a CI
+    # change, because the answer decides whether every line of blame in this repository
+    # points at a reformat. Until it is settled this job reports and does not block.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: pip install ruff
+      - run: ruff check src tests --statistics
+      - run: ruff format --check src tests
