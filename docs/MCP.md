@@ -54,7 +54,8 @@ raises, and the message names what would have worked.
 
 ```
 get_status                     → where is this board
-import_netlist / place_component
+import_netlist                 → ...or create_net / connect_pins, with no KiCad at all
+place_component
 optimize_placement             → apply=False first if you want to look
 autoroute                      → reports every connection it could NOT make
 run_drc / run_lvs              → is it right
@@ -72,13 +73,14 @@ conductor at a time.
 | **Reading** | `get_status` · `get_board_info` · `list_components` · `get_component` · `get_nets` · `get_net_connections` · `list_footprints` |
 | **Seeing** | `render_2d_view` · `render_3d_view` |
 | **Documents** | `new_document` · `open_document` · `save_document` · `import_netlist` |
+| **Netlist** | `create_net` · `connect_pins` · `disconnect_pins` · `update_net` · `delete_net` |
 | **Editing** | `place_component` · `move_component` · `rotate_component` · `set_component_locked` · `delete_component` · `add_wire` · `add_solder_trace` · `remove_stale_conductors` · `set_height_limit` |
 | **Planning** | `autoroute` · `optimize_placement` |
 | **Verifying** | `run_drc` · `run_lvs` · `check_heights` |
 | **Output** | `generate_guide` · `export_pdf` |
 | **State** | `snapshot` · `restore` · `undo` · `redo` |
 
-Thirty-three, against PLAN.md §2's "~25, deliberately narrow". Each is a verb that cannot
+Thirty-nine, against PLAN.md §2's "~25, deliberately narrow". Each is a verb that cannot
 be composed from the others, and the surface was trimmed rather than grown: the history
 listing folded into `get_status`, and there is no separate "add solder bridge" because a
 bridge is a two-pad solder trace and one concept should not have two names.
@@ -101,6 +103,16 @@ able to try something drastic and get back out.
 **Rendering needs Qt.** `render_2d_view`, `render_3d_view` and `export_pdf` import
 PySide6 and VTK lazily, so a headless or engine-only install still gets every other
 tool; the render tools report their absence instead of taking the server down at import.
+
+**A netlist no longer has to come from KiCad.** `create_net` / `connect_pins` build one
+up on the board itself, which is what makes `autoroute` and `run_lvs` reachable on a
+board that never had a schematic — without a net there is no ratsnest, and so nothing to
+route and nothing to check. `import_netlist` still replaces the netlist wholesale,
+because that is what re-exporting a schematic means; the others edit it. A pin belongs
+to exactly one net, so `connect_pins` refuses one that another net already holds rather
+than moving it, and naming a part that is not on the board yet is allowed and reported
+back as `unplaced_pins` — declaring the circuit first and placing it afterwards is a
+real order of work.
 
 **`restore` clears the undo stack.** It replaces the session's bus, because there is no
 command meaning "become this other document" and inventing one would put a

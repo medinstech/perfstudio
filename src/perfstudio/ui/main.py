@@ -76,11 +76,14 @@ from perfstudio.command import CommandBus, CommandContext, DispatchResult, Histo
 from perfstudio.commands import (
     AddEdgeConnectorPayload,
     AddMountingHolesPayload,
+    AddNetPayload,
     ApplyBoardPresetPayload,
     DeleteComponentPayload,
     DeleteConductorsPayload,
     DeleteEdgeConnectorPayload,
     DeleteMountingHolePayload,
+    DeleteNetPayload,
+    DisconnectPinsPayload,
     ImportNetlistPayload,
     MirrorComponentPayload,
     PlaceComponentPayload,
@@ -88,6 +91,7 @@ from perfstudio.commands import (
     SetBoardPayload,
     SetHeightLimitPayload,
     UpdateComponentPayload,
+    UpdateNetPayload,
     create_document_id_generator,
     create_empty_document,
     create_standard_registry,
@@ -125,7 +129,9 @@ from perfstudio.model import (
     Footprint,
     HoleCoord,
     MountingHole,
+    NetClass,
     NetId,
+    NetNode,
     PadAxis,
     PadShape,
     PerfDocument,
@@ -160,6 +166,9 @@ ROLE_HOLES = int(Qt.ItemDataRole.UserRole) + 1
 ROLE_COMPONENT_IDS = int(Qt.ItemDataRole.UserRole) + 2
 ROLE_NET_ID = int(Qt.ItemDataRole.UserRole) + 3
 ROLE_FOOTPRINT_ID = int(Qt.ItemDataRole.UserRole) + 4
+#: (component ref, pin number) on a pin row under a net. The row also carries
+#: ROLE_NET_ID, so selecting a pin highlights its net exactly as selecting the net does.
+ROLE_PIN = int(Qt.ItemDataRole.UserRole) + 5
 
 
 def _now_iso() -> str:
@@ -734,6 +743,106 @@ class BoardFeaturesDialog(QDialog):
         )
 
 
+class NetDialog(QDialog):
+    """What a net is called, what kind it is, and what it carries.
+
+    The last part is not padding. ``current_a`` and ``voltage_v`` had no way into a
+    document at all -- the KiCad netlist format does not carry them -- and three things
+    read them: DRC's current-capacity rule, DRC's creepage rule, and the wire gauge the
+    build guide prints on its cut list. Without a number here all three stay silent, so
+    this dialog is the only place a board can be told it is carrying two amps.
+
+    Both are optional and blank means "not stated", which is a different thing from zero.
+    """
+
+    NET_CLASSES: tuple[tuple[NetClass, str], ...] = (
+        ("signal", "Signal"),
+        ("ground", "Ground — routed first, and wants a rail"),
+        ("power", "Power — routed after ground, same reason"),
+    )
+
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        title: str = "New Net",
+        name: str = "",
+        net_class: NetClass = "signal",
+        current_a: float | None = None,
+        voltage_v: float | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setMinimumWidth(380)
+
+        form = QFormLayout()
+        self.name = QLineEdit(name)
+        self.name.setPlaceholderText("GND, +5V, OUT…")
+        form.addRow(t("Name"), self.name)
+
+        self.net_class = QComboBox()
+        for value, label in self.NET_CLASSES:
+            self.net_class.addItem(t(label), value)
+        index = self.net_class.findData(net_class)
+        if index >= 0:
+            self.net_class.setCurrentIndex(index)
+        form.addRow(t("Class"), self.net_class)
+
+        # Zero is the "not stated" position rather than a value, because a net carrying
+        # no current is exactly what saying nothing means.
+        self.current = QDoubleSpinBox()
+        self.current.setRange(0.0, 100.0)
+        self.current.setDecimals(2)
+        self.current.setSingleStep(0.1)
+        self.current.setSuffix(" A")
+        self.current.setSpecialValueText(t("not stated"))
+        self.current.setValue(current_a if current_a is not None else 0.0)
+        self.current.setToolTip(
+            "Wakes DRC's current-capacity rule and picks the wire gauge on the build "
+            "guide's cut list. Nothing else in the application can set it."
+        )
+        form.addRow(t("Current"), self.current)
+
+        # Voltage needs a real "unset", and unlike current it may legitimately be
+        # negative, so the bottom of the range cannot double as the empty value.
+        self.voltage = QDoubleSpinBox()
+        self.voltage.setRange(-1000.0, 1000.0)
+        self.voltage.setDecimals(1)
+        self.voltage.setSuffix(" V")
+        self.voltage.setValue(voltage_v if voltage_v is not None else 0.0)
+        self.voltage_stated = QCheckBox(t("state a voltage"))
+        self.voltage_stated.setChecked(voltage_v is not None)
+        self.voltage.setEnabled(voltage_v is not None)
+        self.voltage_stated.toggled.connect(self.voltage.setEnabled)
+        self.voltage.setToolTip(
+            "Wakes DRC's creepage rule above the mains threshold. A -12 V rail is an "
+            "ordinary value here, which is why it needs its own tick rather than a zero."
+        )
+        row = QHBoxLayout()
+        row.addWidget(self.voltage_stated)
+        row.addWidget(self.voltage)
+        form.addRow(t("Voltage"), row)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+        layout = QVBoxLayout()
+        layout.addLayout(form)
+        layout.addWidget(buttons)
+        self.setLayout(layout)
+
+    def values(self) -> tuple[str, NetClass, float | None, float | None]:
+        current = self.current.value()
+        return (
+            self.name.text().strip(),
+            cast(NetClass, self.net_class.currentData()),
+            current if current > 0 else None,
+            self.voltage.value() if self.voltage_stated.isChecked() else None,
+        )
+
+
 def _preset_features(
     preset: BoardPreset | None, board: Board
 ) -> tuple[tuple[EdgeConnector, ...], tuple[MountingHole, ...]] | None:
@@ -848,6 +957,10 @@ class MainWindow(QMainWindow):
         self.scene.placementArmed.connect(self._on_placement_armed)
         self.scene.drawArmed.connect(self._on_draw_armed)
         self.scene.conductorDrawn.connect(self._on_conductor_drawn)
+        self.scene.netPinsArmed.connect(self._on_net_pins_armed)
+        self.scene.netPinsChanged.connect(self._on_net_pins_changed)
+        self.scene.netPinRejected.connect(self._on_net_pin_rejected)
+        self.scene.netPinsCommitted.connect(self._on_net_pins_committed)
         self.scene.hoveredHole.connect(self._on_hovered_hole)
         self.scene.componentPlaced.connect(self._on_component_placed)
 
@@ -1274,6 +1387,57 @@ class MainWindow(QMainWindow):
             "a real second answer rather than the same one twice."
         )
         act_reroll.triggered.connect(lambda: self.on_autoplace(reroll=True))
+
+        # A net could only ever arrive from a KiCad netlist, which quietly made a
+        # schematic capture package a prerequisite for the ratsnest -- and so for
+        # autoroute, LVS and the guide's continuity tests. This menu is the same intent,
+        # entered by hand: name the net, then click the pins that are on it.
+        net_menu = menu.addMenu(t("&Net"))
+        net_menu.setToolTipsVisible(True)
+        act_new_net = net_menu.addAction(t("&New Net…"))
+        act_new_net.setShortcut(QKeySequence("Ctrl+Shift+N"))
+        act_new_net.setToolTip(
+            "Name a net, then click its pins on the board. Nothing here needs KiCad."
+        )
+        act_new_net.triggered.connect(self.on_new_net)
+        self.act_add_pins = net_menu.addAction(t("&Add Pins to Net"))
+        self.act_add_pins.setShortcut(QKeySequence("P"))
+        self.act_add_pins.setToolTip(
+            "Click each pin that belongs to the selected net. Right-click or Enter "
+            "finishes, and the whole session goes on the history as one step."
+        )
+        self.act_add_pins.triggered.connect(self.on_add_pins_to_net)
+        self.act_finish_pins = net_menu.addAction(t("&Finish Adding Pins"))
+        self.act_finish_pins.triggered.connect(self.on_finish_adding_pins)
+        self.act_finish_pins.setEnabled(False)
+        net_menu.addSeparator()
+        self.act_edit_net = net_menu.addAction(t("&Edit Net…"))
+        self.act_edit_net.setToolTip(
+            "Name, class, and the current and voltage it carries — which nothing else in "
+            "the application can set, and which DRC's capacity and creepage rules need."
+        )
+        self.act_edit_net.triggered.connect(self.on_edit_net)
+        self.act_disconnect_pins = net_menu.addAction(t("&Disconnect Selected Pins"))
+        self.act_disconnect_pins.setToolTip(
+            "Take the pins selected in the Nets panel off their net. Expand a net to "
+            "see them."
+        )
+        self.act_disconnect_pins.triggered.connect(self.on_disconnect_pins)
+        self.act_delete_net = net_menu.addAction(t("De&lete Net"))
+        self.act_delete_net.setToolTip(
+            "Forget what the net was for. Copper already laid for it stays on the board, "
+            "and stops being anything re-route or the stale sweep will touch."
+        )
+        self.act_delete_net.triggered.connect(self.on_delete_net)
+        #: Everything that needs a net picked in the Nets panel.
+        self.net_actions = (
+            self.act_add_pins,
+            self.act_edit_net,
+            self.act_disconnect_pins,
+            self.act_delete_net,
+        )
+        for action in self.net_actions:
+            action.setEnabled(False)
 
         route_menu = menu.addMenu(t("&Route"))
         self.act_autoroute = route_menu.addAction(t("&Autoroute All Nets"))
@@ -1791,8 +1955,11 @@ class MainWindow(QMainWindow):
         tree = self.nets_tree
         # Selection is restored by net id, not by row: the rows are rebuilt after every
         # command, and a user who selected GND to watch it get routed should still have GND
-        # selected afterwards.
-        previously = self._selected_net_ids()
+        # selected afterwards. Expansion is kept for the same reason -- a net opened to
+        # take a pin off it must not close again the moment the pin is taken off.
+        previously = set(self._selected_net_ids())
+        expanded = self._expanded_net_ids()
+        nodes_by_net = {net.id: net.nodes for net in self.bus.document.nets}
         tree.blockSignals(True)
         tree.clear()
         for entry in nets:
@@ -1808,24 +1975,76 @@ class MainWindow(QMainWindow):
             item.setData(0, ROLE_NET_ID, entry.net_id)
             colour = OK if remaining == 0 else (WARNING if entry.unresolved_pins else TEXT_DIM)
             item.setForeground(3, QColor(colour))
+            unresolved = {(p.component_ref, p.pin) for p in entry.unresolved_pins}
             if entry.unresolved_pins:
                 pins = ", ".join(f"{p.component_ref}.{p.pin}" for p in entry.unresolved_pins)
                 item.setToolTip(0, f"Not on the board: {pins}")
+            # One child per pin the net claims. This is what makes the panel an editor
+            # rather than a readout: a pin has to be visible to be selected, and it has
+            # to be selectable to be taken off the net.
+            for node in nodes_by_net.get(entry.net_id, ()):
+                missing = (node.component_ref, node.pin) in unresolved
+                pin_row = QTreeWidgetItem(
+                    [
+                        f"{node.component_ref}.{node.pin}",
+                        "",
+                        "",
+                        "not on the board" if missing else "",
+                    ]
+                )
+                pin_row.setData(0, ROLE_NET_ID, entry.net_id)
+                pin_row.setData(0, ROLE_PIN, (node.component_ref, node.pin))
+                pin_row.setForeground(0, QColor(WARNING if missing else TEXT_DIM))
+                if missing:
+                    pin_row.setForeground(3, QColor(WARNING))
+                item.addChild(pin_row)
             tree.addTopLevelItem(item)
+            item.setExpanded(entry.net_id in expanded)
             if entry.net_id in previously:
                 item.setSelected(True)
         tree.blockSignals(False)
+        self._refresh_net_actions()
 
     def _selected_net_ids(self) -> tuple[NetId, ...]:
-        return tuple(
+        """The nets picked in the panel, deduplicated -- a net row and two of its pin rows
+        are one net selected, not three."""
+        ids = [
             item.data(0, ROLE_NET_ID)
             for item in self.nets_tree.selectedItems()
             if item.data(0, ROLE_NET_ID)
-        )
+        ]
+        return tuple(dict.fromkeys(ids))
+
+    def _expanded_net_ids(self) -> set[str]:
+        tree = self.nets_tree
+        return {
+            item.data(0, ROLE_NET_ID)
+            for index in range(tree.topLevelItemCount())
+            if (item := tree.topLevelItem(index)) is not None and item.isExpanded()
+        }
+
+    def _selected_pins(self) -> tuple[tuple[NetId, str, str], ...]:
+        """(net id, component ref, pin) for every pin row selected in the panel."""
+        picked: list[tuple[NetId, str, str]] = []
+        for item in self.nets_tree.selectedItems():
+            pin = item.data(0, ROLE_PIN)
+            net_id = item.data(0, ROLE_NET_ID)
+            if pin and net_id:
+                picked.append((net_id, pin[0], pin[1]))
+        return tuple(picked)
+
+    def _refresh_net_actions(self) -> None:
+        """The net actions need a net picked; the finish action needs a session running."""
+        has_net = len(self._selected_net_ids()) == 1
+        for action in self.net_actions:
+            action.setEnabled(has_net)
+        self.act_disconnect_pins.setEnabled(bool(self._selected_pins()))
+        self.act_finish_pins.setEnabled(self.scene.armed_net_id is not None)
 
     def _on_net_selection_changed(self) -> None:
         net_ids = self._selected_net_ids()
         self.scene.set_highlighted_nets(net_ids)
+        self._refresh_net_actions()
         if not net_ids:
             return
         holes = [
@@ -2357,10 +2576,18 @@ class MainWindow(QMainWindow):
         self._report_refusals(results, f"Mirrored {len(results)} part(s)")
 
     def on_draw_mode(self, kind: str, checked: bool) -> None:
-        """Arm or disarm a drawing tool. Only one may be armed at a time."""
+        """Arm or disarm a drawing tool. Only one may be armed at a time.
+
+        Escape is bound to this with an empty kind, and Escape has to mean "leave the mode
+        I am in" whichever one that is -- a window shortcut fires before the scene sees the
+        key at all, so ending a pin-picking session belongs here rather than only in the
+        scene's own key handler.
+        """
         wanted = kind if checked and kind else ""
         for name, action in self.act_draw.items():
             action.setChecked(name == wanted)
+        if not wanted:
+            self.scene.arm_net_pins(None)
         self.scene.arm_drawing(cast(Any, wanted) if wanted else None)
         if wanted:
             two_point = wanted in ("bare-wire", "insulated-wire", "top-jumper")
@@ -2572,6 +2799,189 @@ class MainWindow(QMainWindow):
         note = f" ({len(result.warnings)} warning(s))" if result.warnings else ""
         self.statusBar().showMessage(f"Loaded {path.name}{note}", 8000)
         self._mark_saved()
+
+    # -- nets, entered by hand -----------------------------------------------
+    #
+    # The other half of the netlist story. Import replaces the whole netlist because that
+    # is what re-exporting a schematic means; these edit it, one decision at a time, on a
+    # board where the pins are already in front of you.
+
+    def on_new_net(self) -> None:
+        """Name a net, then go straight into clicking its pins.
+
+        Arming the pin mode is not a convenience: naming a net and then hunting for the
+        command that fills it would be two decisions where the user made one, and an
+        empty net is the one state that does nothing for anybody.
+        """
+        dialog = NetDialog(self, title=t("New Net"))
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        name, net_class, current_a, voltage_v = dialog.values()
+        result = self.bus.dispatch(
+            "net.add",
+            AddNetPayload(
+                name=name, net_class=net_class, current_a=current_a, voltage_v=voltage_v
+            ),
+        )
+        if not result.ok:
+            self.statusBar().showMessage(f"[{result.code}] {result.message}", 8000)
+            return
+        net = next((n for n in self.bus.document.nets if n.name == name), None)
+        if net is None:  # pragma: no cover - the command just made it
+            return
+        self._select_net(net.id)
+        self.scene.arm_net_pins(net.id)
+
+    def on_add_pins_to_net(self) -> None:
+        net_id = self._one_selected_net()
+        if net_id is None:
+            return
+        self.scene.arm_net_pins(net_id)
+
+    def on_finish_adding_pins(self) -> None:
+        self.scene.commit_net_pins()
+
+    def on_edit_net(self) -> None:
+        net_id = self._one_selected_net()
+        net = next((n for n in self.bus.document.nets if n.id == net_id), None)
+        if net is None:
+            return
+        dialog = NetDialog(
+            self,
+            title=t("Edit Net"),
+            name=net.name,
+            net_class=net.net_class,
+            current_a=net.current_a,
+            voltage_v=net.voltage_v,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        name, net_class, current_a, voltage_v = dialog.values()
+        # current/voltage are passed straight through, so clearing a field in the dialog
+        # clears it on the net. That is what the KEEP sentinel on the payload is for:
+        # this caller always knows both values, so it always states both.
+        result = self.bus.dispatch(
+            "net.update",
+            UpdateNetPayload(
+                id=net.id,
+                name=name,
+                net_class=net_class,
+                current_a=current_a,
+                voltage_v=voltage_v,
+            ),
+        )
+        if not result.ok:
+            self.statusBar().showMessage(f"[{result.code}] {result.message}", 8000)
+
+    def on_disconnect_pins(self) -> None:
+        """Take the pins selected in the Nets panel off their nets.
+
+        One command per net, so disconnecting three pins of GND is a single undo step
+        even when the selection spans two nets.
+        """
+        picked = self._selected_pins()
+        if not picked:
+            self.statusBar().showMessage(
+                "Select the pins to disconnect in the Nets panel — expand a net to see "
+                "them.",
+                6000,
+            )
+            return
+        by_net: dict[NetId, list[NetNode]] = {}
+        for net_id, ref, pin in picked:
+            by_net.setdefault(net_id, []).append(NetNode(component_ref=ref, pin=pin))
+        results = [
+            self.bus.dispatch(
+                "net.disconnect", DisconnectPinsPayload(id=net_id, nodes=tuple(nodes))
+            )
+            for net_id, nodes in by_net.items()
+        ]
+        self._report_refusals(results, f"Disconnected {len(picked)} pin(s)")
+
+    def on_delete_net(self) -> None:
+        net_id = self._one_selected_net()
+        net = next((n for n in self.bus.document.nets if n.id == net_id), None)
+        if net is None:
+            return
+        # The copper is the part a person will not expect to survive, so it is said here
+        # rather than discovered afterwards.
+        freed = sum(1 for c in self.bus.document.conductors if c.net_id == net.id)
+        note = (
+            f"\n\n{freed} conductor(s) already laid for it stay on the board, and stop "
+            f"being anything re-route or the stale sweep will touch."
+            if freed
+            else ""
+        )
+        if (
+            QMessageBox.question(self, t("Delete net"), f"Delete net {net.name}?{note}")
+            != QMessageBox.StandardButton.Yes
+        ):
+            return
+        result = self.bus.dispatch("net.delete", DeleteNetPayload(id=net.id))
+        if not result.ok:
+            self.statusBar().showMessage(f"[{result.code}] {result.message}", 8000)
+
+    # -- the pin-picking session, reported as it goes -------------------------
+
+    def _on_net_pins_armed(self, net_id: str) -> None:
+        self.act_finish_pins.setEnabled(bool(net_id))
+        if not net_id:
+            self.statusBar().clearMessage()
+            return
+        self.statusBar().showMessage(f"{self._pin_session_prefix(net_id)} — {self.PIN_HINT}", 0)
+
+    def _on_net_pins_changed(self, labels: list[Any]) -> None:
+        net_id = self.scene.armed_net_id
+        if not net_id:
+            return
+        picked = ", ".join(str(label) for label in labels) if labels else "no pins yet"
+        self.statusBar().showMessage(
+            f"{self._pin_session_prefix(net_id)}: {picked} — {self.PIN_HINT}", 0
+        )
+
+    def _on_net_pin_rejected(self, reason: str) -> None:
+        """A refused click keeps the hint beside it rather than replacing it.
+
+        A timed message would expire back to an empty status bar and take the "Enter
+        finishes" line with it, in the middle of a session that is still running.
+        """
+        hint = f" — {self.PIN_HINT}" if self.scene.armed_net_id else ""
+        self.statusBar().showMessage(f"{reason}{hint}", 0)
+
+    def _on_net_pins_committed(self, result: Any) -> None:
+        if result is None:
+            return
+        message = (
+            result.description if result.ok else f"[{result.code}] {result.message}"
+        )
+        self.statusBar().showMessage(message, 8000)
+
+    #: Said at every stage of a pin session, because the two ways out of a mode are the
+    #: thing a person needs and the thing a mode never says.
+    PIN_HINT = "click each pin; Enter or right-click finishes, Esc cancels"
+
+    def _pin_session_prefix(self, net_id: str) -> str:
+        return f"Adding pins to {self._net_name(net_id)}"
+
+    def _net_name(self, net_id: str) -> str:
+        return next((n.name for n in self.bus.document.nets if n.id == net_id), net_id)
+
+    def _one_selected_net(self) -> NetId | None:
+        net_ids = self._selected_net_ids()
+        if len(net_ids) != 1:
+            self.statusBar().showMessage("Select one net in the Nets panel first.", 6000)
+            return None
+        return net_ids[0]
+
+    def _select_net(self, net_id: NetId) -> None:
+        tree = self.nets_tree
+        tree.clearSelection()
+        for index in range(tree.topLevelItemCount()):
+            item = tree.topLevelItem(index)
+            if item is not None and item.data(0, ROLE_NET_ID) == net_id:
+                item.setSelected(True)
+                tree.setCurrentItem(item)
+                return
 
     # -- netlist import ------------------------------------------------------
 

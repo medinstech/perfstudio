@@ -34,8 +34,13 @@ from perfstudio.autoroute import AutorouteOptions, describe_reroute, plan_autoro
 from perfstudio.autoroute import describe as describe_route
 from perfstudio.command import CommandBus, CommandContext
 from perfstudio.commands import (
+    KEEP,
     AddConductorPayload,
+    AddNetPayload,
+    ConnectPinsPayload,
     DeleteComponentPayload,
+    DeleteNetPayload,
+    DisconnectPinsPayload,
     ImportNetlistPayload,
     MoveComponentPayload,
     NewSolderTraceConductor,
@@ -44,6 +49,7 @@ from perfstudio.commands import (
     RotateComponentPayload,
     SetHeightLimitPayload,
     UpdateComponentPayload,
+    UpdateNetPayload,
     create_document_id_generator,
     create_empty_document,
     create_standard_registry,
@@ -69,6 +75,8 @@ from perfstudio.model import (
     ComponentInstance,
     DocumentMeta,
     HoleCoord,
+    NetClass,
+    NetNode,
     PerfDocument,
     Rotation,
     SpineSpec,
@@ -110,6 +118,21 @@ def _hole(ref: str) -> HoleCoord:
             f"{ref!r} is not a hole address. They look like 'A1', 'C7' or 'AC12': "
             f"column letters then a 1-based row ({err})."
         ) from err
+
+
+def _pin(spec: str) -> NetNode:
+    """Parse ``"U1.8"`` into a net node, or say clearly what was wrong with it.
+
+    Split from the RIGHT, because a reference may contain a dot and a pin number is the
+    part after the last one.
+    """
+    ref, separator, pin = spec.strip().rpartition(".")
+    if not separator or not ref or not pin:
+        raise SessionError(
+            f"{spec!r} is not a pin. They look like 'U1.8' or 'R3.1': the component's "
+            f"reference, a dot, then the pin number."
+        )
+    return NetNode(component_ref=ref, pin=pin)
 
 
 def _now_iso() -> str:
@@ -502,6 +525,105 @@ class BoardSession:
                 }
             )
         return result
+
+    # -- the netlist, without KiCad ------------------------------------------
+    #
+    # ``import_netlist`` above replaces the whole netlist, which is what re-exporting a
+    # schematic means. These five edit it. They exist because a netlist was previously the
+    # one thing an agent could not produce -- it could place parts, draw copper and route,
+    # but the intent those are measured against had to come from a file somebody exported
+    # from KiCad, so on a board that never had a schematic there was nothing to route.
+
+    def create_net(
+        self,
+        name: str,
+        net_class: str = "signal",
+        pins: list[str] | None = None,
+        current_a: float | None = None,
+        voltage_v: float | None = None,
+    ) -> dict[str, Any]:
+        """Declare a net. ``pins`` are ``"U1.8"`` addresses and may be given later."""
+        nodes = tuple(_pin(spec) for spec in (pins or []))
+        result = self._dispatch(
+            "net.add",
+            AddNetPayload(
+                name=name,
+                net_class=cast(NetClass, net_class),
+                nodes=nodes,
+                current_a=current_a,
+                voltage_v=voltage_v,
+            ),
+        )
+        if result["ok"]:
+            result["unplaced_pins"] = self._unplaced(nodes)
+        return result
+
+    def update_net(
+        self,
+        name: str,
+        new_name: str | None = None,
+        net_class: str | None = None,
+        current_a: float | None = None,
+        voltage_v: float | None = None,
+        clear_current: bool = False,
+        clear_voltage: bool = False,
+    ) -> dict[str, Any]:
+        """Rename a net, reclassify it, or state what it carries.
+
+        A field left out is left ALONE. ``current_a: null`` therefore means "this call
+        says nothing about the current", never "erase what the net declares" -- an agent
+        that omits a field has not asked for it to be destroyed. Erasing is explicit, via
+        ``clear_current`` / ``clear_voltage``.
+
+        The two numbers matter more than they look: DRC's current-capacity rule, its
+        creepage rule and the wire gauge on the build guide's cut list are all silent
+        until a net declares them, and no netlist format carries them.
+        """
+        return self._dispatch(
+            "net.update",
+            UpdateNetPayload(
+                id=self._net_id_strict(name),
+                name=new_name,
+                net_class=cast(NetClass, net_class) if net_class is not None else None,
+                current_a=None if clear_current else (KEEP if current_a is None else current_a),
+                voltage_v=None if clear_voltage else (KEEP if voltage_v is None else voltage_v),
+            ),
+        )
+
+    def delete_net(self, name: str) -> dict[str, Any]:
+        """Forget a net. Copper already laid for it stays on the board, and stops being
+        anything ``reroute`` or ``remove_stale_conductors`` will touch."""
+        return self._dispatch("net.delete", DeleteNetPayload(id=self._net_id_strict(name)))
+
+    def connect_pins(self, net: str, pins: list[str]) -> dict[str, Any]:
+        """Add pins to a net, as one undo step. ``pins`` are ``"U1.8"`` addresses."""
+        nodes = tuple(_pin(spec) for spec in pins)
+        result = self._dispatch(
+            "net.connect", ConnectPinsPayload(id=self._net_id_strict(net), nodes=nodes)
+        )
+        if result["ok"]:
+            result["unplaced_pins"] = self._unplaced(nodes)
+        return result
+
+    def disconnect_pins(self, net: str, pins: list[str]) -> dict[str, Any]:
+        """Take pins off a net, as one undo step."""
+        return self._dispatch(
+            "net.disconnect",
+            DisconnectPinsPayload(
+                id=self._net_id_strict(net), nodes=tuple(_pin(spec) for spec in pins)
+            ),
+        )
+
+    def _unplaced(self, nodes: tuple[NetNode, ...]) -> list[str]:
+        """Which of these pins name a part that is not on the board yet.
+
+        Reported rather than refused, because declaring the netlist first and placing what
+        it asks for afterwards is a real order of work -- it is what importing a netlist
+        does. But an agent that meant to write "U1.8" and wrote "U11.8" needs to hear
+        about it now rather than from LVS at the end.
+        """
+        placed = {c.ref for c in self.document.components}
+        return sorted({node.component_ref for node in nodes if node.component_ref not in placed})
 
     # -- editing -----------------------------------------------------------
 

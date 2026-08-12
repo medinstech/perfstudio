@@ -22,6 +22,47 @@ closed without a bump.
 
 ### Added
 
+- **A netlist you can write yourself, without KiCad.** `netlist.import` was the only way
+  a net could ever enter a document, which quietly made a schematic capture package a
+  prerequisite for the whole tool: with no net there is no ratsnest, and so nothing for
+  autoroute to route, nothing for LVS to check and no continuity tests in the build
+  guide. Nobody opens KiCad to wire four parts on a scrap of perfboard. Five commands —
+  `net.add`, `net.update`, `net.delete`, `net.connect`, `net.disconnect` — put the same
+  intent in by hand, and import still replaces the netlist wholesale because that is
+  what re-exporting a schematic means.
+  - **You click the pins, rather than typing their names.** "New Net…" asks for a name
+    and a class and then arms a mode over the board: every click adds the pin in that
+    hole, right-click or Enter finishes, and the whole session lands on the history as
+    one `net.connect`. On a perfboard a pin *is* a hole you can point at, so a dialog
+    listing "U1.8, U1.7, C2.2" would ask the user to do a translation the board is
+    already doing for them. Every refusal the command would make is made per click
+    instead — an empty hole, a pin already listed, a pin another net holds — because a
+    session that collects five pins and then bounces the batch for something done four
+    clicks ago is worse than no help at all.
+  - **The Nets panel became an editor.** Each net now lists its pins as rows underneath
+    it, which is what makes a pin selectable and so removable; expansion survives the
+    rebuild that follows every command, so a net opened to take a pin off does not shut
+    as the pin comes off.
+  - **A pin belongs to exactly one net**, so claiming one another net holds is refused
+    and the message names the holder, rather than the pin being silently moved out of a
+    net the command never mentioned. A pin naming a part that is not on the board yet is
+    *allowed*: declaring the circuit and then placing what it asks for is a real order of
+    work, it is what importing a netlist does, and the ratsnest already reports those as
+    unresolved pins.
+  - **Deleting a net leaves its copper alone** and releases the `net_id` claim on it in
+    the same step — a reference to a net that is gone is exactly what commands exist to
+    prevent. That copper becomes indistinguishable from hand-drawn work, which is
+    precisely what re-route and the stale-conductor sweep both promise never to touch:
+    with the intent gone there is nothing left to route it against.
+  - **`current_a` and `voltage_v` finally have a way in.** No netlist format carries
+    them, so DRC's current-capacity rule, its creepage rule and the wire gauge on the
+    build guide's cut list have been silent since they were written. The net dialog and
+    `update_net` are their only route into a document.
+  - **Five MCP tools** (`create_net`, `connect_pins`, `disconnect_pins`, `update_net`,
+    `delete_net`), which is the largest single addition the server has taken and is
+    argued at length in its module docstring: an agent could place parts, draw copper and
+    route, but could not state the intent all three are measured against.
+
 - **The last two DRC rules, which are the two a top-down view cannot see.** PLAN.md
   §5.2's table had eleven rows and nine of them were implemented; the missing pair
   (rule 8, height and envelope, and rule 9, heat proximity) were both missing for the

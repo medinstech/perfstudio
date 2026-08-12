@@ -40,6 +40,7 @@ from perfstudio.model import Board, HoleCoord, PerfDocument, SolderTraceConducto
 from perfstudio.ui import scenetext, view2d
 from perfstudio.ui.export_pdf import verify_scale
 from perfstudio.ui.main import (
+    ROLE_NET_ID,
     _rotation_after,
     guess_footprint_id,
     read_document_text,
@@ -1941,3 +1942,278 @@ def test_each_slider_position_shows_what_its_caption_claims() -> None:
         if index >= 0:
             present = {c.id for c in shown.components} | {c.id for c in shown.conductors}
             assert step_focus(steps[index]) in present
+
+
+# ---------------------------------------------------------------------------
+# Naming a net by clicking its pins
+#
+# The engine has had nets since the first commit and only a KiCad netlist could put one
+# in a document, so on a tool for wiring four parts on a scrap of perfboard there was no
+# ratsnest, and so no autoroute, LVS or continuity check, without opening a schematic
+# capture package first.
+# ---------------------------------------------------------------------------
+
+
+def _bus_with_a_part_and_a_net() -> CommandBus:
+    from perfstudio.commands import AddNetPayload, PlaceComponentPayload, create_empty_document
+    from perfstudio.model import DocumentMeta
+
+    stamp = "2026-01-01T00:00:00.000Z"
+    meta = DocumentMeta(name="t", created=stamp, modified=stamp)
+    bus = _new_bus(create_empty_document(meta))
+    bus.dispatch(
+        "component.place",
+        PlaceComponentPayload(
+            ref="R1", value="10k", footprint_id="r-axial-5", anchor=HoleCoord(2, 2)
+        ),
+    )
+    bus.dispatch("net.add", AddNetPayload(name="GND", net_class="ground"))
+    return bus
+
+
+def test_clicking_pins_adds_them_to_the_net_as_one_command() -> None:
+    bus = _bus_with_a_part_and_a_net()
+    scene = BoardScene(bus.document, footprint_lookup(), side="top", bus=bus)
+
+    scene.arm_net_pins("net-1")
+    scene.net_pin_click(HoleCoord(2, 2))
+    result = scene.commit_net_pins()
+
+    assert result is not None and result.ok, result
+    assert bus.document.nets[0].nodes[0].component_ref == "R1"
+    # One command for the session: the undo has to take the whole net back, not a pin.
+    bus.undo()
+    assert bus.document.nets[0].nodes == ()
+
+
+def test_a_click_that_cannot_count_says_why_instead_of_being_dropped() -> None:
+    """A silently ignored click is indistinguishable from a tool that has stopped
+    working, which is why every refusal the command would make is made per click."""
+    bus = _bus_with_a_part_and_a_net()
+    scene = BoardScene(bus.document, footprint_lookup(), side="top", bus=bus)
+    reasons: list[str] = []
+    scene.netPinRejected.connect(reasons.append)
+
+    scene.arm_net_pins("net-1")
+    scene.net_pin_click(HoleCoord(20, 20))  # empty hole
+    scene.net_pin_click(HoleCoord(2, 2))
+    scene.net_pin_click(HoleCoord(2, 2))  # the same pin twice
+
+    assert scene.picked_pins() == (("R1", "1"),)
+    assert len(reasons) == 2
+    assert "No component pin" in reasons[0]
+    assert "already on the list" in reasons[1]
+
+
+def test_a_pin_another_net_already_has_is_refused_at_the_click() -> None:
+    from perfstudio.commands import AddNetPayload, ConnectPinsPayload
+    from perfstudio.model import NetNode
+
+    bus = _bus_with_a_part_and_a_net()
+    bus.dispatch(
+        "net.connect", ConnectPinsPayload(id="net-1", nodes=(NetNode("R1", "1"),))
+    )
+    bus.dispatch("net.add", AddNetPayload(name="+5V", net_class="power"))
+    scene = BoardScene(bus.document, footprint_lookup(), side="top", bus=bus)
+    reasons: list[str] = []
+    scene.netPinRejected.connect(reasons.append)
+
+    scene.arm_net_pins("net-2")
+    scene.net_pin_click(HoleCoord(2, 2))
+
+    assert scene.picked_pins() == ()
+    assert "GND" in reasons[0]
+
+
+def test_committing_nothing_is_a_cancel_rather_than_an_empty_command() -> None:
+    bus = _bus_with_a_part_and_a_net()
+    before = bus.document
+    scene = BoardScene(bus.document, footprint_lookup(), side="top", bus=bus)
+
+    scene.arm_net_pins("net-1")
+    assert scene.commit_net_pins() is None
+    assert bus.document is before
+    assert scene.armed_net_id is None
+
+
+def test_arming_a_drawing_tool_ends_a_pin_session() -> None:
+    """The three board modes are mutually exclusive: a click has to mean one thing."""
+    bus = _bus_with_a_part_and_a_net()
+    scene = BoardScene(bus.document, footprint_lookup(), side="top", bus=bus)
+
+    scene.arm_net_pins("net-1")
+    scene.arm_drawing("bare-wire")
+
+    assert scene.armed_net_id is None
+
+
+def test_a_rebuild_mid_session_keeps_the_pins_already_picked() -> None:
+    """Every command rebuilds the scene, and a half-collected net whose markers vanished
+    would read as the clicks having been lost."""
+    bus = _bus_with_a_part_and_a_net()
+    scene = BoardScene(bus.document, footprint_lookup(), side="top", bus=bus)
+
+    scene.arm_net_pins("net-1")
+    scene.net_pin_click(HoleCoord(2, 2))
+    scene.set_document(bus.document)
+
+    assert scene.armed_net_id == "net-1"
+    assert scene.picked_pins() == (("R1", "1"),)
+    assert any(isinstance(item, view2d.PickedPinsItem) for item in scene.items())
+
+
+def test_arming_an_unknown_net_collects_nothing() -> None:
+    bus = _bus_with_a_part_and_a_net()
+    scene = BoardScene(bus.document, footprint_lookup(), side="top", bus=bus)
+
+    scene.arm_net_pins("net-does-not-exist")
+
+    assert scene.armed_net_id is None
+
+
+# ---------------------------------------------------------------------------
+# The Net menu and the Nets panel
+# ---------------------------------------------------------------------------
+
+
+class _StubNetDialog:
+    """Stands in for NetDialog, which is modal and would wait forever headless."""
+
+    values_to_return: tuple = ("GND", "ground", None, None)
+    accepted = True
+
+    def __init__(self, *args, **kwargs) -> None:
+        pass
+
+    def exec(self) -> int:
+        from PySide6.QtWidgets import QDialog
+
+        return (
+            QDialog.DialogCode.Accepted if self.accepted else QDialog.DialogCode.Rejected
+        )
+
+    def values(self) -> tuple:
+        return self.values_to_return
+
+
+def test_new_net_creates_it_and_goes_straight_into_picking_its_pins(monkeypatch) -> None:
+    """Naming a net and then hunting for the command that fills it would be two decisions
+    where the user made one, and an empty net does nothing for anybody."""
+    from perfstudio.ui import main as main_module
+
+    window = _window_on(_load_dense())
+    monkeypatch.setattr(main_module, "NetDialog", _StubNetDialog)
+    _StubNetDialog.values_to_return = ("HAND-WIRED", "signal", None, None)
+
+    window.on_new_net()
+
+    net = next(n for n in window.bus.document.nets if n.name == "HAND-WIRED")
+    assert window.scene.armed_net_id == net.id
+    window.scene.arm_net_pins(None)
+    _close(window)
+
+
+def test_a_refused_new_net_leaves_the_document_alone(monkeypatch) -> None:
+    from perfstudio.ui import main as main_module
+
+    window = _window_on(_load_dense())
+    existing = window.bus.document.nets[0].name
+    monkeypatch.setattr(main_module, "NetDialog", _StubNetDialog)
+    _StubNetDialog.values_to_return = (existing, "signal", None, None)
+    before = window.bus.document
+
+    window.on_new_net()
+
+    assert window.bus.document is before
+    assert "duplicate-net-name" in window.statusBar().currentMessage()
+    _close(window)
+
+
+def test_the_nets_panel_lists_each_nets_pins_so_they_can_be_taken_off_it() -> None:
+    """The panel was a readout; a pin has to be visible to be selected, and selectable to
+    be disconnected."""
+    window = _window_on(_load_dense())
+    tree = window.nets_tree
+
+    first = tree.topLevelItem(0)
+    assert first is not None
+    net = next(n for n in window.bus.document.nets if n.id == first.data(0, ROLE_NET_ID))
+    assert first.childCount() == len(net.nodes)
+
+    pin_row = first.child(0)
+    assert pin_row is not None
+    first.setExpanded(True)
+    pin_row.setSelected(True)
+    assert window._selected_pins() == ((net.id, net.nodes[0].component_ref, net.nodes[0].pin),)
+
+    window.on_disconnect_pins()
+
+    after = next(n for n in window.bus.document.nets if n.id == net.id)
+    assert after.nodes == net.nodes[1:]
+    _close(window)
+
+
+def test_the_panel_keeps_a_net_open_across_the_command_that_empties_a_row() -> None:
+    """Expansion is restored for the same reason selection is: the rows are rebuilt after
+    every command, and a net opened to take a pin off it must not close as it is taken."""
+    window = _window_on(_load_dense())
+    first = window.nets_tree.topLevelItem(0)
+    assert first is not None
+    net_id = first.data(0, ROLE_NET_ID)
+    first.setExpanded(True)
+    pin_row = first.child(0)
+    assert pin_row is not None
+    pin_row.setSelected(True)
+
+    window.on_disconnect_pins()
+
+    reopened = next(
+        window.nets_tree.topLevelItem(i)
+        for i in range(window.nets_tree.topLevelItemCount())
+        if window.nets_tree.topLevelItem(i).data(0, ROLE_NET_ID) == net_id
+    )
+    assert reopened.isExpanded()
+    _close(window)
+
+
+def test_deleting_a_net_keeps_its_copper_and_releases_the_claim(monkeypatch) -> None:
+    from PySide6.QtWidgets import QMessageBox
+
+    from perfstudio.commands import AddConductorPayload, NewSolderTraceConductor
+
+    window = _window_on(_load_dense())
+    net = window.bus.document.nets[0]
+    window.bus.dispatch(
+        "conductor.add",
+        AddConductorPayload(
+            conductor=NewSolderTraceConductor(
+                path=(HoleCoord(0, 0), HoleCoord(1, 0)), net_id=net.id
+            )
+        ),
+    )
+    conductors_before = len(window.bus.document.conductors)
+    window._select_net(net.id)
+    monkeypatch.setattr(
+        QMessageBox, "question", staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes)
+    )
+
+    window.on_delete_net()
+
+    assert all(n.id != net.id for n in window.bus.document.nets)
+    assert len(window.bus.document.conductors) == conductors_before
+    assert all(c.net_id != net.id for c in window.bus.document.conductors)
+    _close(window)
+
+
+def test_escape_ends_a_pin_session_even_though_it_is_the_drawing_shortcut() -> None:
+    """Escape is a window shortcut on the Draw menu's stop entry, so it fires before the
+    scene sees the key at all -- which means that handler has to end whichever mode is
+    running, not only a drawing one."""
+    window = _window_on(_load_dense())
+    net_id = window.bus.document.nets[0].id
+    window.scene.arm_net_pins(net_id)
+
+    window.on_draw_mode("", False)
+
+    assert window.scene.armed_net_id is None
+    _close(window)

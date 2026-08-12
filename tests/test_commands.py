@@ -33,9 +33,13 @@ from perfstudio.commands import (
     AddConductorPayload,
     AddConductorsPayload,
     AddCutPayload,
+    AddNetPayload,
     ComponentPlacement,
+    ConnectPinsPayload,
     DeleteComponentPayload,
     DeleteConductorsPayload,
+    DeleteNetPayload,
+    DisconnectPinsPayload,
     MirrorComponentPayload,
     MoveComponentPayload,
     MoveComponentsPayload,
@@ -49,6 +53,7 @@ from perfstudio.commands import (
     SetBoardPayload,
     SetHeightLimitPayload,
     UpdateComponentPayload,
+    UpdateNetPayload,
     create_document_id_generator,
     create_empty_document,
     create_standard_registry,
@@ -56,10 +61,13 @@ from perfstudio.commands import (
 from perfstudio.model import (
     DocumentMeta,
     HoleCoord,
+    Net,
+    NetNode,
     PerfDocument,
     SolderTraceConductor,
     SpineSpec,
 )
+from perfstudio.persist import parse_document_or_throw, serialize_document
 
 META = DocumentMeta(
     name="test",
@@ -1086,3 +1094,297 @@ def test_a_height_limit_of_zero_or_less_is_refused():
         assert result.ok is False
         assert result.code == "invalid-height-limit"
         assert bus.document.height_limit_mm is None
+
+
+# ---------------------------------------------------------------------------
+# net.add / net.update / net.delete / net.connect / net.disconnect
+#
+# Before these existed, netlist.import was the only way a net could enter a document,
+# which made a schematic capture package a prerequisite for the ratsnest, and so for
+# autoroute, LVS and the guide's continuity tests. These pin what the hand-entered
+# path may and may not do.
+# ---------------------------------------------------------------------------
+
+
+def test_adds_a_net_with_a_generated_id():
+    bus = new_bus()
+
+    result = bus.dispatch("net.add", AddNetPayload(name="GND", net_class="ground"))
+
+    assert result.ok, result.message
+    assert [(n.id, n.name, n.net_class) for n in bus.document.nets] == [("net-1", "GND", "ground")]
+    assert result.description == "Add ground net GND"
+
+
+def test_a_net_can_be_declared_with_its_pins_in_one_step():
+    bus = new_bus()
+
+    result = bus.dispatch(
+        "net.add",
+        AddNetPayload(
+            name="GND", net_class="ground", nodes=(NetNode("U1", "8"), NetNode("C2", "2"))
+        ),
+    )
+
+    assert result.ok, result.message
+    assert bus.document.nets[0].nodes == (NetNode("U1", "8"), NetNode("C2", "2"))
+    assert result.description == "Add ground net GND with 2 pin(s)"
+
+
+def test_a_generated_net_id_cannot_collide_with_one_already_in_the_document():
+    """The counterpart of the conductor case: a file whose nets are already net-1..net-2
+    must not have the next net.add refused as a duplicate."""
+    doc = dataclasses.replace(
+        create_empty_document(META),
+        nets=(Net(id="net-1", name="GND", nodes=()), Net(id="net-2", name="+5V", nodes=())),
+    )
+    bus = CommandBus(
+        doc,
+        create_standard_registry(),
+        CommandContext(next_id=create_document_id_generator(doc)),
+    )
+
+    result = bus.dispatch("net.add", AddNetPayload(name="OUT"))
+
+    assert result.ok, result.message
+    assert bus.document.nets[-1].id == "net-3"
+
+
+def test_a_net_name_is_stripped_and_must_be_unique():
+    """The name is the handle everything outside the engine uses -- the MCP server
+    resolves a net by it, DRC and LVS quote it -- so two of them is not a document."""
+    bus = new_bus()
+    bus.dispatch("net.add", AddNetPayload(name="  GND  "))
+    assert bus.document.nets[0].name == "GND"
+
+    clash = bus.dispatch("net.add", AddNetPayload(name="GND"))
+    assert clash.ok is False
+    assert clash.code == "duplicate-net-name"
+    assert len(bus.document.nets) == 1
+
+
+def test_a_nameless_net_is_refused():
+    bus = new_bus()
+    result = bus.dispatch("net.add", AddNetPayload(name="   "))
+    assert result.ok is False
+    assert result.code == "invalid-net-name"
+
+
+def test_a_pin_may_only_be_on_one_net():
+    """Refused rather than moved: moving it would rewrite a net the command did not name."""
+    bus = new_bus()
+    bus.dispatch("net.add", AddNetPayload(name="GND", nodes=(NetNode("U1", "8"),)))
+
+    stolen = bus.dispatch("net.add", AddNetPayload(name="+5V", nodes=(NetNode("U1", "8"),)))
+
+    assert stolen.ok is False
+    assert stolen.code == "pin-in-another-net"
+    assert "GND" in stolen.message
+    assert len(bus.document.nets) == 1
+
+
+def test_a_net_may_name_a_pin_that_is_not_on_the_board_yet():
+    """Deliberate. Importing a netlist and then placing what it asks for is a workflow
+    this application already offers, so a node with nothing behind it yet is a perfectly
+    good document; the ratsnest reports it as an unresolved pin and LVS raises it."""
+    bus = new_bus()
+
+    result = bus.dispatch("net.add", AddNetPayload(name="GND", nodes=(NetNode("U99", "1"),)))
+
+    assert result.ok, result.message
+    assert bus.document.nets[0].nodes == (NetNode("U99", "1"),)
+
+
+def test_connecting_several_pins_is_one_undo_step():
+    """A click-a-pin session commits once: an undo that leaves three of five pins
+    attached is a state nobody asked for."""
+    bus = new_bus()
+    bus.dispatch("net.add", AddNetPayload(name="GND", net_class="ground"))
+
+    result = bus.dispatch(
+        "net.connect",
+        ConnectPinsPayload(id="net-1", nodes=(NetNode("U1", "8"), NetNode("C2", "2"))),
+    )
+
+    assert result.ok, result.message
+    assert len(bus.document.nets[0].nodes) == 2
+    assert result.description == "Connect 2 pins to GND"
+
+    bus.undo()
+    assert bus.document.nets[0].nodes == ()
+
+
+def test_connecting_a_pin_the_net_already_has_is_refused():
+    bus = new_bus()
+    bus.dispatch("net.add", AddNetPayload(name="GND", nodes=(NetNode("U1", "8"),)))
+
+    again = bus.dispatch("net.connect", ConnectPinsPayload(id="net-1", nodes=(NetNode("U1", "8"),)))
+
+    assert again.ok is False
+    assert again.code == "duplicate-pin"
+    assert len(bus.document.nets[0].nodes) == 1
+
+
+def test_the_same_pin_twice_in_one_batch_is_refused():
+    bus = new_bus()
+    bus.dispatch("net.add", AddNetPayload(name="GND"))
+
+    result = bus.dispatch(
+        "net.connect",
+        ConnectPinsPayload(id="net-1", nodes=(NetNode("U1", "8"), NetNode("U1", "8"))),
+    )
+
+    assert result.ok is False
+    assert result.code == "duplicate-pin"
+    assert bus.document.nets[0].nodes == ()
+
+
+def test_connecting_to_a_net_that_is_not_there_names_the_ones_that_are():
+    bus = new_bus()
+    bus.dispatch("net.add", AddNetPayload(name="GND"))
+
+    result = bus.dispatch(
+        "net.connect", ConnectPinsPayload(id="net-7", nodes=(NetNode("U1", "8"),))
+    )
+
+    assert result.ok is False
+    assert result.code == "net-not-found"
+    assert "GND" in result.message
+
+
+def test_an_empty_connect_batch_is_refused():
+    bus = new_bus()
+    bus.dispatch("net.add", AddNetPayload(name="GND"))
+
+    result = bus.dispatch("net.connect", ConnectPinsPayload(id="net-1", nodes=()))
+
+    assert result.ok is False
+    assert result.code == "empty-batch"
+
+
+def test_disconnecting_a_pin_leaves_the_rest_alone():
+    bus = new_bus()
+    bus.dispatch(
+        "net.add",
+        AddNetPayload(name="GND", nodes=(NetNode("U1", "8"), NetNode("C2", "2"))),
+    )
+
+    result = bus.dispatch(
+        "net.disconnect", DisconnectPinsPayload(id="net-1", nodes=(NetNode("U1", "8"),))
+    )
+
+    assert result.ok, result.message
+    assert bus.document.nets[0].nodes == (NetNode("C2", "2"),)
+    assert result.description == "Disconnect U1.8 from GND"
+
+
+def test_disconnecting_a_pin_the_net_does_not_have_is_refused():
+    bus = new_bus()
+    bus.dispatch("net.add", AddNetPayload(name="GND", nodes=(NetNode("U1", "8"),)))
+
+    result = bus.dispatch(
+        "net.disconnect", DisconnectPinsPayload(id="net-1", nodes=(NetNode("U1", "9"),))
+    )
+
+    assert result.ok is False
+    assert result.code == "pin-not-on-net"
+    assert bus.document.nets[0].nodes == (NetNode("U1", "8"),)
+
+
+def test_renaming_a_net_says_so_in_the_history():
+    bus = new_bus()
+    bus.dispatch("net.add", AddNetPayload(name="N$1"))
+
+    result = bus.dispatch("net.update", UpdateNetPayload(id="net-1", name="GND"))
+
+    assert result.ok, result.message
+    assert bus.document.nets[0].name == "GND"
+    assert result.description == "Rename net N$1 to GND"
+
+
+def test_a_net_can_be_renamed_to_the_name_it_already_has():
+    """The uniqueness check must ignore the net being renamed, or a no-op rename -- which
+    is what re-typing a name into a dialog is -- would be refused as a clash with itself."""
+    bus = new_bus()
+    bus.dispatch("net.add", AddNetPayload(name="GND"))
+
+    result = bus.dispatch("net.update", UpdateNetPayload(id="net-1", name="GND"))
+
+    assert result.ok, result.message
+
+
+def test_a_nets_current_and_voltage_can_be_stated_and_cleared():
+    """Nothing else in the application can set these, and DRC's current-capacity and
+    creepage rules and the guide's wire gauge are all silent without them."""
+    bus = new_bus()
+    bus.dispatch("net.add", AddNetPayload(name="+12V", net_class="power"))
+
+    stated = bus.dispatch("net.update", UpdateNetPayload(id="net-1", current_a=2.5, voltage_v=12.0))
+    assert stated.ok, stated.message
+    assert (bus.document.nets[0].current_a, bus.document.nets[0].voltage_v) == (2.5, 12.0)
+
+    # KEEP is the default, so an update about the name alone leaves both where they were.
+    renamed = bus.dispatch("net.update", UpdateNetPayload(id="net-1", name="+12V rail"))
+    assert renamed.ok, renamed.message
+    assert (bus.document.nets[0].current_a, bus.document.nets[0].voltage_v) == (2.5, 12.0)
+
+    cleared = bus.dispatch("net.update", UpdateNetPayload(id="net-1", current_a=None))
+    assert cleared.ok, cleared.message
+    assert bus.document.nets[0].current_a is None
+    assert bus.document.nets[0].voltage_v == 12.0
+
+
+def test_a_negative_current_is_refused_and_a_negative_voltage_is_not():
+    """-12 V rails exist; -2 A reaches the capacity rule as a wire gauge nobody can cut."""
+    bus = new_bus()
+    bus.dispatch("net.add", AddNetPayload(name="-12V", net_class="power"))
+
+    bad = bus.dispatch("net.update", UpdateNetPayload(id="net-1", current_a=-2.0))
+    assert bad.ok is False
+    assert bad.code == "invalid-current"
+
+    fine = bus.dispatch("net.update", UpdateNetPayload(id="net-1", voltage_v=-12.0))
+    assert fine.ok, fine.message
+    assert bus.document.nets[0].voltage_v == -12.0
+
+
+def test_deleting_a_net_leaves_its_copper_and_releases_the_claim_on_it():
+    """The copper is physical and stays. Its net_id is a reference, and a reference to a
+    net that is gone is exactly what commands exist to prevent."""
+    bus = new_bus()
+    bus.dispatch("net.add", AddNetPayload(name="GND", net_class="ground"))
+    bus.dispatch(
+        "conductor.add",
+        AddConductorPayload(
+            conductor=NewSolderTraceConductor(
+                path=(HoleCoord(1, 1), HoleCoord(2, 1)), net_id="net-1"
+            )
+        ),
+    )
+
+    result = bus.dispatch("net.delete", DeleteNetPayload(id="net-1"))
+
+    assert result.ok, result.message
+    assert bus.document.nets == ()
+    assert len(bus.document.conductors) == 1
+    assert bus.document.conductors[0].net_id is None
+    assert result.description == "Delete net GND (1 conductor(s) keep their copper)"
+
+    bus.undo()
+    assert bus.document.conductors[0].net_id == "net-1"
+
+
+def test_a_hand_built_netlist_survives_a_save_and_a_load():
+    """The .perf format has always carried nets; what was missing was any way to write
+    one without KiCad. This is the feature, end to end."""
+    bus = new_bus()
+    bus.dispatch(
+        "net.add", AddNetPayload(name="GND", net_class="ground", nodes=(NetNode("U1", "8"),))
+    )
+    bus.dispatch("net.add", AddNetPayload(name="+5V", net_class="power"))
+    bus.dispatch("net.update", UpdateNetPayload(id="net-2", current_a=0.5, voltage_v=5.0))
+    bus.dispatch("net.connect", ConnectPinsPayload(id="net-2", nodes=(NetNode("U1", "16"),)))
+
+    reloaded = parse_document_or_throw(serialize_document(bus.document))
+
+    assert reloaded.nets == bus.document.nets

@@ -475,7 +475,11 @@ def test_the_tool_surface_is_registered_and_stays_narrow() -> None:
     tools = asyncio.run(server.mcp.list_tools())
     names = {tool.name for tool in tools}
 
-    assert len(tools) <= 34, f"{len(tools)} tools; see the note in server.py before adding more"
+    # Raised from 34 for the netlist group (create_net, connect_pins, disconnect_pins,
+    # update_net, delete_net), which is argued at length in server.py's module docstring:
+    # without it an agent could place, draw and route but could not state the intent all
+    # three are measured against.
+    assert len(tools) <= 39, f"{len(tools)} tools; see the note in server.py before adding more"
     for critical in ("render_2d_view", "render_3d_view", "snapshot", "restore"):
         assert critical in names, f"{critical} is named in PLAN.md Sec 9.2 as load-bearing"
     assert all(tool.description for tool in tools), "a tool with no description is unusable"
@@ -629,3 +633,133 @@ def test_check_heights_will_not_let_an_unmeasured_part_read_as_a_pass() -> None:
 
     assert heights["unknown_footprints"] == ["X1"]
     assert [p["ref"] for p in heights["parts"]] == ["R1"]
+
+
+# ---------------------------------------------------------------------------
+# The netlist, without KiCad
+#
+# Until these existed, import_netlist was the only way a net could enter a document: an
+# agent could place parts, draw copper and route, but could not produce the INTENT all
+# three are measured against. On a board that never had a schematic there was no
+# ratsnest, so nothing for autoroute to route and nothing for run_lvs to check.
+# ---------------------------------------------------------------------------
+
+
+def test_an_agent_can_declare_a_net_and_fill_it(session: BoardSession) -> None:
+    session.place_component("R1", "r-axial-5", "C3")
+    session.place_component("R2", "r-axial-5", "C8")
+
+    created = session.create_net("GND", "ground", ["R1.1"])
+    added = session.connect_pins("GND", ["R2.2"])
+
+    assert created["ok"] and added["ok"], (created, added)
+    net = session.get_nets()[0]
+    assert (net["name"], net["net_class"]) == ("GND", "ground")
+    assert net["pins"] == ["R1.1", "R2.2"]
+
+
+def test_a_hand_built_netlist_gives_the_ratsnest_something_to_route(
+    session: BoardSession,
+) -> None:
+    """The point of the whole group: with no net there is nothing to route, so a board
+    that never had a schematic could not be autorouted at all."""
+    session.place_component("R1", "r-axial-5", "C3")
+    session.place_component("R2", "r-axial-5", "C8")
+    assert session.get_status()["unrouted_connections"] == 0
+
+    session.create_net("SIG", "signal", ["R1.2", "R2.1"])
+
+    assert session.get_status()["unrouted_connections"] == 1
+    routed = session.autoroute()
+    assert routed["ok"] and routed["routed"] == 1, routed
+    assert session.get_status()["unrouted_connections"] == 0
+
+
+def test_a_pin_that_belongs_to_another_net_is_refused_as_data(session: BoardSession) -> None:
+    session.place_component("R1", "r-axial-5", "C3")
+    session.create_net("GND", "ground", ["R1.1"])
+    session.create_net("+5V", "power")
+
+    result = session.connect_pins("+5V", ["R1.1"])
+
+    assert result["ok"] is False
+    assert result["code"] == "pin-in-another-net"
+    assert "GND" in result["message"]
+
+
+def test_a_pin_naming_a_part_that_is_not_placed_yet_is_allowed_and_reported(
+    session: BoardSession,
+) -> None:
+    """Declaring the circuit and then placing what it asks for is a real order of work --
+    it is what importing a netlist does -- but an agent that meant U1 and typed U11 needs
+    to hear about it now rather than from LVS at the end."""
+    result = session.create_net("GND", "ground", ["U11.8"])
+
+    assert result["ok"], result
+    assert result["unplaced_pins"] == ["U11"]
+
+
+def test_a_malformed_pin_raises_rather_than_refusing(session: BoardSession) -> None:
+    """The same split the hole parser makes: "did not make sense" is not "no"."""
+    with pytest.raises(SessionError, match=r"U1\.8"):
+        session.create_net("GND", "ground", ["U1 pin 8"])
+
+
+def test_disconnecting_a_pin_takes_it_off_and_undoes_as_one_step(
+    session: BoardSession,
+) -> None:
+    session.place_component("R1", "r-axial-5", "C3")
+    session.create_net("GND", "ground", ["R1.1", "R1.2"])
+    depth = len(session.history())
+
+    removed = session.disconnect_pins("GND", ["R1.1", "R1.2"])
+
+    assert removed["ok"], removed
+    assert session.get_nets()[0]["pins"] == []
+    assert len(session.history()) == depth + 1
+    session.undo()
+    assert session.get_nets()[0]["pins"] == ["R1.1", "R1.2"]
+
+
+def test_current_and_voltage_can_only_be_stated_here_and_are_not_erased_by_omission(
+    session: BoardSession,
+) -> None:
+    """No netlist format carries either, and DRC's capacity and creepage rules and the
+    guide's wire gauge are all silent without them -- so update_net is their only route
+    into a document, and an agent that omits a field has not asked to erase it."""
+    session.create_net("+12V", "power")
+
+    session.update_net("+12V", current_a=2.5, voltage_v=12.0)
+    assert session.get_nets()[0]["current_a"] == 2.5
+
+    session.update_net("+12V", new_name="+12V rail")
+    net = session.get_nets()[0]
+    assert (net["name"], net["current_a"], net["voltage_v"]) == ("+12V rail", 2.5, 12.0)
+
+    session.update_net("+12V rail", clear_current=True)
+    net = session.get_nets()[0]
+    assert net["current_a"] is None and net["voltage_v"] == 12.0
+
+
+def test_deleting_a_net_keeps_the_copper_and_releases_its_claim(session: BoardSession) -> None:
+    session.place_component("R1", "r-axial-5", "C3")
+    session.place_component("R2", "r-axial-5", "C8")
+    session.create_net("SIG", "signal", ["R1.2", "R2.1"])
+    session.autoroute()
+    conductors = session.get_status()["conductors"]
+    assert conductors > 0
+
+    removed = session.delete_net("SIG")
+
+    assert removed["ok"], removed
+    assert session.get_nets() == []
+    assert session.get_status()["conductors"] == conductors
+
+
+def test_an_unknown_net_name_raises_and_lists_the_ones_there_are(
+    session: BoardSession,
+) -> None:
+    session.create_net("GND", "ground")
+
+    with pytest.raises(SessionError, match="GND"):
+        session.connect_pins("GROUND", ["R1.1"])

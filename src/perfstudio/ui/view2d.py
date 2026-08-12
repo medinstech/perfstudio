@@ -45,6 +45,7 @@ from PySide6.QtWidgets import (
 from perfstudio.command import CommandBus, DispatchResult
 from perfstudio.commands import (
     AddConductorPayload,
+    ConnectPinsPayload,
     MoveComponentPayload,
     NewConductor,
     NewSolderTraceConductor,
@@ -88,7 +89,9 @@ from perfstudio.model import (
     Footprint,
     HoleCoord,
     MountingHole,
+    Net,
     NetClass,
+    NetNode,
     PerfDocument,
     contacts_every_path_hole,
 )
@@ -919,6 +922,36 @@ class RiskRingsItem(QGraphicsItem):
             painter.drawEllipse(p, r, r)
 
 
+class PickedPinsItem(QGraphicsItem):
+    """The pins collected so far while naming a net by clicking them.
+
+    Deliberately the ratsnest's highlight colour: the yellow already means "this is the
+    net you are looking at" everywhere else in the view, and a pin picked for a net is
+    the same statement made one click at a time.
+    """
+
+    def __init__(self, board: Board, side: BoardSide) -> None:
+        super().__init__()
+        self.holes: list[HoleCoord] = []
+        self.board = board
+        self.side = side
+        self.setZValue(61)
+
+    def set_holes(self, holes: Sequence[HoleCoord]) -> None:
+        self.holes = list(holes)
+        self.update()
+
+    def boundingRect(self) -> QRectF:
+        return _outline_rect(self.board).adjusted(-1, -1, 1, 1)
+
+    def paint(self, painter: QPainter, option: Any, widget: Any = None) -> None:
+        r = self.board.pad_diameter / 2 + 0.35
+        painter.setPen(QPen(RATSNEST_HIGHLIGHT, 0.35))
+        painter.setBrush(QBrush(QColor(255, 209, 102, 70)))
+        for hole in self.holes:
+            painter.drawEllipse(hole_to_screen(hole, self.board, self.side), r, r)
+
+
 # ------------------------------------------------------------------ conductor item
 
 
@@ -1586,6 +1619,15 @@ class BoardScene(QGraphicsScene):
     drawArmed = Signal(str)
     #: Emitted with the DispatchResult of a hand-drawn conductor.
     conductorDrawn = Signal(object)
+    #: Emitted with the id of the net being filled by clicking pins, or "" when that ends.
+    netPinsArmed = Signal(str)
+    #: Emitted with the "U1.8" labels picked so far, after every pick.
+    netPinsChanged = Signal(list)
+    #: Emitted with why a click did not count: an empty hole, or a pin already spoken for.
+    #: A silently ignored click reads as the tool having stopped working.
+    netPinRejected = Signal(str)
+    #: Emitted with the DispatchResult of the committed net.connect.
+    netPinsCommitted = Signal(object)
     #: (col, row) under the cursor. The whole tool speaks hole addresses, so the status
     #: bar has to be able to say which one the pointer is on -- otherwise you count.
     hoveredHole = Signal(int, int)
@@ -1618,6 +1660,10 @@ class BoardScene(QGraphicsScene):
         self._draw_kind: ConductorKind | None = None
         self._draw_path: list[HoleCoord] = []
         self._draw_preview: DrawPreviewItem | None = None
+        self._net_pin_target: str | None = None
+        self._net_pin_picks: list[tuple[str, str]] = []
+        self._net_pin_holes: list[HoleCoord] = []
+        self._net_pin_item: PickedPinsItem | None = None
         self._ghost: PlacementGhostItem | None = None
         #: Whether the last placement landed somewhere already occupied. Read by the host to
         #: say so, since the bus allows it and only DRC objects.
@@ -1681,6 +1727,10 @@ class BoardScene(QGraphicsScene):
         self._ratsnest_item = None
         self._ghost = None
         self._draw_preview = None
+        # The pin markers are RE-created rather than merely forgotten, because a rebuild
+        # happens on every command and the mode survives one: a half-collected net whose
+        # picks vanished off the board reads as the clicks having been lost.
+        self._net_pin_item = None
         board = self.document.board
         outline = _outline_rect(board)
         # Room outside the substrate is reserved for the ruler, so it is only needed when
@@ -1774,6 +1824,10 @@ class BoardScene(QGraphicsScene):
         if self._armed_footprint is not None:
             self._ghost = PlacementGhostItem(self._armed_footprint, board, self.side)
             self.addItem(self._ghost)
+        if self._net_pin_target is not None:
+            self._net_pin_item = PickedPinsItem(board, self.side)
+            self._net_pin_item.set_holes(self._net_pin_holes)
+            self.addItem(self._net_pin_item)
 
     # -- ratsnest -----------------------------------------------------------
 
@@ -1883,7 +1937,8 @@ class BoardScene(QGraphicsScene):
         self._clear_draw()
         self._draw_kind = kind
         if kind is not None:
-            self.arm_placement(None)  # The two modes are mutually exclusive.
+            self.arm_placement(None)  # The board modes are mutually exclusive.
+            self._disarm_net_pins()
             self._draw_preview = DrawPreviewItem(kind, self.document.board, self.side)
             self.addItem(self._draw_preview)
         self.drawArmed.emit(kind or "")
@@ -1984,6 +2039,142 @@ class BoardScene(QGraphicsScene):
         ok = cursor is None or self._step_is_legal(cursor)
         self._draw_preview.set_path(list(self._draw_path), cursor, ok)
 
+    # -- naming a net by clicking its pins -----------------------------------
+    #
+    # A net could only ever arrive from a KiCad netlist, which made a schematic capture
+    # package a prerequisite for the ratsnest -- and so for autoroute, LVS and the guide's
+    # continuity tests. Nobody opens KiCad to wire four parts on a scrap of perfboard.
+    #
+    # A MODE over the board rather than a dialog listing refs, for the same reason
+    # placement is one: the pin IS the decision, and on a perfboard a pin is a hole you
+    # can point at. A list of "U1.8, U1.7, C2.2" asks the user to do the translation the
+    # board is already showing them.
+
+    def arm_net_pins(self, net_id: str | None) -> None:
+        """Arm (or, with None, disarm) collecting pins for a net.
+
+        An unknown id disarms rather than collecting clicks for a net that is not there.
+        """
+        if net_id is not None and not any(n.id == net_id for n in self.document.nets):
+            net_id = None
+        if net_id is not None:
+            # The three board modes are mutually exclusive: a click means one thing.
+            self.arm_placement(None)
+            self.arm_drawing(None)
+        self._clear_net_pins()
+        self._net_pin_target = net_id
+        if net_id is not None:
+            self._net_pin_item = PickedPinsItem(self.document.board, self.side)
+            self.addItem(self._net_pin_item)
+        self.netPinsArmed.emit(net_id or "")
+        self.netPinsChanged.emit([])
+
+    @property
+    def armed_net_id(self) -> str | None:
+        return self._net_pin_target
+
+    def picked_pins(self) -> tuple[tuple[str, str], ...]:
+        """(ref, pin) collected so far. Also what the seam tests assert on."""
+        return tuple(self._net_pin_picks)
+
+    def _disarm_net_pins(self) -> None:
+        """End the mode without committing, for the other two modes to call."""
+        if self._net_pin_target is None:
+            return
+        self._clear_net_pins()
+        self._net_pin_target = None
+        self.netPinsArmed.emit("")
+
+    def _clear_net_pins(self) -> None:
+        if self._net_pin_item is not None:
+            self.removeItem(self._net_pin_item)
+            self._net_pin_item = None
+        self._net_pin_picks = []
+        self._net_pin_holes = []
+
+    def _pin_at(self, hole: HoleCoord) -> tuple[str, str] | None:
+        """The component pin occupying a hole, as (ref, pin number).
+
+        Two parts on one hole is a legal document that DRC objects to, so this takes the
+        first in document order -- deterministic, and the overlap is already reported by
+        the rule that owns it.
+        """
+        for comp in self.document.components:
+            for pin, at in _pin_holes_of(comp, self.lookup):
+                if at.col == hole.col and at.row == hole.row:
+                    return comp.ref, pin.number
+        return None
+
+    def _net_holding(self, ref: str, pin: str) -> Net | None:
+        for net in self.document.nets:
+            if any((node.component_ref, node.pin) == (ref, pin) for node in net.nodes):
+                return net
+        return None
+
+    def net_pin_click(self, at: HoleCoord) -> None:
+        """Add the pin at this hole to the list being collected, or say why not.
+
+        Every refusal the command would make is made HERE, one click at a time, rather
+        than letting a session accumulate pins and then bounce the whole batch at commit
+        for something the user did five clicks ago.
+        """
+        target = self._net_pin_target
+        if target is None:
+            return
+
+        found = self._pin_at(at)
+        if found is None:
+            self.netPinRejected.emit(f"No component pin at {format_hole(at)}.")
+            return
+
+        ref, pin = found
+        if (ref, pin) in self._net_pin_picks:
+            self.netPinRejected.emit(f"{ref}.{pin} is already on the list.")
+            return
+
+        holder = self._net_holding(ref, pin)
+        if holder is not None and holder.id == target:
+            self.netPinRejected.emit(f"{ref}.{pin} is already on {holder.name}.")
+            return
+        if holder is not None:
+            self.netPinRejected.emit(
+                f"{ref}.{pin} belongs to {holder.name}. Disconnect it there first -- "
+                f"a pin can only be on one net."
+            )
+            return
+
+        self._net_pin_picks.append((ref, pin))
+        self._net_pin_holes.append(at)
+        if self._net_pin_item is not None:
+            self._net_pin_item.set_holes(self._net_pin_holes)
+        self.netPinsChanged.emit([f"{r}.{p}" for r, p in self._net_pin_picks])
+
+    def commit_net_pins(self) -> DispatchResult | None:
+        """Dispatch ONE ``net.connect`` for everything picked. Nothing picked is a cancel.
+
+        One command for the whole session on purpose: "GND is these five pins" was one
+        decision, and an undo that leaves three of them attached is a state nobody asked
+        for.
+        """
+        target = self._net_pin_target
+        picks = list(self._net_pin_picks)
+        self._clear_net_pins()
+        self._net_pin_target = None
+        self.netPinsArmed.emit("")
+
+        if self.bus is None or target is None or not picks:
+            return None
+
+        result = self.bus.dispatch(
+            "net.connect",
+            ConnectPinsPayload(
+                id=target,
+                nodes=tuple(NetNode(component_ref=ref, pin=pin) for ref, pin in picks),
+            ),
+        )
+        self.netPinsCommitted.emit(result)
+        return result
+
     def selected_conductor_ids(self) -> tuple[str, ...]:
         return tuple(
             item.conductor_id
@@ -1997,6 +2188,7 @@ class BoardScene(QGraphicsScene):
         self._armed_id = footprint_id if self._armed_footprint is not None else None
         self._clear_ghost()
         if self._armed_footprint is not None:
+            self._disarm_net_pins()
             self._ghost = PlacementGhostItem(self._armed_footprint, self.document.board, self.side)
             self.addItem(self._ghost)
         self.placementArmed.emit(self._armed_id or "")
@@ -2044,6 +2236,15 @@ class BoardScene(QGraphicsScene):
         super().mouseMoveEvent(event)
 
     def mousePressEvent(self, event: Any) -> None:
+        if self._net_pin_target is not None:
+            at = screen_to_hole(event.scenePos(), self.document.board, self.side)
+            if event.button() == Qt.MouseButton.LeftButton:
+                self.net_pin_click(at)
+            elif event.button() == Qt.MouseButton.RightButton:
+                # Right-click finishes the net, the same gesture that finishes a trace.
+                self.commit_net_pins()
+            event.accept()
+            return
         if self._draw_kind is not None:
             at = screen_to_hole(event.scenePos(), self.document.board, self.side)
             if event.button() == Qt.MouseButton.LeftButton:
@@ -2116,6 +2317,17 @@ class BoardScene(QGraphicsScene):
             Qt.Key.Key_Up: (0, -1),
             Qt.Key.Key_Down: (0, 1),
         }
+        if self._net_pin_target is not None and event.key() == Qt.Key.Key_Escape:
+            self._disarm_net_pins()
+            event.accept()
+            return
+        if self._net_pin_target is not None and event.key() in (
+            Qt.Key.Key_Return,
+            Qt.Key.Key_Enter,
+        ):
+            self.commit_net_pins()
+            event.accept()
+            return
         if self._draw_kind is not None and event.key() == Qt.Key.Key_Escape:
             self.arm_drawing(None)
             event.accept()

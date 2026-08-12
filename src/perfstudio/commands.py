@@ -27,6 +27,7 @@ host stamps timestamps when it saves.
 from __future__ import annotations
 
 import dataclasses
+import math
 from dataclasses import dataclass
 from typing import Any, Literal, TypeAlias
 
@@ -69,6 +70,9 @@ from .model import (
     Mm,
     MountingHole,
     Net,
+    NetClass,
+    NetId,
+    NetNode,
     PerfDocument,
     Rotation,
     SolderBuildup,
@@ -120,6 +124,11 @@ def create_document_id_generator(doc: PerfDocument) -> NextId:
         note(conductor.id)
     for cut in doc.cuts:
         note(cut.id)
+    # Nets are here because ``net.add`` generates ids the same way the others do. A net
+    # named by a netlist ("+5V", "N$3") almost never has this shape and is simply not
+    # noted, which is the behaviour described above rather than an exception to it.
+    for net in doc.nets:
+        note(net.id)
 
     return create_id_generator(initial=highest)
 
@@ -198,6 +207,20 @@ def require_conductor(doc: PerfDocument, id_: ConductorId) -> Conductor:
     raise CommandError("conductor-not-found", f'No conductor with id "{id_}".')
 
 
+def require_net(doc: PerfDocument, id_: NetId) -> Net:
+    """The net with this id, or a refusal naming the ones there are.
+
+    Nets are the one thing in this document a user addresses by NAME -- the MCP server
+    resolves ``"GND"``, DRC and LVS print it -- so a miss lists the names rather than the
+    ids, which nobody has ever typed.
+    """
+    for net in doc.nets:
+        if net.id == id_:
+            return net
+    known = ", ".join(n.name for n in doc.nets) or "(this board has no nets)"
+    raise CommandError("net-not-found", f'No net with id "{id_}". Nets on this board: {known}.')
+
+
 def assert_rotation(rotation: int) -> None:
     if rotation not in VALID_ROTATIONS:
         raise CommandError(
@@ -227,6 +250,91 @@ def assert_valid_path(path: tuple[HoleCoord, ...], kind: ConductorKind, board: B
         check = validate_orthogonal_chain(path)
         if not check.ok:
             raise CommandError("non-orthogonal-path", check.reason)
+
+
+def assert_net_name_free(doc: PerfDocument, name: str, ignoring: NetId | None = None) -> str:
+    """Check a net name and give it back stripped, or refuse it.
+
+    Uniqueness is integrity rather than taste here, because a net's NAME is its handle
+    everywhere outside the engine: the MCP server resolves ``"GND"`` to a net by it, DRC
+    and LVS quote it in every message, the build guide prints it on the wire list. Two
+    nets called GND make all of those ambiguous and leave one of the pair unaddressable.
+    """
+    cleaned = name.strip()
+    if not cleaned:
+        raise CommandError("invalid-net-name", "A net needs a name.")
+    for net in doc.nets:
+        if net.id != ignoring and net.name == cleaned:
+            raise CommandError("duplicate-net-name", f'A net called "{cleaned}" already exists.')
+    return cleaned
+
+
+def assert_electrical(current_a: float | None, voltage_v: float | None) -> None:
+    """The two numbers a net may declare about itself.
+
+    Both are optional and both stay refusable: a net carrying 0 A is what ``None`` says,
+    and a negative or non-finite one would reach the current-capacity rule as a wire gauge
+    nobody can cut. A negative VOLTAGE is ordinary (-12 V rails exist), so only the
+    non-finite case is refused there.
+    """
+    if current_a is not None and not (math.isfinite(current_a) and current_a > 0):
+        raise CommandError(
+            "invalid-current",
+            f"A net's declared current must be a positive number of amps; got {current_a}. "
+            f"Pass null to say nothing about it instead.",
+        )
+    if voltage_v is not None and not math.isfinite(voltage_v):
+        raise CommandError(
+            "invalid-voltage", f"A net's declared voltage must be a real number; got {voltage_v}."
+        )
+
+
+def assert_pins_free(
+    doc: PerfDocument, nodes: tuple[NetNode, ...], joining: NetId | None
+) -> tuple[NetNode, ...]:
+    """Check pins about to join a net and give them back stripped, or refuse them.
+
+    A pin belongs to exactly one net -- that is what a net is -- so one already claimed is
+    refused rather than quietly moved. Moving it would rewrite a net the user did not
+    name in a command about a different net, and the disconnect is one call away.
+
+    DELIBERATELY NOT CHECKED: whether the component exists, or whether its footprint has
+    that pin. A netlist routinely names parts that are not on the board yet -- importing
+    one and then placing what it asks for is a workflow this application already offers --
+    so a node with nothing behind it yet is a perfectly good document. ``ratsnest`` reports
+    it as an unresolved pin and LVS raises it, which is where it belongs.
+    """
+    owner: dict[tuple[str, str], Net] = {}
+    for net in doc.nets:
+        for node in net.nodes:
+            owner[(node.component_ref, node.pin)] = net
+
+    cleaned: list[NetNode] = []
+    seen: set[tuple[str, str]] = set()
+    for node in nodes:
+        ref = node.component_ref.strip()
+        pin = node.pin.strip()
+        if not ref or not pin:
+            raise CommandError(
+                "invalid-pin", "A net node needs both a component reference and a pin number."
+            )
+        key = (ref, pin)
+        if key in seen:
+            raise CommandError("duplicate-pin", f"{ref}.{pin} is listed twice in the same request.")
+        seen.add(key)
+
+        holder = owner.get(key)
+        if holder is not None and holder.id == joining:
+            raise CommandError("duplicate-pin", f'{ref}.{pin} is already on net "{holder.name}".')
+        if holder is not None:
+            raise CommandError(
+                "pin-in-another-net",
+                f'{ref}.{pin} already belongs to net "{holder.name}". Disconnect it from '
+                f"there first -- a pin can only be on one net.",
+            )
+        cleaned.append(NetNode(component_ref=ref, pin=pin))
+
+    return tuple(cleaned)
 
 
 # ---------------------------------------------------------------------------
@@ -468,6 +576,82 @@ class ApplyBoardPresetPayload:
 @dataclass(frozen=True, slots=True)
 class ImportNetlistPayload:
     nets: tuple[Net, ...]
+
+
+class _Keep:
+    """Sentinel for ``net.update``: leave this field exactly as it is.
+
+    ``None`` cannot carry that meaning here, because for ``current_a`` and ``voltage_v``
+    None IS a value -- "this net declares no current" is what silences the current-capacity
+    rule. A payload that used None for both would be unable to express one of them.
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid only
+        return "KEEP"
+
+
+KEEP = _Keep()
+
+
+@dataclass(frozen=True, slots=True)
+class AddNetPayload:
+    """Declare a net the schematic (or the user) says should exist.
+
+    ``nodes`` is optional because both orders of work are real: name the net and then
+    click its pins on the board, or state the whole thing at once from an agent.
+    """
+
+    name: str
+    net_class: NetClass = "signal"
+    nodes: tuple[NetNode, ...] = ()
+    #: Expected current. Nothing else in the application can set this, and DRC's
+    #: current-capacity rule and the guide's wire-gauge choice are silent without it.
+    current_a: float | None = None
+    #: Nominal voltage, which is what wakes the creepage rule.
+    voltage_v: float | None = None
+    id: NetId | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class UpdateNetPayload:
+    """Rename a net, reclassify it, or state its current/voltage.
+
+    ``None`` means "leave alone" for name and class, which cannot legitimately BE None.
+    For the two electrical fields it means "clear it", and leaving them alone is ``KEEP``.
+    """
+
+    id: NetId
+    name: str | None = None
+    net_class: NetClass | None = None
+    current_a: float | None | _Keep = KEEP
+    voltage_v: float | None | _Keep = KEEP
+
+
+@dataclass(frozen=True, slots=True)
+class DeleteNetPayload:
+    id: NetId
+
+
+@dataclass(frozen=True, slots=True)
+class ConnectPinsPayload:
+    """Add pins to a net. Plural, so a click-a-pin session is ONE undo step.
+
+    The counterpart of ``conductor.addMany``: "GND is these five pins" is one decision,
+    and an undo that leaves three of them attached is a state nobody asked for.
+    """
+
+    id: NetId
+    nodes: tuple[NetNode, ...]
+    label: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class DisconnectPinsPayload:
+    id: NetId
+    nodes: tuple[NetNode, ...]
+    label: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1082,6 +1266,192 @@ class _ImportNetlist:
         return f"Import netlist ({len(p.nets)} nets)"
 
 
+# ---------------------------------------------------------------------------
+# Net commands: the schematic's intent, stated by hand
+# ---------------------------------------------------------------------------
+#
+# For a long time ``netlist.import`` was the ONLY way a net could enter a document, which
+# quietly made KiCad a prerequisite for the whole tool. Nobody reaches for a schematic
+# capture package to wire up four parts on a scrap of perfboard, and without a net there
+# is no ratsnest, so autoroute, LVS and the guide's continuity tests all had nothing to
+# work from. These five commands are the same intent, entered by hand.
+#
+# The import stays as it is: it REPLACES the netlist wholesale, because that is what
+# re-exporting from a schematic means. These edit it in place.
+
+
+class _AddNet:
+    type = "net.add"
+
+    def apply(self, doc: PerfDocument, p: AddNetPayload, ctx: CommandContext) -> PerfDocument:
+        name = assert_net_name_free(doc, p.name)
+        if p.net_class not in ("power", "ground", "signal"):
+            raise CommandError(
+                "invalid-net-class",
+                f'A net is "power", "ground" or "signal"; got "{p.net_class}".',
+            )
+        assert_electrical(p.current_a, p.voltage_v)
+        nodes = assert_pins_free(doc, p.nodes, joining=None)
+
+        id_ = p.id if p.id is not None else ctx.next_id("net")
+        if any(n.id == id_ for n in doc.nets):
+            raise CommandError("duplicate-id", f'A net with id "{id_}" already exists.')
+
+        net = Net(
+            id=id_,
+            name=name,
+            nodes=nodes,
+            net_class=p.net_class,
+            current_a=p.current_a,
+            voltage_v=p.voltage_v,
+        )
+        return dataclasses.replace(doc, nets=doc.nets + (net,))
+
+    def describe(self, p: AddNetPayload, doc: PerfDocument) -> str:
+        pins = f" with {len(p.nodes)} pin(s)" if p.nodes else ""
+        return f"Add {p.net_class} net {p.name.strip()}{pins}"
+
+
+class _UpdateNet:
+    type = "net.update"
+
+    def apply(self, doc: PerfDocument, p: UpdateNetPayload, ctx: CommandContext) -> PerfDocument:
+        existing = require_net(doc, p.id)
+        name = existing.name if p.name is None else assert_net_name_free(doc, p.name, ignoring=p.id)
+        net_class = existing.net_class if p.net_class is None else p.net_class
+        if net_class not in ("power", "ground", "signal"):
+            raise CommandError(
+                "invalid-net-class", f'A net is "power", "ground" or "signal"; got "{net_class}".'
+            )
+        current_a = existing.current_a if isinstance(p.current_a, _Keep) else p.current_a
+        voltage_v = existing.voltage_v if isinstance(p.voltage_v, _Keep) else p.voltage_v
+        assert_electrical(current_a, voltage_v)
+
+        nets = tuple(
+            dataclasses.replace(
+                net,
+                name=name,
+                net_class=net_class,
+                current_a=current_a,
+                voltage_v=voltage_v,
+            )
+            if net.id == p.id
+            else net
+            for net in doc.nets
+        )
+        return dataclasses.replace(doc, nets=nets)
+
+    def describe(self, p: UpdateNetPayload, doc: PerfDocument) -> str:
+        existing = next((n for n in doc.nets if n.id == p.id), None)
+        was = existing.name if existing is not None else p.id
+        if p.name is not None and p.name.strip() != was:
+            return f"Rename net {was} to {p.name.strip()}"
+        if p.net_class is not None:
+            return f"Make {was} a {p.net_class} net"
+        return f"Update net {was}"
+
+
+class _DeleteNet:
+    """Forget what a net was FOR. The copper laid for it stays on the board.
+
+    A conductor's ``net_id`` is a claim on an intent -- "I am part of this net's routing"
+    -- and that claim is the one reference in the document that would be left dangling by
+    a delete, so it is cleared here in the same step. The consequence is deliberate and
+    worth stating: that copper becomes indistinguishable from hand-drawn work, which is
+    exactly what re-route and the stale-conductor sweep both promise never to touch. There
+    is no longer an intent to route it against, so nothing may act on it unasked.
+    """
+
+    type = "net.delete"
+
+    def apply(self, doc: PerfDocument, p: DeleteNetPayload, ctx: CommandContext) -> PerfDocument:
+        require_net(doc, p.id)
+        conductors = tuple(
+            dataclasses.replace(c, net_id=None) if c.net_id == p.id else c for c in doc.conductors
+        )
+        return dataclasses.replace(
+            doc, nets=tuple(n for n in doc.nets if n.id != p.id), conductors=conductors
+        )
+
+    def describe(self, p: DeleteNetPayload, doc: PerfDocument) -> str:
+        existing = next((n for n in doc.nets if n.id == p.id), None)
+        name = existing.name if existing is not None else p.id
+        freed = sum(1 for c in doc.conductors if c.net_id == p.id)
+        if freed:
+            return f"Delete net {name} ({freed} conductor(s) keep their copper)"
+        return f"Delete net {name}"
+
+
+class _ConnectPins:
+    type = "net.connect"
+
+    def apply(self, doc: PerfDocument, p: ConnectPinsPayload, ctx: CommandContext) -> PerfDocument:
+        require_net(doc, p.id)
+        if not p.nodes:
+            raise CommandError(
+                "empty-batch",
+                "net.connect needs at least one pin; an empty batch would put a no-op in "
+                "the undo history.",
+            )
+        nodes = assert_pins_free(doc, p.nodes, joining=p.id)
+        nets = tuple(
+            dataclasses.replace(net, nodes=net.nodes + nodes) if net.id == p.id else net
+            for net in doc.nets
+        )
+        return dataclasses.replace(doc, nets=nets)
+
+    def describe(self, p: ConnectPinsPayload, doc: PerfDocument) -> str:
+        if p.label:
+            return p.label
+        existing = next((n for n in doc.nets if n.id == p.id), None)
+        name = existing.name if existing is not None else p.id
+        if len(p.nodes) == 1:
+            node = p.nodes[0]
+            return f"Connect {node.component_ref.strip()}.{node.pin.strip()} to {name}"
+        return f"Connect {len(p.nodes)} pins to {name}"
+
+
+class _DisconnectPins:
+    type = "net.disconnect"
+
+    def apply(
+        self, doc: PerfDocument, p: DisconnectPinsPayload, ctx: CommandContext
+    ) -> PerfDocument:
+        existing = require_net(doc, p.id)
+        if not p.nodes:
+            raise CommandError(
+                "empty-batch",
+                "net.disconnect needs at least one pin; an empty batch would put a no-op "
+                "in the undo history.",
+            )
+        wanted = {(node.component_ref.strip(), node.pin.strip()) for node in p.nodes}
+        held = {(node.component_ref, node.pin) for node in existing.nodes}
+        missing = sorted(f"{ref}.{pin}" for ref, pin in wanted - held)
+        if missing:
+            raise CommandError(
+                "pin-not-on-net",
+                f'Net "{existing.name}" does not have pin(s) {", ".join(missing)}.',
+            )
+
+        kept = tuple(
+            node for node in existing.nodes if (node.component_ref, node.pin) not in wanted
+        )
+        nets = tuple(
+            dataclasses.replace(net, nodes=kept) if net.id == p.id else net for net in doc.nets
+        )
+        return dataclasses.replace(doc, nets=nets)
+
+    def describe(self, p: DisconnectPinsPayload, doc: PerfDocument) -> str:
+        if p.label:
+            return p.label
+        existing = next((n for n in doc.nets if n.id == p.id), None)
+        name = existing.name if existing is not None else p.id
+        if len(p.nodes) == 1:
+            node = p.nodes[0]
+            return f"Disconnect {node.component_ref.strip()}.{node.pin.strip()} from {name}"
+        return f"Disconnect {len(p.nodes)} pins from {name}"
+
+
 class _AddCut:
     type = "cut.add"
 
@@ -1378,6 +1748,11 @@ replace_conductors: CommandDefinition[ReplaceConductorsPayload] = _ReplaceConduc
 set_board: CommandDefinition[SetBoardPayload] = _SetBoard()
 apply_board_preset: CommandDefinition[ApplyBoardPresetPayload] = _ApplyBoardPreset()
 import_netlist: CommandDefinition[ImportNetlistPayload] = _ImportNetlist()
+add_net: CommandDefinition[AddNetPayload] = _AddNet()
+update_net: CommandDefinition[UpdateNetPayload] = _UpdateNet()
+delete_net: CommandDefinition[DeleteNetPayload] = _DeleteNet()
+connect_pins: CommandDefinition[ConnectPinsPayload] = _ConnectPins()
+disconnect_pins: CommandDefinition[DisconnectPinsPayload] = _DisconnectPins()
 add_cut: CommandDefinition[AddCutPayload] = _AddCut()
 delete_cut: CommandDefinition[DeleteCutPayload] = _DeleteCut()
 add_mounting_hole: CommandDefinition[AddMountingHolePayload] = _AddMountingHole()
@@ -1407,6 +1782,11 @@ STANDARD_COMMANDS: tuple[CommandDefinition[Any], ...] = (
     set_board,
     apply_board_preset,
     import_netlist,
+    add_net,
+    update_net,
+    delete_net,
+    connect_pins,
+    disconnect_pins,
     add_cut,
     delete_cut,
     add_mounting_hole,

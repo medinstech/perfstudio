@@ -12,7 +12,7 @@ module configures logging to stderr before anything else, and nothing anywhere u
 render tools pull in are the real risk, which is another reason they are imported lazily
 inside the tools rather than at module scope.
 
-THIRTY-THREE TOOLS, against PLAN.md Sec 2's "~25, deliberately narrow", and the overage is
+THIRTY-NINE TOOLS, against PLAN.md Sec 2's "~25, deliberately narrow", and the overage is
 stated rather than hidden. Each tool is a verb an agent cannot compose from the others,
 and the surface was trimmed rather than grown: the history listing folded into
 ``get_status``, and "solder bridge" is not a separate tool from ``add_solder_trace``
@@ -28,6 +28,18 @@ too tall looks exactly like one that is not. ``set_height_limit`` exists because
 it that limit can only be typed into the GUI, leaving one DRC rule permanently silent
 for an agent -- and folding the limit into ``check_heights`` as an argument would make a
 read tool mutate the document, off the command bus and outside the undo stack.
+
+THE MOST RECENT FIVE are the netlist group -- ``create_net``, ``connect_pins``,
+``disconnect_pins``, ``update_net``, ``delete_net`` -- and they are the largest single
+addition this file has taken, so the case for them is worth stating. Until they existed
+``import_netlist`` was the only way a net could enter a document, which meant an agent
+could place parts, draw copper and route, but could not produce the INTENT all three are
+measured against: on a board that never had a KiCad schematic there was no ratsnest, so
+nothing for ``autoroute`` to route and nothing for ``run_lvs`` to check. None of the five
+composes from the others -- declaring a net, adding a pin, removing one, renaming and
+forgetting are five different verbs -- and ``update_net`` carries the only route in the
+whole API to ``current_a`` and ``voltage_v``, which two DRC rules and the guide's wire
+gauge are silent without.
 
 The two the plan singles out as critical are here and are worth every byte of their
 schema: ``render_2d_view``/``render_3d_view``, because an agent editing a board it
@@ -188,10 +200,73 @@ def new_document(cols: int = 30, rows: int = 20, material: str = "FR4") -> dict[
 
 @mcp.tool()
 def import_netlist(path: str) -> dict[str, Any]:
-    """Import a KiCad netlist — this is how the circuit's intent gets onto the board at
-    all, and what makes LVS and the guide's continuity checks possible. Reports any
-    components the netlist names that the board does not have yet."""
+    """Import a KiCad netlist — one way the circuit's intent gets onto the board, and what
+    makes LVS and the guide's continuity checks possible. REPLACES the whole netlist;
+    create_net builds one up instead. Reports any components the netlist names that the
+    board does not have yet."""
     return session.import_netlist(path)
+
+
+# ---------------------------------------------------------------------------
+# The netlist, without KiCad
+#
+# The intent everything else is measured against. Without a net there is no ratsnest,
+# and so nothing for autoroute to route or for LVS to check — which used to mean a board
+# that never had a schematic could not be routed at all.
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def create_net(
+    name: str,
+    net_class: str = "signal",
+    pins: list[str] | None = None,
+    current_a: float | None = None,
+    voltage_v: float | None = None,
+) -> dict[str, Any]:
+    """Declare a net: a name, a class ("signal", "ground" or "power"), and optionally the
+    pins on it as "U1.8" addresses. Ground and power are routed first and get a rail, so
+    the class is a routing decision rather than a label. current_a and voltage_v are what
+    wake DRC's capacity and creepage rules — no netlist format carries them."""
+    return session.create_net(name, net_class, pins, current_a, voltage_v)
+
+
+@mcp.tool()
+def connect_pins(net: str, pins: list[str]) -> dict[str, Any]:
+    """Put pins on a net, as one undo step. Pins are "U1.8" addresses. A pin belongs to
+    exactly one net, so one already on another net is refused rather than moved."""
+    return session.connect_pins(net, pins)
+
+
+@mcp.tool()
+def disconnect_pins(net: str, pins: list[str]) -> dict[str, Any]:
+    """Take pins off a net, as one undo step."""
+    return session.disconnect_pins(net, pins)
+
+
+@mcp.tool()
+def update_net(
+    name: str,
+    new_name: str | None = None,
+    net_class: str | None = None,
+    current_a: float | None = None,
+    voltage_v: float | None = None,
+    clear_current: bool = False,
+    clear_voltage: bool = False,
+) -> dict[str, Any]:
+    """Rename a net, reclassify it, or state the current and voltage it carries. Anything
+    left out is left alone — passing null never erases a value; clear_current and
+    clear_voltage do that explicitly."""
+    return session.update_net(
+        name, new_name, net_class, current_a, voltage_v, clear_current, clear_voltage
+    )
+
+
+@mcp.tool()
+def delete_net(name: str) -> dict[str, Any]:
+    """Forget a net. Copper already laid for it stays on the board and stops being
+    anything reroute or remove_stale_conductors will touch."""
+    return session.delete_net(name)
 
 
 # ---------------------------------------------------------------------------

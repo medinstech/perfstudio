@@ -72,6 +72,28 @@ TURKISH: Mapping[str, str] = {
     "&Insulated Wire": "İ&zoleli Tel",
     "Top &Jumper": "Üst Yüz &Jumper",
     "&Stop Drawing": "Çizimi &Bitir",
+    # -- nets ----------------------------------------------------------------
+    # "&Net" becomes the plural "Netler": a menu named with the same word in both
+    # languages would be an untranslated entry, which the catalogue tests refuse.
+    "&Net": "&Netler",
+    "&New Net…": "&Yeni Net…",
+    "&Add Pins to Net": "Nete &Pin Ekle",
+    "&Finish Adding Pins": "Pin Eklemeyi &Bitir",
+    "&Edit Net…": "Neti &Düzenle…",
+    "&Disconnect Selected Pins": "Seçili Pinleri &Ayır",
+    "De&lete Net": "Neti Si&l",
+    "New Net": "Yeni Net",
+    "Edit Net": "Neti Düzenle",
+    "Delete net": "Neti sil",
+    "Name": "Ad",
+    "Class": "Sınıf",
+    "Signal": "Sinyal",
+    "Ground — routed first, and wants a rail": "Toprak — önce route edilir, ray ister",
+    "Power — routed after ground, same reason": "Güç — topraktan sonra route edilir, aynı sebeple",
+    "Current": "Akım",
+    "Voltage": "Gerilim",
+    "not stated": "belirtilmedi",
+    "state a voltage": "gerilim belirt",
     # -- place and route -----------------------------------------------------
     "&Auto-place Board": "&Otomatik Yerleştir",
     "&Try Another Arrangement": "&Başka Bir Yerleşim Dene",
