@@ -22,6 +22,84 @@ closed without a bump.
 
 ### Added
 
+- **The board can now be described as the ones people actually buy** — three features
+  that a bare grid of round pads cannot express, added together because each of them
+  changes what the other layers say.
+  - **Oblong pads** (`board.padShape` / `padLength` / `padAxis`). Not cosmetic: the R5'
+    bridging risk this whole tool is organised around is a function of the gap between
+    one pad's edge and the next, and an oblong pad has **two** such gaps. At 2.54 mm
+    pitch a 2.25 × 1.9 mm pad leaves 0.29 mm down a column and 0.64 mm along a row — so
+    a solder trace one way is easy to make *and easy to make by accident*, and the other
+    way is neither. `geometry.copper_gap_mm` measures it per pair, DRC's proximity
+    message quotes the direction it found, and the build guide's preparation phase says
+    which way the board favours before a single joint is made.
+  - **The addresses printed on the board** (`board.labels`), the `A`..`Z` / `01`..`22`
+    legend these boards carry. It is the same address space the guide, DRC and the MCP
+    tools already speak, so a builder reads "C7" off the copper instead of counting holes
+    from a corner — and the guide's phase 0 stops telling them to mark A1, because the
+    board already has. Drawn in 2D, in 3D and on the 1:1 PDF that gets taped to the board.
+    Printed row numbers may be zero-padded (`rowDigits`), which is typography and not a
+    different numbering: `A07` is still rejected as an address.
+  - **Mounting holes and edge-connector fingers** (`mountingHoles`, `edgeConnectors`),
+    with `mounting-hole.add` / `.addMany` / `.delete` and `edge-connector.add` / `.delete`
+    on the same bus as everything else, and a **File → Board Features…** dialog.
+    Four corner holes go in as one command, so one Ctrl+Z does not leave three drilled.
+- **`board.borderXMm` / `borderYMm`**, substrate beyond the usual half pitch. It exists
+  because the legend has to be printed *somewhere*: half a pitch past the outer holes
+  leaves 0.32 mm of bare board at 2.54 mm pitch with 1.9 mm pads, which is not room for a
+  character, and the boards being modelled are physically wider at the edge for exactly
+  that reason. **Two numbers, not one**: a 5 x 7 cm board carries about 2.1 mm at the
+  sides and 4.5 mm top and bottom, and a single figure puts the 1:1 printout millimetres
+  out on one axis — on the printout that gets taped onto the board.
+  `geometry.board_edge_margin_mm` is the one place that says how much substrate is
+  outside the grid; `hole_span_mm` is deliberately untouched, so mirroring to the solder
+  side still lands hole 0 on hole *cols-1*.
+- **The boards you can actually buy**, as presets: `2 x 8` through `20 x 30 cm` in the
+  two families they are sold in, picked from **File → Board Setup…**. Perfboard is bought
+  as "a 5 by 7" and never as a hole count, so the preset is keyed on the advertised size
+  and the grid is what fits inside the printed border — which is why a 4 x 6 is 20 x 14
+  and not the 15 x 23 that dividing by the pitch suggests. The border is then *solved*
+  from the two, so the outline is the advertised size to the tenth of a millimetre.
+  - **A preset is a product, not a grid size.** The green double-sided board arrives with
+    its printed legend, oblong finger strips down the two edges that have room for them,
+    and a screw hole in each corner sitting in the border; the orange phenolic one
+    arrives with none of that, copper on one face and round pads throughout. Applying one
+    is a single `board.applyPreset` — board, fingers and corner holes are one decision,
+    and four commands would put four entries in the history and leave a board describable
+    as a product nobody sells partway down the undo stack.
+  - Which two edges carry the fingers is **derived from the border**, not named: the
+    answer flips with the aspect ratio, and a named pair puts the strip down the cramped
+    side of a portrait board.
+- **Single-sided boards** (`board.singleSided`) — the cheap brown/orange phenolic kind.
+  Copper on the solder side only: the component side is bare substrate with drilled holes
+  and nothing to solder to, which is most of what makes those boards look and behave
+  differently from the double-sided FR-4 ones. Both renderers draw the holes on that face
+  and no pads, rather than the blank slab that skipping the grid entirely would give.
+- **`edgeConnector.insetMm`**, bare substrate between a finger's outer end and the board
+  edge. Zero is a true card edge, where reaching the edge is the point; anything else is
+  what the prototyping boards do — the elongated pads stop short, and the strip left
+  outside them is where the row numbers are printed. Without it the fingers swallow the
+  whole border and the legend has nowhere to go, which is exactly what the first attempt
+  did.
+- **`mountingHole.offsetXMm` / `offsetYMm`**, so a corner hole can sit in the border
+  instead of on the grid. That is where every real board puts them: the copper is
+  untouched and the screws go outside it. Pinned to a grid position, a mounting hole
+  reports four pads destroyed that are perfectly intact. Still addressed by the nearest
+  hole, so "the hole outside A1" is something a builder can still find.
+- Two DRC rules for mounting holes. **`mounting-hole-conflict`** is an *error*, and the
+  only rule in the file that is: every other one describes a board that will probably
+  fail, while this one describes a board that cannot work — there is no pad there to
+  solder to. A 3.2 mm bore reaches 1.6 mm out and the neighbouring pad's near edge is
+  1.59 mm away, so an M3 hole takes the copper off its four orthogonal neighbours as well
+  as its own, which is not something anyone notices before the iron is hot.
+  **`mounting-hole-clearance`** is a warning: the board is buildable, the screw just
+  cannot be fitted without pressing on a part.
+- `scenetext.draw_physical_label`, the exact opposite of `draw_label` and needed
+  alongside it. An annotation this program adds should hold its size as the board zooms;
+  ink printed on the board should not, and has to come out 1.2 mm on the 1:1 export. Both
+  exist because asking for a millimetre-sized font directly gets a fraction of a point,
+  which some font engines decline to draw at all while reporting no error.
+
 - **The placement optimiser** (PLAN.md §6.3, `placer.py`): seeded simulated annealing
   over translate/rotate/swap, with a cost of HPWL + rail alignability + courtyard
   overlap + pin collisions + off-board pins + edge-seeking connectors + heat proximity.
@@ -115,6 +193,34 @@ closed without a bump.
 
 ### Changed
 
+- **The document format version stays at 1**, and that is a deliberate call rather than
+  an oversight. Every field above is omitted from the JSON when it holds its default, so
+  a board using none of them serializes to the bytes a build predating them wrote — all
+  15 golden fixtures still round-trip byte for byte, and an older build opens such a file
+  unchanged. The rule in this project is that the format version moves when an older file
+  needs *migrating in order to load*, and none does. The cost is that a build predating
+  these features will silently drop them from a file that does use them; the migration
+  seam in `persist.py` is where that would be addressed if it ever bites.
+- **The editor's ruler stands down when the board prints its own addresses.** Drawing
+  both put the same twenty-four letters on screen twice, a few millimetres apart and in
+  two different styles, which reads as a rendering fault rather than as two features. The
+  ruler is for boards that carry no addresses; **View → Show Hole Addresses** is greyed
+  out with a reason on boards that do, and comes back when the board is flipped to a face
+  the legend cannot be read from.
+- **The printed legend goes on all four edges**, letters top and bottom and numbers down
+  both sides, with the numbers turned on their side as the real boards set them — the
+  strip beside a row is narrow across and a whole pitch deep, so a turned number fits
+  where an upright one has to shrink.
+- **An edge-connector finger is now the pad, not a layer over it.** The grid no longer
+  draws a round pad underneath one, which is what made the fingers look like something
+  laid on top of the board. `geometry.holes_without_grid_pad` is the single answer to
+  "this hole has no ordinary pad", for either reason (a bore took the copper, or a finger
+  is the copper) and for either face.
+- **DRC's proximity rule measures the gap per pair instead of once per board.** The
+  number was `pitch - padDiameter`, which is right for round pads and wrong for every
+  other case — it cannot see that an oblong pad's neighbour is half as far away one way
+  as the other, or that a pad widened into a connector finger has less clearance than the
+  pad it replaced. Round-pad boards report exactly what they did before.
 - **The 2D view is seven times faster on a large board**: a 100×60 grid (6000 holes) went
   from 112 ms a frame (8.9 fps) to 16 ms (62 fps), by rasterising one pad and blitting
   it. Two approaches that did not work are recorded in `PadGridItem` — one even-odd path

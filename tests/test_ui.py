@@ -27,7 +27,7 @@ import sys
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
-from PySide6.QtCore import QRectF
+from PySide6.QtCore import QPointF, QRectF
 from PySide6.QtGui import QColor, QImage, QPainter
 from PySide6.QtWidgets import QApplication
 
@@ -35,6 +35,7 @@ from perfstudio import persist
 from perfstudio.command import CommandBus, CommandContext, create_id_generator
 from perfstudio.commands import MoveComponentPayload, create_standard_registry
 from perfstudio.footprints import footprint_lookup
+from perfstudio.geometry import column_label
 from perfstudio.model import Board, HoleCoord, PerfDocument, SolderTraceConductor, WireConductor
 from perfstudio.ui import scenetext, view2d
 from perfstudio.ui.export_pdf import verify_scale
@@ -1426,3 +1427,237 @@ def test_an_unknown_colour_falls_back_to_the_material() -> None:
         assert boardcolors.scheme_for("FR4").key == "green"
     finally:
         boardcolors.choose(None)
+
+
+# ---------------------------------------------------------------------------
+# Board features in the editor: oblong pads, the printed legend, mounting holes
+# ---------------------------------------------------------------------------
+
+
+def _blank_document():
+    from perfstudio.commands import create_empty_document
+    from perfstudio.model import DocumentMeta
+
+    return create_empty_document(
+        DocumentMeta(
+            name="t", created="2026-01-01T00:00:00.000Z", modified="2026-01-01T00:00:00.000Z"
+        )
+    )
+
+
+def _featured_document():
+    """A board using all three: oblong pads, a printed legend, a corner hole, a connector."""
+    from perfstudio.commands import DEFAULT_BOARD, create_empty_document
+    from perfstudio.model import BoardLabels, DocumentMeta, EdgeConnector, MountingHole
+
+    board = dataclasses.replace(
+        DEFAULT_BOARD,
+        cols=14,
+        rows=10,
+        pad_shape="oblong",
+        pad_length=2.25,
+        border_x_mm=2.0, border_y_mm=2.0,
+        labels=BoardLabels(row_digits=2),
+    )
+    doc = create_empty_document(
+        DocumentMeta(name="features", created="2026-01-01", modified="2026-01-01"), board
+    )
+    return dataclasses.replace(
+        doc,
+        mounting_holes=(MountingHole(id="mh-1", at=HoleCoord(1, 1)),),
+                # An inset, as the real boards have: the fingers stop short of the edge and the
+        # strip left outside them is where the row legend is printed.
+        edge_connectors=(EdgeConnector(id="ec-1", edge="bottom", start=3, count=5, inset_mm=1.6),),
+    )
+
+
+def test_the_pad_grid_leaves_out_the_pads_a_mounting_bore_removed() -> None:
+    """Drawing copper where the bore took it away would show a pad to solder to that is
+    not there -- which is precisely what the DRC rule exists to stop someone finding out
+    with an iron in hand."""
+    doc = _featured_document()
+    with_hole = BoardScene(doc, footprint_lookup(), show_rulers=False)
+    without = BoardScene(
+        dataclasses.replace(doc, mounting_holes=()), footprint_lookup(), show_rulers=False
+    )
+    _render_scene(with_hole)
+    _render_scene(without)
+
+    assert with_hole.pad_grid is not None and without.pad_grid is not None
+    # The bore at B2 eats its own pad and its four orthogonal neighbours.
+    assert without.pad_grid.drawn - with_hole.pad_grid.drawn == 5
+
+
+def test_the_scene_carries_the_board_features_it_is_given() -> None:
+    from perfstudio.ui.view2d import BoardLegendItem, EdgeConnectorItem, MountingHoleItem
+
+    scene = BoardScene(_featured_document(), footprint_lookup(), show_rulers=False)
+    kinds = {type(item) for item in scene.items()}
+    assert BoardLegendItem in kinds
+    assert MountingHoleItem in kinds
+    assert EdgeConnectorItem in kinds
+
+
+def test_a_plain_board_draws_no_legend() -> None:
+    from perfstudio.ui.view2d import BoardLegendItem
+
+    scene = BoardScene(_load_dense(), footprint_lookup(), show_rulers=False)
+    assert BoardLegendItem not in {type(item) for item in scene.items()}
+
+
+def _legend_labels_drawn(doc, monkeypatch):
+    """Every label the legend lays down, as (text, centre, height_mm, max_width_mm).
+
+    Asserted on instead of pixels ON PURPOSE. The legend is silkscreen, so it is sized in
+    millimetres and comes out around 14 device pixels at the editor's usual zoom -- and on
+    a Qt platform with no font database (this one; see the skips above) nothing is drawn
+    at that size at all, silently. A pixel test there passes or fails on whether Qt
+    happens to have fonts, which is not the thing worth testing. Where each label is put
+    and how big it is *is*: getting that wrong is what buries the legend under the first
+    row of pads, which is the bug this pair of tests exists to catch.
+    """
+    drawn: list[tuple[str, QPointF, float, float | None]] = []
+    real = view2d.draw_physical_label
+
+    # **kwargs, not a copied signature: a shim that has to be kept in step with the real
+    # function will one day not be, and the failure mode is a TypeError raised inside
+    # QGraphicsItem.paint -- which leaves the QPainter open and crashes the NEXT test
+    # with an access violation, a long way from the cause.
+    def record(painter, centre, text, height_mm, *args, **kwargs):
+        drawn.append((text, QPointF(centre), height_mm, kwargs.get("max_width_mm")))
+        return real(painter, centre, text, height_mm, *args, **kwargs)
+
+    monkeypatch.setattr(view2d, "draw_physical_label", record)
+    _render_scene(BoardScene(doc, footprint_lookup(), show_rulers=False, show_ratsnest=False))
+    return drawn
+
+
+def test_the_printed_legend_lays_down_every_address_on_all_four_edges(monkeypatch) -> None:
+    """Letters along the top AND bottom, numbers down the left AND right, as these boards
+    are printed. With one edge each, the far half of the board is nearest the edge that
+    does not carry its address."""
+    doc = _featured_document()
+    board = doc.board
+    drawn = _legend_labels_drawn(doc, monkeypatch)
+
+    letters = [text for text, _c, _h, _w in drawn if text.isalpha()]
+    numbers = [text for text, _c, _h, _w in drawn if text.isdigit()]
+    assert len(letters) == board.cols * 2
+    assert len(numbers) == board.rows * 2
+    assert set(letters) == {column_label(col) for col in range(board.cols)}
+    # row_digits=2, so the board prints "01" where the guide says row 1 -- the same
+    # address, set the way these boards set it.
+    assert "01" in numbers
+    assert "10" in numbers
+
+
+def test_a_plain_board_lays_down_no_legend(monkeypatch) -> None:
+    assert _legend_labels_drawn(_load_dense(), monkeypatch) == []
+
+
+def test_the_legend_is_printed_in_the_border_and_not_over_the_pads(monkeypatch) -> None:
+    """The reason ``border_mm`` exists. Half a pitch past the outer holes leaves 0.32 mm
+    of bare substrate at 2.54 mm pitch, which is not room for a character -- it would be
+    drawn under the first row of pads and never seen."""
+    from perfstudio.geometry import board_edge_margin_mm, hole_span_mm, pad_extent_mm
+
+    doc = _featured_document()
+    board = doc.board
+    margin_x = board_edge_margin_mm(board, "horizontal")
+    margin_y = board_edge_margin_mm(board, "vertical")
+    extent_x, extent_y = pad_extent_mm(board)
+    span_w, span_h = hole_span_mm(board)
+
+    def within(low: float, high: float, value: float, half: float) -> bool:
+        return low < value - half and value + half < high
+
+    for text, centre, height_mm, _max_width in _legend_labels_drawn(doc, monkeypatch):
+        # A letter is upright, so its cap height runs DOWN the strip; a number is turned
+        # on its side, so its cap height runs ACROSS it. Each has to sit inside the bare
+        # substrate between the outer pads and the board edge, on one of the two edges
+        # that carry it.
+        if text.isalpha():
+            top = within(-margin_y, -extent_y / 2, centre.y(), height_mm / 2)
+            bottom = within(span_h + extent_y / 2, span_h + margin_y, centre.y(), height_mm / 2)
+            assert top or bottom, f"column letter {text} is not in a top/bottom border strip"
+        else:
+            left = within(-margin_x, -extent_x / 2, centre.x(), height_mm / 2)
+            right = within(span_w + extent_x / 2, span_w + margin_x, centre.x(), height_mm / 2)
+            assert left or right, f"row number {text} is not in a left/right border strip"
+
+
+def test_board_setup_dialog_round_trips_the_new_board_fields() -> None:
+    from perfstudio.model import BoardLabels
+    from perfstudio.ui.main import BoardSetupDialog
+
+    board = _featured_document().board
+    dialog = BoardSetupDialog(board)
+    assert dialog.board() == board
+
+    dialog.pad_shape.setCurrentIndex(dialog.pad_shape.findData("round"))
+    dialog.legend.setChecked(False)
+    plain = dialog.board()
+    assert plain.pad_shape == "round"
+    # The length is dropped with the shape: a round board carrying a pad length would put
+    # a field in the file describing nothing.
+    assert plain.pad_length is None
+    assert plain.labels is None
+
+    dialog.legend.setChecked(True)
+    dialog.row_digits.setValue(3)
+    assert dialog.board().labels == BoardLabels(row_digits=3)
+
+
+def test_the_dialog_cannot_produce_an_oblong_pad_the_bus_would_refuse() -> None:
+    """A dialog whose only exit is an error message is a worse dialog than one that
+    cannot produce the error."""
+    from perfstudio.commands import DEFAULT_BOARD, SetBoardPayload
+    from perfstudio.ui.main import BoardSetupDialog
+
+    dialog = BoardSetupDialog(DEFAULT_BOARD)
+    dialog.pad_shape.setCurrentIndex(dialog.pad_shape.findData("oblong"))
+    dialog.pad_length.setValue(0.5)  # narrower than the 1.9 mm pad width
+
+    bus = _new_bus(_blank_document())
+    assert bus.dispatch("board.set", SetBoardPayload(board=dialog.board())).ok
+
+
+def test_board_features_dialog_adds_four_corner_holes_as_one_undo_step() -> None:
+    from perfstudio.ui.main import BoardFeaturesDialog
+
+    bus = _new_bus(_blank_document())
+    dialog = BoardFeaturesDialog(bus)
+    dialog.mount_inset.setValue(1)
+    dialog._on_add_corners()
+
+    assert len(bus.document.mounting_holes) == 4
+    assert dialog.tree.topLevelItemCount() == 4
+    bus.undo()
+    assert bus.document.mounting_holes == ()
+
+
+def test_board_features_dialog_reports_a_refusal_instead_of_swallowing_it() -> None:
+    from perfstudio.ui.main import BoardFeaturesDialog
+
+    bus = _new_bus(_blank_document())
+    dialog = BoardFeaturesDialog(bus)
+    dialog.mount_inset.setValue(999)
+    dialog._on_add_corners()
+
+    assert bus.document.mounting_holes == ()
+    assert dialog.note.text() != ""
+
+
+def test_board_features_dialog_removes_the_selected_feature() -> None:
+    from perfstudio.ui.main import BoardFeaturesDialog
+
+    bus = _new_bus(_featured_document())
+    dialog = BoardFeaturesDialog(bus)
+    assert dialog.tree.topLevelItemCount() == 2
+
+    dialog.tree.setCurrentItem(dialog.tree.topLevelItem(0))
+    dialog._on_remove()
+
+    assert bus.document.mounting_holes == ()
+    assert len(bus.document.edge_connectors) == 1
+    assert dialog.tree.topLevelItemCount() == 1

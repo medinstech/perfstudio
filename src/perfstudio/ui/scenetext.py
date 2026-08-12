@@ -75,6 +75,71 @@ def draw_label(
     painter.restore()
 
 
+#: Physical labels are rasterised from a font this tall and then scaled down to the
+#: millimetre size asked for. Any comfortably large number works; what matters is that
+#: the font engine is never handed the sub-point size the millimetres alone would imply.
+_PHYSICAL_FONT_PX = 64
+
+
+def draw_physical_label(
+    painter: QPainter,
+    centre: QPointF,
+    text: str,
+    height_mm: float,
+    bold: bool = True,
+    max_width_mm: float | None = None,
+    rotation_deg: float = 0.0,
+) -> None:
+    """Draw ``text`` at a size in MILLIMETRES, centred on a scene point.
+
+    THE EXACT OPPOSITE OF :func:`draw_label`, and both are needed. An annotation this
+    program adds -- a ruler label, a reference designator -- should hold its size while
+    the board zooms. Ink printed on the board should not: it is 1.2 mm of silkscreen
+    whatever the zoom, and it has to come out 1.2 mm on the 1:1 PDF that gets taped to
+    the board.
+
+    Simply asking for a millimetre-sized font does not work, for the reason set out in
+    this module's header: at one scene unit per millimetre that is a fraction of a point,
+    and the font engine quietly draws nothing. So the glyph is rasterised from a
+    comfortably large font and the PAINTER is scaled to bring it down to size -- which
+    leaves it subject to the scene transform, and therefore physical, while the font
+    itself is never small.
+    """
+    font = label_font(_PHYSICAL_FONT_PX, bold)
+    metrics = QFontMetricsF(font)
+    # Cap height rather than the full line height: what a person means by "1.2 mm text"
+    # is the height of a capital, not the box including the space for descenders.
+    cap = metrics.capHeight()
+    if cap <= 0:  # pragma: no cover - a platform with no font database
+        cap = _PHYSICAL_FONT_PX * 0.7
+    scale = height_mm / cap
+    width = max(metrics.horizontalAdvance(text), 1.0)
+    height = max(metrics.height(), 1.0)
+
+    # Narrow the whole label rather than letting it run over its neighbours. A board's
+    # printed legend lives in a strip barely a millimetre wide, so "07" has to be set
+    # smaller than "7" -- which is what a board actually does. Measured from the font's
+    # own metrics instead of a characters-times-a-ratio guess, since the ratio is wrong
+    # for exactly the strings that need this (digits are narrower than letters).
+    if max_width_mm is not None and width * scale > max_width_mm:
+        scale = max_width_mm / width
+
+    painter.save()
+    painter.translate(centre)
+    # Rotated BEFORE scaling, so the caller's ``max_width_mm`` still means "across the
+    # glyphs" rather than "across the screen" -- which is the whole point of turning a
+    # row number on its side: the strip it has to fit into is narrow one way and a whole
+    # pitch deep the other.
+    if rotation_deg:
+        painter.rotate(rotation_deg)
+    painter.scale(scale, scale)
+    painter.setFont(font)
+    painter.drawText(
+        QRectF(-width, -height, width * 2, height * 2), int(Qt.AlignmentFlag.AlignCenter), text
+    )
+    painter.restore()
+
+
 def label_extent_mm(pixel_size: int, scale: float) -> float:
     """How many millimetres of scene a ``pixel_size`` label occupies at ``scale`` px/mm.
 

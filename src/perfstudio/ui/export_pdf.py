@@ -21,7 +21,7 @@ from typing import Any
 from PySide6.QtCore import QMarginsF, QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QFont, QImage, QPageLayout, QPageSize, QPainter, QPdfWriter, QPen
 
-from perfstudio.geometry import board_size_mm
+from perfstudio.geometry import board_outline_mm
 from perfstudio.model import Board
 
 MM_PER_INCH = 25.4
@@ -83,8 +83,8 @@ def export_pdf(board: Board, scene: Any, path: str | Path, mirrored: bool = Fals
     painter = QPainter(writer)
     px_per_mm = writer.resolution() / MM_PER_INCH
 
-    w, h = board_size_mm(board)
-    source = QRectF(-board.pitch / 2, -board.pitch / 2, w, h)
+    outline = board_outline_mm(board)
+    source = QRectF(outline.x, outline.y, outline.width, outline.height)
 
     painter.save()
     painter.scale(px_per_mm, px_per_mm)  # from here on, one unit is one millimetre
@@ -93,7 +93,7 @@ def export_pdf(board: Board, scene: Any, path: str | Path, mirrored: bool = Fals
 
     painter.save()
     painter.scale(px_per_mm, px_per_mm)
-    _draw_scale_bar(painter, QPointF(0, h + 8))
+    _draw_scale_bar(painter, QPointF(0, outline.y + outline.height + 8))
     font = QFont()
     font.setPointSizeF(3.0)
     painter.setFont(font)
@@ -116,19 +116,19 @@ def verify_scale(scene: Any, board: Board, dpi: float = 300.0, span_holes: int =
     plausible but every dimension is wrong, which is worse than an obviously broken one.
     """
     px_per_mm = dpi / MM_PER_INCH
-    w, h = board_size_mm(board)
-    img_w = int(round(w * px_per_mm))
-    img_h = int(round(h * px_per_mm))
+    outline = board_outline_mm(board)
+    img_w = int(round(outline.width * px_per_mm))
+    img_h = int(round(outline.height * px_per_mm))
 
     image = QImage(img_w, img_h, QImage.Format.Format_ARGB32)
     image.fill(QColor("#ffffff"))
     painter = QPainter(image)
-    source = QRectF(-board.pitch / 2, -board.pitch / 2, w, h)
+    source = QRectF(outline.x, outline.y, outline.width, outline.height)
     scene.render(painter, QRectF(0, 0, img_w, img_h), source, Qt.AspectRatioMode.IgnoreAspectRatio)
     painter.end()
 
     # Where the transform actually put two holes, measured through the same mapping.
-    scale_x = img_w / w
+    scale_x = img_w / outline.width
     x0 = (0.0 - source.left()) * scale_x
     x1 = (span_holes * board.pitch - source.left()) * scale_x
     measured = x1 - x0

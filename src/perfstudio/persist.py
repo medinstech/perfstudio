@@ -42,17 +42,24 @@ from .model import (
     DOCUMENT_FORMAT_VERSION,
     VALID_ROTATIONS,
     Board,
+    BoardEdge,
+    BoardFace,
+    BoardLabels,
     BoardMaterial,
     BoardSide,
     BoardType,
     ComponentInstance,
     Conductor,
     DocumentMeta,
+    EdgeConnector,
     HoleCoord,
     LeadBendConductor,
+    MountingHole,
     Net,
     NetClass,
     NetNode,
+    PadAxis,
+    PadShape,
     PerfDocument,
     Rotation,
     SolderBuildup,
@@ -166,6 +173,13 @@ def _cut_sort_key(c: TrackCut) -> tuple[int, int, str]:
     return (c.at.row, c.at.col, c.id)
 
 
+def _mounting_hole_sort_key(m: MountingHole) -> tuple[int, int, str]:
+    """Same reasoning as :func:`_cut_sort_key`: mounting holes are independent of one
+    another, so they sort by position for a readable diff and fall back to `id`.
+    """
+    return (m.at.row, m.at.col, m.id)
+
+
 # ---------------------------------------------------------------------------
 # Key order declarations -- the single source of truth for field order
 # ---------------------------------------------------------------------------
@@ -177,6 +191,8 @@ DOCUMENT_KEY_ORDER: tuple[str, ...] = (
     "components",
     "conductors",
     "cuts",
+    "mountingHoles",
+    "edgeConnectors",
     "nets",
 )
 META_KEY_ORDER: tuple[str, ...] = ("name", "created", "modified")
@@ -190,6 +206,32 @@ BOARD_KEY_ORDER: tuple[str, ...] = (
     "padDiameter",
     "drillDiameter",
     "stripAxis",
+    "padShape",
+    "padLength",
+    "padAxis",
+    "borderXMm",
+    "borderYMm",
+    "singleSided",
+    "labels",
+)
+BOARD_LABELS_KEY_ORDER: tuple[str, ...] = ("face", "rowDigits", "allEdges")
+MOUNTING_HOLE_KEY_ORDER: tuple[str, ...] = (
+    "id",
+    "at",
+    "offsetXMm",
+    "offsetYMm",
+    "diameter",
+    "headDiameter",
+)
+EDGE_CONNECTOR_KEY_ORDER: tuple[str, ...] = (
+    "id",
+    "edge",
+    "start",
+    "count",
+    "fingerWidth",
+    "fingerLength",
+    "insetMm",
+    "face",
 )
 HOLE_KEY_ORDER: tuple[str, ...] = ("col", "row")
 COMPONENT_KEY_ORDER: tuple[str, ...] = (
@@ -250,7 +292,69 @@ def _ordered_board(b: Board) -> JsonObj:
     }
     if b.strip_axis is not None:
         values["stripAxis"] = b.strip_axis
+    # OMITTED AT THEIR DEFAULT, exactly as `stripAxis` is, and for a reason that is not
+    # cosmetic: a board that uses none of these features must serialize to the same bytes
+    # a build predating them wrote, or every golden fixture stops round-tripping and the
+    # differential proof goes with it. It is also what lets the document format version
+    # stay at 1 -- an older build reads such a file unchanged, so there is nothing to
+    # migrate. The test is equality with the DEFAULT, never "is this meaningful", so a
+    # pad axis set on a round-pad board still survives the trip.
+    if b.pad_shape != "round":
+        values["padShape"] = b.pad_shape
+    if b.pad_length is not None:
+        values["padLength"] = _num(_field_path(path, "padLength"), b.pad_length)
+    if b.pad_axis != "vertical":
+        values["padAxis"] = b.pad_axis
+    if b.border_x_mm != 0.0:
+        values["borderXMm"] = _num(_field_path(path, "borderXMm"), b.border_x_mm)
+    if b.border_y_mm != 0.0:
+        values["borderYMm"] = _num(_field_path(path, "borderYMm"), b.border_y_mm)
+    if b.single_sided:
+        values["singleSided"] = b.single_sided
+    if b.labels is not None:
+        labels_path = _field_path(path, "labels")
+        values["labels"] = _build_ordered(
+            BOARD_LABELS_KEY_ORDER,
+            {
+                "face": b.labels.face,
+                "rowDigits": _num(_field_path(labels_path, "rowDigits"), b.labels.row_digits),
+                "allEdges": b.labels.all_edges,
+            },
+        )
     return _build_ordered(BOARD_KEY_ORDER, values)
+
+
+def _ordered_mounting_hole(m: MountingHole, index: int) -> JsonObj:
+    path = _index_path("mountingHoles", index)
+    return _build_ordered(
+        MOUNTING_HOLE_KEY_ORDER,
+        {
+            "id": m.id,
+            "at": _ordered_hole(m.at, _field_path(path, "at")),
+            "offsetXMm": _num(_field_path(path, "offsetXMm"), m.offset_x_mm),
+            "offsetYMm": _num(_field_path(path, "offsetYMm"), m.offset_y_mm),
+            "diameter": _num(_field_path(path, "diameter"), m.diameter),
+            "headDiameter": _num(_field_path(path, "headDiameter"), m.head_diameter),
+        },
+    )
+
+
+def _ordered_edge_connector(e: EdgeConnector, index: int) -> JsonObj:
+    path = _index_path("edgeConnectors", index)
+    values: dict[str, JsonValue] = {
+        "id": e.id,
+        "edge": e.edge,
+        "start": _num(_field_path(path, "start"), e.start),
+        "count": _num(_field_path(path, "count"), e.count),
+        "fingerWidth": _num(_field_path(path, "fingerWidth"), e.finger_width),
+        "face": e.face,
+    }
+    # Omitted when derived from the board, like every other defaulted field here.
+    if e.finger_length is not None:
+        values["fingerLength"] = _num(_field_path(path, "fingerLength"), e.finger_length)
+    if e.inset_mm != 0.0:
+        values["insetMm"] = _num(_field_path(path, "insetMm"), e.inset_mm)
+    return _build_ordered(EDGE_CONNECTOR_KEY_ORDER, values)
 
 
 def _ordered_component(c: ComponentInstance, index: int) -> JsonObj:
@@ -346,6 +450,8 @@ def serialize_document(doc: PerfDocument) -> str:
     components = sorted(doc.components, key=lambda c: c.id)
     conductors = sorted(doc.conductors, key=lambda c: c.id)
     cuts = sorted(doc.cuts, key=_cut_sort_key)
+    mounting_holes = sorted(doc.mounting_holes, key=_mounting_hole_sort_key)
+    edge_connectors = sorted(doc.edge_connectors, key=lambda e: e.id)
     nets = sorted(doc.nets, key=lambda n: n.id)
 
     root = _build_ordered(
@@ -365,6 +471,27 @@ def serialize_document(doc: PerfDocument) -> str:
             "conductors": [_ordered_conductor(c, i) for i, c in enumerate(conductors)],
             "cuts": [_ordered_cut(c, i) for i, c in enumerate(cuts)],
             "nets": [_ordered_net(n, i) for i, n in enumerate(nets)],
+            # Unlike the four arrays above, these are omitted entirely when empty --
+            # see the note in `_ordered_board` about why an unused feature has to leave
+            # no trace in the file.
+            **(
+                {
+                    "mountingHoles": [
+                        _ordered_mounting_hole(m, i) for i, m in enumerate(mounting_holes)
+                    ]
+                }
+                if mounting_holes
+                else {}
+            ),
+            **(
+                {
+                    "edgeConnectors": [
+                        _ordered_edge_connector(e, i) for i, e in enumerate(edge_connectors)
+                    ]
+                }
+                if edge_connectors
+                else {}
+            ),
         },
     )
 
@@ -592,6 +719,10 @@ def _check_unknown_keys(obj: dict[str, object], known: tuple[str, ...], path: st
 BOARD_TYPES: tuple[BoardType, ...] = ("pad-per-hole", "stripboard", "plain")
 BOARD_MATERIALS: tuple[BoardMaterial, ...] = ("FR4", "FR2", "FR1")
 STRIP_AXES: tuple[str, ...] = ("horizontal", "vertical")
+PAD_SHAPES: tuple[PadShape, ...] = ("round", "oblong")
+PAD_AXES: tuple[PadAxis, ...] = ("horizontal", "vertical")
+BOARD_FACES: tuple[BoardFace, ...] = ("top", "bottom", "both")
+BOARD_EDGES: tuple[BoardEdge, ...] = ("top", "bottom", "left", "right")
 BOARD_SIDES: tuple[BoardSide, ...] = ("top", "bottom")
 SOLDER_BUILDUPS: tuple[SolderBuildup, ...] = ("light", "normal", "heavy")
 SPINE_MATERIALS: tuple[str, ...] = ("tinned-copper", "lead-offcut")
@@ -636,6 +767,30 @@ def _parse_meta(raw: object, warnings: list[str]) -> DocumentMeta:
     )
 
 
+def _parse_board_labels(raw: object, path: str, warnings: list[str]) -> BoardLabels:
+    obj = _expect_object(raw, path)
+    _check_unknown_keys(obj, BOARD_LABELS_KEY_ORDER, path, warnings)
+    face_raw = obj.get("face")
+    row_digits_raw = obj.get("rowDigits")
+    row_digits = (
+        1 if row_digits_raw is None else _expect_integer(row_digits_raw, _field_path(path, "rowDigits"))
+    )
+    if row_digits < 1:
+        raise ValidationError(
+            "invalid-value",
+            f'A printed row label cannot be narrower than one digit, got {row_digits}.',
+            _field_path(path, "rowDigits"),
+        )
+    all_edges_raw = obj.get("allEdges")
+    return BoardLabels(
+        face="both" if face_raw is None else _expect_enum(face_raw, _field_path(path, "face"), BOARD_FACES),  # type: ignore[arg-type]
+        row_digits=row_digits,
+        all_edges=(
+            True if all_edges_raw is None else _expect_boolean(all_edges_raw, _field_path(path, "allEdges"))
+        ),
+    )
+
+
 def _parse_board(raw: object, warnings: list[str]) -> Board:
     path = "board"
     obj = _expect_object(raw, path)
@@ -646,6 +801,52 @@ def _parse_board(raw: object, warnings: list[str]) -> Board:
         None if strip_axis_raw is None else _expect_enum(strip_axis_raw, _field_path(path, "stripAxis"), STRIP_AXES)
     )
 
+    pad_shape_raw = obj.get("padShape")
+    pad_shape = (
+        "round" if pad_shape_raw is None else _expect_enum(pad_shape_raw, _field_path(path, "padShape"), PAD_SHAPES)
+    )
+    pad_length_raw = obj.get("padLength")
+    pad_length = (
+        None if pad_length_raw is None else _expect_number(pad_length_raw, _field_path(path, "padLength"))
+    )
+    pad_axis_raw = obj.get("padAxis")
+    pad_axis = (
+        "vertical" if pad_axis_raw is None else _expect_enum(pad_axis_raw, _field_path(path, "padAxis"), PAD_AXES)
+    )
+    borders: dict[str, float] = {}
+    for key, attr in (("borderXMm", "border_x_mm"), ("borderYMm", "border_y_mm")):
+        raw = obj.get(key)
+        value = 0.0 if raw is None else _expect_number(raw, _field_path(path, key))
+        if value < 0:
+            raise ValidationError(
+                "invalid-value",
+                f"A board border cannot be negative, got {value}.",
+                _field_path(path, key),
+            )
+        borders[attr] = float(value)
+    single_sided_raw = obj.get("singleSided")
+    single_sided = (
+        False if single_sided_raw is None else _expect_boolean(single_sided_raw, _field_path(path, "singleSided"))
+    )
+
+    labels_raw = obj.get("labels")
+    labels = (
+        None
+        if labels_raw is None
+        else _parse_board_labels(labels_raw, _field_path(path, "labels"), warnings)
+    )
+
+    pad_diameter = _expect_number(_require_field(obj, "padDiameter", path), _field_path(path, "padDiameter"))
+    # A warning, not an error, for the same reason a diagonal solder-trace step is one:
+    # a hand-edited file must still open. `geometry.pad_extent_mm` falls back to a round
+    # pad, so the board draws and checks sensibly meanwhile.
+    if pad_shape == "oblong" and (pad_length is None or pad_length <= pad_diameter):
+        warnings.append(
+            f'board.padShape is "oblong" but padLength is '
+            f"{'missing' if pad_length is None else pad_length}, which is not longer than the "
+            f"{pad_diameter} mm pad width. The pads will be treated as round until it is."
+        )
+
     return Board(
         type=_expect_enum(_require_field(obj, "type", path), _field_path(path, "type"), BOARD_TYPES),  # type: ignore[arg-type]
         cols=_expect_integer(_require_field(obj, "cols", path), _field_path(path, "cols")),
@@ -653,9 +854,66 @@ def _parse_board(raw: object, warnings: list[str]) -> Board:
         pitch=_expect_number(_require_field(obj, "pitch", path), _field_path(path, "pitch")),
         thickness=_expect_number(_require_field(obj, "thickness", path), _field_path(path, "thickness")),
         material=_expect_enum(_require_field(obj, "material", path), _field_path(path, "material"), BOARD_MATERIALS),  # type: ignore[arg-type]
-        pad_diameter=_expect_number(_require_field(obj, "padDiameter", path), _field_path(path, "padDiameter")),
+        pad_diameter=pad_diameter,
         drill_diameter=_expect_number(_require_field(obj, "drillDiameter", path), _field_path(path, "drillDiameter")),
         strip_axis=strip_axis,  # type: ignore[arg-type]
+        pad_shape=pad_shape,  # type: ignore[arg-type]
+        pad_length=pad_length,
+        pad_axis=pad_axis,  # type: ignore[arg-type]
+        border_x_mm=borders["border_x_mm"],
+        border_y_mm=borders["border_y_mm"],
+        single_sided=single_sided,
+        labels=labels,
+    )
+
+
+def _parse_mounting_hole(raw: object, path: str, warnings: list[str]) -> MountingHole:
+    obj = _expect_object(raw, path)
+    _check_unknown_keys(obj, MOUNTING_HOLE_KEY_ORDER, path, warnings)
+    diameter_raw = obj.get("diameter")
+    head_raw = obj.get("headDiameter")
+    return MountingHole(
+        id=_expect_string(_require_field(obj, "id", path), _field_path(path, "id")),
+        at=_parse_hole(_require_field(obj, "at", path), _field_path(path, "at"), warnings),
+        offset_x_mm=(
+            0.0 if obj.get("offsetXMm") is None
+            else _expect_number(obj["offsetXMm"], _field_path(path, "offsetXMm"))
+        ),
+        offset_y_mm=(
+            0.0 if obj.get("offsetYMm") is None
+            else _expect_number(obj["offsetYMm"], _field_path(path, "offsetYMm"))
+        ),
+        diameter=(
+            3.2 if diameter_raw is None else _expect_number(diameter_raw, _field_path(path, "diameter"))
+        ),
+        head_diameter=(
+            6.0 if head_raw is None else _expect_number(head_raw, _field_path(path, "headDiameter"))
+        ),
+    )
+
+
+def _parse_edge_connector(raw: object, path: str, warnings: list[str]) -> EdgeConnector:
+    obj = _expect_object(raw, path)
+    _check_unknown_keys(obj, EDGE_CONNECTOR_KEY_ORDER, path, warnings)
+    width_raw = obj.get("fingerWidth")
+    length_raw = obj.get("fingerLength")
+    face_raw = obj.get("face")
+    return EdgeConnector(
+        id=_expect_string(_require_field(obj, "id", path), _field_path(path, "id")),
+        edge=_expect_enum(_require_field(obj, "edge", path), _field_path(path, "edge"), BOARD_EDGES),  # type: ignore[arg-type]
+        start=_expect_integer(_require_field(obj, "start", path), _field_path(path, "start")),
+        count=_expect_integer(_require_field(obj, "count", path), _field_path(path, "count")),
+        finger_width=(
+            2.0 if width_raw is None else _expect_number(width_raw, _field_path(path, "fingerWidth"))
+        ),
+        finger_length=(
+            None if length_raw is None else _expect_number(length_raw, _field_path(path, "fingerLength"))
+        ),
+        inset_mm=(
+            0.0 if obj.get("insetMm") is None
+            else _expect_number(obj["insetMm"], _field_path(path, "insetMm"))
+        ),
+        face="both" if face_raw is None else _expect_enum(face_raw, _field_path(path, "face"), BOARD_FACES),  # type: ignore[arg-type]
     )
 
 
@@ -892,6 +1150,21 @@ def _parse_document(raw_input: object) -> tuple[PerfDocument, list[str]]:
     cuts_raw = _expect_array(_require_field(migrated, "cuts", ""), "cuts")
     cuts = tuple(_parse_cut(item, _index_path("cuts", i), warnings) for i, item in enumerate(cuts_raw))
 
+    # Optional, unlike the arrays above: every file written before these features existed
+    # simply has no such key, and requiring one would make this build unable to open its
+    # own back catalogue. That is the same property that keeps the format version at 1.
+    mounting_raw = _expect_array(migrated.get("mountingHoles", []), "mountingHoles")
+    mounting_holes = tuple(
+        _parse_mounting_hole(item, _index_path("mountingHoles", i), warnings)
+        for i, item in enumerate(mounting_raw)
+    )
+
+    connectors_raw = _expect_array(migrated.get("edgeConnectors", []), "edgeConnectors")
+    edge_connectors = tuple(
+        _parse_edge_connector(item, _index_path("edgeConnectors", i), warnings)
+        for i, item in enumerate(connectors_raw)
+    )
+
     nets_raw = _expect_array(_require_field(migrated, "nets", ""), "nets")
     nets = tuple(_parse_net(item, _index_path("nets", i), warnings) for i, item in enumerate(nets_raw))
 
@@ -902,6 +1175,8 @@ def _parse_document(raw_input: object) -> tuple[PerfDocument, list[str]]:
         conductors=conductors,
         cuts=cuts,
         nets=nets,
+        mounting_holes=mounting_holes,
+        edge_connectors=edge_connectors,
         format_version=CURRENT_FORMAT_VERSION,
     )
     return document, warnings

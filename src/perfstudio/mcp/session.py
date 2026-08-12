@@ -50,7 +50,15 @@ from perfstudio.commands import (
 from perfstudio.connectivity import extract_physical_nets
 from perfstudio.drc import run_drc
 from perfstudio.footprints import footprint_lookup, standard_footprints
-from perfstudio.geometry import all_pin_holes, format_hole, hole_ref_to_coord
+from perfstudio.geometry import (
+    all_pin_holes,
+    consumed_holes,
+    edge_connector_holes,
+    format_hole,
+    hole_key,
+    hole_ref_to_coord,
+    pad_edge_gap_mm,
+)
 from perfstudio.guide import build_guide
 from perfstudio.guide import describe as describe_guide
 from perfstudio.guide_export import bom_to_csv, cut_list_to_csv, guide_to_html, guide_to_json
@@ -218,18 +226,66 @@ class BoardSession:
 
     def get_board_info(self) -> dict[str, Any]:
         board = self.document.board
-        return {
+        info: dict[str, Any] = {
             "type": board.type,
             "cols": board.cols,
             "rows": board.rows,
             "pitch_mm": board.pitch,
             "thickness_mm": board.thickness,
             "material": board.material,
+            "pad_shape": board.pad_shape,
             "pad_diameter_mm": board.pad_diameter,
             "drill_diameter_mm": board.drill_diameter,
+            # Reported for both axes rather than as one figure, because on an oblong-pad
+            # board they differ and the difference decides which way a solder trace should
+            # run. An agent laying out a board needs to know that before it routes, not
+            # after DRC tells it off.
+            "pad_gap_along_row_mm": round(pad_edge_gap_mm(board, "horizontal"), 3),
+            "pad_gap_down_column_mm": round(pad_edge_gap_mm(board, "vertical"), 3),
             "top_left_hole": format_hole(HoleCoord(0, 0)),
             "bottom_right_hole": format_hole(HoleCoord(board.cols - 1, board.rows - 1)),
         }
+        if board.pad_shape == "oblong":
+            info["pad_length_mm"] = board.pad_length
+            info["pad_axis"] = board.pad_axis
+        if board.labels is not None:
+            info["printed_legend"] = {
+                "face": board.labels.face,
+                "row_digits": board.labels.row_digits,
+            }
+        if self.document.mounting_holes:
+            info["mounting_holes"] = [
+                {
+                    "id": mount.id,
+                    "at": format_hole(mount.at),
+                    "diameter_mm": mount.diameter,
+                    "head_diameter_mm": mount.head_diameter,
+                }
+                for mount in self.document.mounting_holes
+            ]
+            # The pads a bore has taken out. An agent that cannot see this places a part
+            # on a hole with no copper and only finds out from DRC.
+            consumed = consumed_holes(self.document)
+            info["holes_without_pads"] = sorted(
+                format_hole(HoleCoord(col, row))
+                for col in range(board.cols)
+                for row in range(board.rows)
+                if hole_key(HoleCoord(col, row)) in consumed
+            )
+        if self.document.edge_connectors:
+            info["edge_connectors"] = [
+                {
+                    "id": connector.id,
+                    "edge": connector.edge,
+                    "holes": [
+                        format_hole(hole)
+                        for hole in edge_connector_holes(connector, board)
+                    ],
+                    "face": connector.face,
+                }
+                for connector in self.document.edge_connectors
+            ]
+        return info
 
     def list_components(self) -> list[dict[str, Any]]:
         return [self._component_summary(c) for c in self.document.components]
@@ -777,13 +833,14 @@ class BoardSession:
         from PySide6.QtCore import QRectF
         from PySide6.QtGui import QColor, QImage, QPainter
 
-        from perfstudio.geometry import board_size_mm
+        from perfstudio.geometry import board_outline_mm
         from perfstudio.ui.view2d import RULER_MARGIN_MM, BoardScene
 
         _ensure_qt_application()
         board = self.document.board
         scene = BoardScene(self.document, self.lookup, side=side)  # type: ignore[arg-type]
-        width_mm, height_mm = board_size_mm(board)
+        outline = board_outline_mm(board)
+        width_mm, height_mm = outline.width, outline.height
         margin = RULER_MARGIN_MM
         src_w, src_h = width_mm + margin + 4, height_mm + margin + 4
         image = QImage(int(src_w * px_per_mm), int(src_h * px_per_mm), QImage.Format.Format_ARGB32)
@@ -793,7 +850,7 @@ class BoardSession:
         scene.render(
             painter,
             QRectF(0, 0, image.width(), image.height()),
-            QRectF(-board.pitch / 2 - margin, -board.pitch / 2 - margin, src_w, src_h),
+            QRectF(outline.x - margin, outline.y - margin, src_w, src_h),
         )
         painter.end()
         return _png_bytes(image), {

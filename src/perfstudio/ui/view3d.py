@@ -14,13 +14,27 @@ orientation instead of mirroring it.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Any
 
 import vtk  # type: ignore[import-untyped]
 
 from perfstudio.connectivity import FootprintLookup
-from perfstudio.geometry import all_pin_holes, transform_offset
+from perfstudio.geometry import (
+    all_pin_holes,
+    board_size_mm,
+    column_label,
+    consumed_holes,
+    edge_connector_holes,
+    edge_finger_rect,
+    hole_key,
+    holes_without_grid_pad,
+    legend_strip_mm,
+    pad_extent_mm,
+    printed_row_label,
+    transform_offset,
+)
 from perfstudio.model import (
     Board,
     BoardSide,
@@ -53,6 +67,8 @@ DRILL_RGB = (0.06, 0.06, 0.07)
 BODY_RGB = (0.22, 0.22, 0.26)
 #: Tinned component lead.
 LEAD_RGB = (0.78, 0.80, 0.84)
+#: Silkscreen ink. Slightly off-white, because a printed legend never is.
+LEGEND_RGB = (0.92, 0.93, 0.95)
 
 
 def _hex_rgb(value: str | None, fallback: tuple[float, float, float]) -> tuple[float, float, float]:
@@ -71,7 +87,10 @@ def _xy(board: Board, hole: HoleCoord) -> tuple[float, float]:
 
 
 def _board_size_mm(board: Board) -> tuple[float, float]:
-    return board.cols * board.pitch, board.rows * board.pitch
+    """Delegates to geometry rather than repeating the arithmetic: the substrate here and
+    the substrate in the 2D editor and on the 1:1 printout have to be the same size, and a
+    second copy of the formula is how a board's border silently stops existing in 3D."""
+    return board_size_mm(board)
 
 
 # --------------------------------------------------------------------------- pieces
@@ -119,7 +138,68 @@ def conductor_z(cond: Conductor, board: Board, stack: int = 0) -> float:
     return 0.45 + 0.08 * stack
 
 
-def build_drills(board: Board) -> vtk.vtkActor:
+def _stadium_contour(extent_x: float, extent_y: float, count: int) -> list[tuple[float, float]]:
+    """Points around a stadium: a rectangle capped with a semicircle at each end.
+
+    That is what an oblong pad is -- not an ellipse, which is what scaling a disc would
+    give and what the copper visibly is not. A round pad falls out of the same code with
+    a zero-length straight section, so there is one contour routine rather than two.
+    """
+    radius = min(extent_x, extent_y) / 2
+    half = (max(extent_x, extent_y) - min(extent_x, extent_y)) / 2
+    vertical = extent_y >= extent_x
+    per_arc = max(3, count // 2)
+    points: list[tuple[float, float]] = []
+    for cap in (1.0, -1.0):
+        for i in range(per_arc):
+            # Each arc runs a half turn; the straight sides are the polygon edges between
+            # the end of one arc and the start of the next, so they need no points of
+            # their own.
+            angle = math.pi * i / (per_arc - 1)
+            dx = radius * math.cos(angle) * cap
+            dy = radius * math.sin(angle) * cap
+            if vertical:
+                points.append((dx, dy + cap * half))
+            else:
+                points.append((dy + cap * half, dx))
+    return points
+
+
+def _pad_annulus(board: Board) -> vtk.vtkPolyData:
+    """One pad as a flat ring: a stadium (or circle) outline with the drill punched out.
+
+    Built by hand rather than with ``vtkDiskSource`` because that source only makes
+    circles, and an oblong pad is the shape the board actually has. Still ONE source,
+    glyphed at every hole, so the instanced-rendering claim this view exists to prove is
+    unaffected.
+    """
+    extent_x, extent_y = pad_extent_mm(board)
+    segments = 24
+    outer = _stadium_contour(extent_x, extent_y, segments)
+    n = len(outer)
+    drill_r = board.drill_diameter / 2
+
+    points = vtk.vtkPoints()
+    for x, y in outer:
+        points.InsertNextPoint(x, y, 0.0)
+    for i in range(n):
+        angle = 2 * math.pi * i / n
+        points.InsertNextPoint(drill_r * math.cos(angle), drill_r * math.sin(angle), 0.0)
+
+    polys = vtk.vtkCellArray()
+    for i in range(n):
+        j = (i + 1) % n
+        polys.InsertNextCell(4)
+        for index in (i, j, n + j, n + i):
+            polys.InsertCellPoint(index)
+
+    data = vtk.vtkPolyData()
+    data.SetPoints(points)
+    data.SetPolys(polys)
+    return data
+
+
+def build_drills(board: Board, consumed: frozenset[str] = frozenset()) -> vtk.vtkActor:
     """The holes, as dark cylinders straight through the board.
 
     THE BOARD HAD NO HOLES FROM UNDERNEATH. The substrate is one cube and the pads sat
@@ -136,6 +216,11 @@ def build_drills(board: Board) -> vtk.vtkActor:
     points = vtk.vtkPoints()
     for col in range(board.cols):
         for row in range(board.rows):
+            # A mounting bore is a bigger hole in the same place, drawn by
+            # `build_mounting_holes`. Leaving this one in as well puts a 1 mm cylinder
+            # inside a 3.2 mm one, which z-fights along its whole length.
+            if consumed and hole_key(HoleCoord(col, row)) in consumed:
+                continue
             x, y = _xy(board, HoleCoord(col, row))
             points.InsertNextPoint(x, y, -board.thickness / 2)
     data = vtk.vtkPolyData()
@@ -168,38 +253,32 @@ def build_drills(board: Board) -> vtk.vtkActor:
     return actor
 
 
-def build_pads(board: Board, side: BoardSide = "top") -> vtk.vtkActor:
+def build_pads(
+    board: Board, side: BoardSide = "top", consumed: frozenset[str] = frozenset()
+) -> vtk.vtkActor:
     """Every pad on one face, in one instanced actor. The scalability claim, tested.
 
     Called for BOTH faces. The boards this is modelled on are plated through-hole with an
     annular ring on each side, which is also why the solder side is somewhere you can
     solder at all -- and until now the underside had no copper on it whatsoever.
+
+    An annulus, not a disc: a pad with no hole in it makes the board read as a dotted
+    sheet rather than as perfboard, and the hole is the entire point of the part.
     """
     z = pad_z(board, side)
     points = vtk.vtkPoints()
     for col in range(board.cols):
         for row in range(board.rows):
+            if consumed and hole_key(HoleCoord(col, row)) in consumed:
+                continue  # A mounting bore took this pad's copper away.
             x, y = _xy(board, HoleCoord(col, row))
             points.InsertNextPoint(x, y, z)
     data = vtk.vtkPolyData()
     data.SetPoints(points)
 
-    # An annulus, not a disc: a pad with no hole in it makes the board read as a dotted
-    # sheet rather than as perfboard, and the hole is the entire point of the part. Still one
-    # source glyphed over every position, so the instancing claim is unaffected.
-    ring = vtk.vtkDiskSource()
-    ring.SetOuterRadius(board.pad_diameter / 2)
-    ring.SetInnerRadius(board.drill_diameter / 2)
-    ring.SetCircumferentialResolution(16)
-    ring.SetRadialResolution(1)
-    # vtkDiskSource lies in the XY plane already, which is the plane the board is in.
-    tf = vtk.vtkTransformPolyDataFilter()
-    tf.SetTransform(vtk.vtkTransform())
-    tf.SetInputConnection(ring.GetOutputPort())
-
     glyph = vtk.vtkGlyph3DMapper()
     glyph.SetInputData(data)
-    glyph.SetSourceConnection(tf.GetOutputPort())
+    glyph.SetSourceData(_pad_annulus(board))
     glyph.SetOrient(False)
     glyph.SetScaling(False)
 
@@ -208,6 +287,171 @@ def build_pads(board: Board, side: BoardSide = "top") -> vtk.vtkActor:
     actor.GetProperty().SetColor(*PAD_RGB)
     actor.GetProperty().SetSpecular(0.4)
     return actor
+
+
+def build_mounting_holes(doc: PerfDocument) -> list[vtk.vtkActor]:
+    """The screw bores, straight through the board.
+
+    Same trick as :func:`build_drills` -- a dark cylinder rather than a boolean
+    subtraction from the substrate -- and for the same reason, except that here there are
+    four of them rather than thousands, so the cost was never the argument. Consistency
+    is: a mounting hole that was cut properly would look different from every other hole
+    on the board, which would read as the two being different kinds of thing.
+    """
+    board = doc.board
+    if not doc.mounting_holes:
+        return []
+    actors: list[vtk.vtkActor] = []
+    for mount in doc.mounting_holes:
+        bore = vtk.vtkCylinderSource()
+        bore.SetRadius(mount.diameter / 2)
+        bore.SetHeight(board.thickness + 0.3)
+        bore.SetResolution(28)
+        x, y = _xy(board, mount.at)
+        actor = vtk.vtkActor()
+        mapper = vtk.vtkPolyDataMapper()
+        mapper.SetInputConnection(bore.GetOutputPort())
+        actor.SetMapper(mapper)
+        # vtkCylinderSource stands along Y; the board's thickness is along Z.
+        actor.SetOrientation(90.0, 0.0, 0.0)
+        actor.SetPosition(x, y, -board.thickness / 2)
+        actor.GetProperty().SetColor(*DRILL_RGB)
+        actor.GetProperty().SetSpecular(0.0)
+        actor.GetProperty().SetAmbient(0.25)
+        actors.append(actor)
+    return actors
+
+
+def build_edge_connectors(doc: PerfDocument) -> list[vtk.vtkActor]:
+    """Connector fingers, as thin copper plates lying on the board's faces."""
+    board = doc.board
+    actors: list[vtk.vtkActor] = []
+    for connector in doc.edge_connectors:
+        faces: tuple[BoardSide, ...] = (
+            ("top", "bottom") if connector.face == "both" else (connector.face,)
+        )
+        for face in faces:
+            if board.single_sided and face == "top":
+                continue  # No copper on the component side at all -- see Board.single_sided.
+            append = vtk.vtkAppendPolyData()
+            for hole in edge_connector_holes(connector, board):
+                rect = edge_finger_rect(connector, hole, board)
+                plate = vtk.vtkCubeSource()
+                plate.SetXLength(rect.width)
+                plate.SetYLength(rect.height)
+                plate.SetZLength(0.05)
+                # Board y runs downward while 3D y runs up, so the rect's y interval is
+                # negated -- the same flip `_xy` applies to every hole in this file.
+                plate.SetCenter(
+                    rect.x + rect.width / 2,
+                    -(rect.y + rect.height / 2),
+                    pad_z(board, face),
+                )
+                plate.Update()
+                append.AddInputData(plate.GetOutput())
+            if append.GetNumberOfInputConnections(0) == 0:
+                continue
+            append.Update()
+            mapper = vtk.vtkPolyDataMapper()
+            mapper.SetInputConnection(append.GetOutputPort())
+            actor = vtk.vtkActor()
+            actor.SetMapper(mapper)
+            actor.GetProperty().SetColor(*PAD_RGB)
+            actor.GetProperty().SetSpecular(0.4)
+            actors.append(actor)
+    return actors
+
+
+def build_legend(doc: PerfDocument) -> list[vtk.vtkActor]:
+    """The addresses printed on the substrate, as flat text on the board's faces.
+
+    Every label of one face goes into ONE actor. A vtkVectorText per label would be a
+    hundred actors on a modest board and several hundred on a real one, which is the same
+    mistake the pad grid exists to avoid -- and a legend is not worth more actors than
+    the copper.
+    """
+    labels = doc.board.labels
+    if labels is None:
+        return []
+    board = doc.board
+    # The strip of bare substrate between the outermost pads and the board edge -- NOT the
+    # whole margin, which the pads eat half their extent of. Same reasoning, and the same
+    # arithmetic, as view2d.BoardLegendItem._free_strip_mm: the two views have to print the
+    # legend in the same place or the 3D board stops matching the one being edited.
+    extent_x, extent_y = pad_extent_mm(board)
+    # Asked of the DOCUMENT, not the board: an edge carrying connector fingers has only
+    # whatever inset those fingers left, and the 2D legend measures it the same way.
+    strip_x = legend_strip_mm(doc, "horizontal")
+    strip_y = legend_strip_mm(doc, "vertical")
+    height = min(1.15, min(strip_x, strip_y) * 0.6)
+    faces: tuple[BoardSide, ...] = (
+        ("top", "bottom") if labels.face == "both" else (labels.face,)
+    )
+
+    actors: list[vtk.vtkActor] = []
+    for face in faces:
+        append = vtk.vtkAppendPolyData()
+        # (text, x, y, widest it may be) -- the width limits differ between the two runs
+        # because their free axes are swapped, exactly as in the 2D legend.
+        # 3D y runs up where board rows run down, so the top border is at POSITIVE y here.
+        span_w = (board.cols - 1) * board.pitch
+        span_h = (board.rows - 1) * board.pitch
+        column_ys = [extent_y / 2 + strip_y / 2]
+        row_xs = [-(extent_x / 2 + strip_x / 2)]
+        if labels.all_edges:
+            column_ys.append(-span_h - extent_y / 2 - strip_y / 2)
+            row_xs.append(span_w + extent_x / 2 + strip_x / 2)
+        # Row numbers are turned on their side, as they are on the real boards and in the
+        # 2D view: the strip beside a row is narrow across and a whole pitch deep, so a
+        # turned number fits where an upright one has to shrink.
+        entries: list[tuple[str, float, float, float, float]] = [
+            (column_label(col), col * board.pitch, y, board.pitch * 0.9, 0.0)
+            for col in range(board.cols)
+            for y in column_ys
+        ]
+        entries += [
+            (printed_row_label(row, labels), x, -row * board.pitch, board.pitch * 0.9, 90.0)
+            for row in range(board.rows)
+            for x in row_xs
+        ]
+        for text, x, y, max_width, rotate in entries:
+            vector = vtk.vtkVectorText()
+            vector.SetText(text)
+            vector.Update()
+            bounds = vector.GetOutput().GetBounds()
+            # vtkVectorText is roughly one unit tall and starts at the origin, so it is
+            # scaled to the wanted cap height and then centred on its own bounds.
+            scale = height
+            text_width = max(bounds[1] - bounds[0], 1e-6)
+            if text_width * scale > max_width:
+                scale = max_width / text_width
+            transform = vtk.vtkTransform()
+            transform.Translate(x, y, 0.0)
+            if rotate:
+                transform.RotateZ(rotate)
+            transform.Scale(scale, scale, scale)
+            transform.Translate(
+                -(bounds[0] + bounds[1]) / 2, -(bounds[2] + bounds[3]) / 2, 0.0
+            )
+            placed = vtk.vtkTransformPolyDataFilter()
+            placed.SetTransform(transform)
+            placed.SetInputData(vector.GetOutput())
+            placed.Update()
+            append.AddInputData(placed.GetOutput())
+        append.Update()
+
+        mapper = vtk.vtkPolyDataMapper()
+        mapper.SetInputConnection(append.GetOutputPort())
+        actor = vtk.vtkActor()
+        actor.SetMapper(mapper)
+        # Just clear of the substrate, on whichever face carries the print. Silkscreen is
+        # ink: unlit and matte, so it does not catch highlights the way copper does.
+        actor.SetPosition(0.0, 0.0, 0.02 if face == "top" else -board.thickness - 0.02)
+        actor.GetProperty().SetColor(*LEGEND_RGB)
+        actor.GetProperty().SetAmbient(0.6)
+        actor.GetProperty().SetSpecular(0.0)
+        actors.append(actor)
+    return actors
 
 
 # ------------------------------------------------------- parametric component bodies
@@ -923,9 +1167,20 @@ def populate_renderer(
     ren.RemoveAllViewProps()
 
     ren.AddActor(build_substrate(board))
-    ren.AddActor(build_pads(board, "top"))
-    ren.AddActor(build_pads(board, "bottom"))
-    ren.AddActor(build_drills(board))
+    # Copper face by face, because a single-sided board genuinely has none on top: the
+    # component side is bare phenolic with drilled holes, which is most of what makes
+    # those boards look and solder differently.
+    for face in ("top", "bottom"):
+        if board.single_sided and face == "top":
+            continue
+        ren.AddActor(build_pads(board, face, holes_without_grid_pad(doc, face)))
+    ren.AddActor(build_drills(board, consumed_holes(doc)))
+    for actor in build_legend(doc):
+        ren.AddActor(actor)
+    for actor in build_edge_connectors(doc):
+        ren.AddActor(actor)
+    for actor in build_mounting_holes(doc):
+        ren.AddActor(actor)
     for comp in doc.components:
         for actor in build_component(lookup, comp, board):
             ren.AddActor(actor)

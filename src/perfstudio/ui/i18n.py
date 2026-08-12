@@ -51,6 +51,7 @@ TURKISH: Mapping[str, str] = {
     # Ayar&ları, not &Ayarları: "&Aç…" already claims A in this menu, and two items with
     # the same accelerator means one of them cannot be reached from the keyboard at all.
     "&Board Setup…": "Kart Ayar&ları…",
+    "Board &Features…": "Kart &Öğeleri…",
     "&Import KiCad Netlist…": "KiCad Netlist &İçe Aktar…",
     "Export &Build Guide…": "&Montaj Rehberini Dışa Aktar…",
     "Export 1:1 PDF (component + solder side)…": "1:1 PDF Dışa Aktar (komponent + lehim yüzü)…",
@@ -103,7 +104,7 @@ TURKISH: Mapping[str, str] = {
     "Red": "Kırmızı",
     "Purple": "Mor",
     "White": "Beyaz",
-    "Brown (phenolic)": "Kahverengi (pertinaks)",
+    "Orange (phenolic)": "Turuncu (pertinaks)",
     "&About PerfStudio": "PerfStudio &Hakkında",
     # -- toolbar -------------------------------------------------------------
     "Rotate": "Döndür",
@@ -121,6 +122,52 @@ TURKISH: Mapping[str, str] = {
     "Columns": "Sütun",
     "Rows": "Satır",
     "Material": "Malzeme",
+    # -- board setup: the sizes you can buy -----------------------------------
+    "Board": "Kart",
+    "Custom size": "Özel ölçü",
+    "Double-sided green, plated holes": "Çift yüz yeşil, metalize delikli",
+    "Single-sided orange phenolic": "Tek yüz turuncu pertinaks",
+    # -- board setup: pad shape and the printed legend ------------------------
+    "Pad shape": "Pad şekli",
+    "Pad length": "Pad uzunluğu",
+    "Long axis": "Uzun eksen",
+    "Round": "Yuvarlak",
+    "Oblong — solder bridges easily along the long axis": (
+        "Oval — lehim uzun eksen boyunca kolayca köprü yapar"
+    ),
+    "Down a column": "Sütun boyunca",
+    "Along a row": "Satır boyunca",
+    "Addresses printed on the board": "Adresler kartın üzerine basılı",
+    "Boards carrying their own A-Z / 01-22 legend, printed on the board itself.": (
+        "Kendi A-Z / 01-22 cetvelini taşıyan, cetveli kartın üzerine basılı kartlar."
+    ),
+    "Row digits": "Satır basamağı",
+    '2 prints row 7 as "07", the way most such boards do.': (
+        '2, 7. satırı "07" olarak basar; bu kartların çoğu böyle yapar.'
+    ),
+    # -- board features: mounting holes and edge connectors -------------------
+    "Board Features": "Kart Öğeleri",
+    "Feature": "Öğe",
+    "Where": "Yer",
+    "Size": "Ölçü",
+    "Remove": "Kaldır",
+    "Mounting hole": "Montaj deliği",
+    "Edge connector": "Kenar konnektörü",
+    "Hole diameter": "Delik çapı",
+    "Inset (holes)": "İçeri kaçıklık (delik)",
+    "How many holes in from each corner; 0 uses the corner hole itself.": (
+        "Her köşeden kaç delik içeride; 0, köşe deliğinin kendisini kullanır."
+    ),
+    "Add Corner Holes": "Köşe Delikleri Ekle",
+    "Add Edge Connector": "Kenar Konnektörü Ekle",
+    "Edge": "Kenar",
+    "Top": "Üst",
+    "Bottom": "Alt",
+    "Left": "Sol",
+    "Right": "Sağ",
+    "First hole": "İlk delik",
+    "Fingers": "Parmak sayısı",
+    "That inset does not fit on this board.": "Bu kaçıklık bu karta sığmıyor.",
     "Unsaved changes": "Kaydedilmemiş değişiklikler",
     "Open failed": "Açılamadı",
     "Import failed": "İçe aktarılamadı",

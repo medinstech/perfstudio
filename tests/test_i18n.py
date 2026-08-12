@@ -59,7 +59,14 @@ def loop_built_labels() -> set[str]:
     source = (UI_DIR / "main.py").read_text(encoding="utf-8")
     tools = set(re.findall(r'\(\s*"[a-z-]+",\s*"((?:[^"\\]|\\.)+)",\s*"(?:[^"\\]|\\.)*",\s*$',
                            source, re.MULTILINE))
-    return {scheme.label for scheme in SCHEMES} | tools
+    # The (value, label) tables the dialogs build their combo boxes from -- pad shape,
+    # pad long axis, board edge. Read from the source for the same reason as above: a
+    # hand-kept list is the drift this file exists to catch. Material descriptions match
+    # this shape too and are deliberately untranslated, which is harmless -- this set only
+    # excuses a catalogue key from needing a literal t("..."), it never demands one.
+    pairs = set(re.findall(r'\(\s*"[a-z-]+",\s*"((?:[^"\\]|\\.)+)"\s*\),\s*$',
+                           source, re.MULTILINE))
+    return {scheme.label for scheme in SCHEMES} | tools | pairs
 
 
 @pytest.fixture(autouse=True)
@@ -124,7 +131,7 @@ def test_no_two_entries_in_a_menu_claim_the_same_accelerator() -> None:
 
     groups = {
         "file": ["&New Board…", "&Open…", "&Save", "Save &As…", "&Board Setup…",
-                 "&Import KiCad Netlist…", "Export &Build Guide…", "&Quit"],
+                 "Board &Features…", "&Import KiCad Netlist…", "Export &Build Guide…", "&Quit"],
         "edit": ["&Undo", "&Redo", "Rotate &Clockwise", "Rotate Counter-clock&wise",
                  "&Mirror", "Toggle &Lock", "&Delete"],
         "draw": ["&Solder Trace", "Solder Trace with S&pine", "&Bare Wire",

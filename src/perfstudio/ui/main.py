@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import dataclasses
 import datetime
+import math
 import os
 import sys
 import time
@@ -33,10 +34,12 @@ from PySide6.QtCore import QEventLoop, QRectF, Qt, QThread
 from PySide6.QtGui import QAction, QColor, QImage, QKeySequence, QPainter
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
     QDockWidget,
+    QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
     QHeaderView,
@@ -45,6 +48,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QProgressDialog,
+    QPushButton,
     QSpinBox,
     QStatusBar,
     QToolBar,
@@ -69,8 +73,13 @@ from perfstudio.autoroute import (
 from perfstudio.command import CommandBus, CommandContext, DispatchResult, HistoryEntry
 from perfstudio.commands import (
     DEFAULT_BOARD,
+    AddEdgeConnectorPayload,
+    AddMountingHolesPayload,
+    ApplyBoardPresetPayload,
     DeleteComponentPayload,
     DeleteConductorsPayload,
+    DeleteEdgeConnectorPayload,
+    DeleteMountingHolePayload,
     ImportNetlistPayload,
     MirrorComponentPayload,
     PlaceComponentPayload,
@@ -83,20 +92,39 @@ from perfstudio.commands import (
 )
 from perfstudio.drc import DrcViolation, run_drc
 from perfstudio.footprints import footprint_lookup, standard_footprints
-from perfstudio.geometry import board_size_mm, format_hole, hole_span_mm
+from perfstudio.geometry import (
+    STANDARD_PRESETS,
+    BoardPreset,
+    board_edge_margin_mm,
+    board_from_preset,
+    board_outline_mm,
+    edge_connector_holes,
+    format_hole,
+    hole_span_mm,
+    pad_edge_gap_mm,
+    pad_extent_mm,
+    preset_edge_connectors,
+    preset_mounting_holes,
+)
 from perfstudio.guide import build_guide
 from perfstudio.guide import describe as describe_guide
 from perfstudio.guide_export import bom_to_csv, cut_list_to_csv, guide_to_html, guide_to_json
 from perfstudio.lvs import LvsIssue, LvsResult, run_lvs, stale_conductor_ids
 from perfstudio.model import (
     Board,
+    BoardEdge,
+    BoardLabels,
     BoardMaterial,
     BoardSide,
     ComponentInstance,
     DocumentMeta,
+    EdgeConnector,
     Footprint,
     HoleCoord,
+    MountingHole,
     NetId,
+    PadAxis,
+    PadShape,
     PerfDocument,
     Rotation,
 )
@@ -202,6 +230,11 @@ def read_document_text(path: Path) -> tuple[str | None, str | None]:
         return None, f"Cannot open {path}: not UTF-8 text. A .perf document is JSON."
 
 
+#: Substrate to add outside the hole grid when a board carries a printed legend, so the
+#: characters have somewhere to go. Roughly what the boards being modelled have.
+LEGEND_BORDER_MM = 2.0
+
+
 class BoardSetupDialog(QDialog):
     """Grid size and substrate for a board.
 
@@ -218,10 +251,55 @@ class BoardSetupDialog(QDialog):
         ("FR1", "FR-1 — phenolic paper, as FR-2."),
     )
 
+    PAD_SHAPES: tuple[tuple[PadShape, str], ...] = (
+        ("round", "Round"),
+        ("oblong", "Oblong — solder bridges easily along the long axis"),
+    )
+
+    PAD_AXES: tuple[tuple[PadAxis, str], ...] = (
+        ("vertical", "Down a column"),
+        ("horizontal", "Along a row"),
+    )
+
     def __init__(self, board: Board, parent: QWidget | None = None, title: str = "New Board") -> None:
         super().__init__(parent)
         self.setWindowTitle(title)
         self.setMinimumWidth(420)
+        # Assigned before any widget signal can fire: `_update_note` asks `board()` for
+        # the pad gaps it prints, and `board()` builds its result from this.
+        self._board = board
+        #: The product chosen from the list, if one was. What makes the difference between
+        #: "resize this board" and "this is a different board, with the fingers and corner
+        #: holes that come with it".
+        self._preset: BoardPreset | None = None
+
+        # Perfboard is bought as "a 5 by 7", never as a hole count, so the sizes actually
+        # stocked come first and the spin boxes below are the escape hatch. Picking one
+        # also settles the things that travel with a board family -- a phenolic board is
+        # single-sided with no printed legend, an FR-4 one is neither.
+        self.preset = QComboBox()
+        self.preset.addItem(t("Custom size"), "")
+        for family, heading in (
+            ("double-sided-fr4", t("Double-sided green, plated holes")),
+            ("single-sided-phenolic", t("Single-sided orange phenolic")),
+        ):
+            # A separator per family rather than one flat list: the two are different
+            # products, not two settings of one, and the list is what makes that visible
+            # before anything is chosen.
+            self.preset.insertSeparator(self.preset.count())
+            heading_index = self.preset.count()
+            self.preset.addItem(heading, "")
+            # Disabled through the item's flags rather than QStandardItemModel.item(),
+            # which QComboBox.model() is not typed as returning.
+            self.preset.setItemData(
+                heading_index, QColor(TEXT_DIM), Qt.ItemDataRole.ForegroundRole
+            )
+            self.preset.setItemData(heading_index, 0, Qt.ItemDataRole.UserRole - 1)
+            for entry in STANDARD_PRESETS:
+                if entry.family != family:
+                    continue
+                self.preset.addItem(f"    {entry.name}  ·  {entry.cols} × {entry.rows}", entry.key)
+        self.preset.currentIndexChanged.connect(self._on_preset)
 
         self.cols = QSpinBox()
         self.cols.setRange(2, 400)
@@ -235,17 +313,63 @@ class BoardSetupDialog(QDialog):
         index = self.material.findData(board.material)
         self.material.setCurrentIndex(max(0, index))
 
+        # Pad shape is here rather than buried somewhere, because on a board whose pads
+        # are oblong it changes which way a solder trace is easy to make -- the gap to the
+        # next pad along the long axis can be half what it is across. DRC and the build
+        # guide both say so, and neither can if this is not set to match the board in the
+        # user's hand.
+        self.pad_shape = QComboBox()
+        for shape, shape_label in self.PAD_SHAPES:
+            self.pad_shape.addItem(t(shape_label), shape)
+        self.pad_shape.setCurrentIndex(max(0, self.pad_shape.findData(board.pad_shape)))
+
+        self.pad_length = QDoubleSpinBox()
+        self.pad_length.setRange(0.1, 20.0)
+        self.pad_length.setSingleStep(0.05)
+        self.pad_length.setDecimals(2)
+        self.pad_length.setSuffix(" mm")
+        self.pad_length.setValue(board.pad_length or round(board.pad_diameter * 1.2, 2))
+
+        self.pad_axis = QComboBox()
+        for axis, axis_label in self.PAD_AXES:
+            self.pad_axis.addItem(t(axis_label), axis)
+        self.pad_axis.setCurrentIndex(max(0, self.pad_axis.findData(board.pad_axis)))
+
+        self.legend = QCheckBox(t("Addresses printed on the board"))
+        self.legend.setToolTip(
+            # One literal, not two concatenated: tests/test_i18n.py scans for translated
+            # strings and an implicit concatenation inside t() is invisible to it, so the
+            # translation would silently never be used.
+            t("Boards carrying their own A-Z / 01-22 legend, printed on the board itself.")
+        )
+        self.legend.setChecked(board.labels is not None)
+
+        self.row_digits = QSpinBox()
+        self.row_digits.setRange(1, 4)
+        self.row_digits.setValue(board.labels.row_digits if board.labels else 2)
+        self.row_digits.setToolTip(t('2 prints row 7 as "07", the way most such boards do.'))
+
         self._size_note = QLabel()
         self.cols.valueChanged.connect(self._update_note)
         self.rows.valueChanged.connect(self._update_note)
+        self.pad_shape.currentIndexChanged.connect(self._update_enabled)
+        self.legend.toggled.connect(self._update_enabled)
         self._pitch = board.pitch
+        self._pad_diameter = board.pad_diameter
         self._update_note()
 
         form = QFormLayout()
+        form.addRow(t("Board"), self.preset)
         form.addRow(t("Columns"), self.cols)
         form.addRow(t("Rows"), self.rows)
         form.addRow(t("Material"), self.material)
+        form.addRow(t("Pad shape"), self.pad_shape)
+        form.addRow(t("Pad length"), self.pad_length)
+        form.addRow(t("Long axis"), self.pad_axis)
+        form.addRow("", self.legend)
+        form.addRow(t("Row digits"), self.row_digits)
         form.addRow("", self._size_note)
+        self._update_enabled()
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -256,25 +380,335 @@ class BoardSetupDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.addLayout(form)
         layout.addWidget(buttons)
+
+    def _on_preset(self) -> None:
+        """Apply a stocked size. Silent when the user picks "Custom size" back again --
+        the numbers they have already typed are the point of that entry."""
+        key = self.preset.currentData()
+        entry = next((p for p in STANDARD_PRESETS if p.key == key), None)
+        if entry is None:
+            return
+        board = board_from_preset(entry, self._board)
         self._board = board
+        self._preset = entry
+        self.cols.setValue(board.cols)
+        self.rows.setValue(board.rows)
+        self.material.setCurrentIndex(max(0, self.material.findData(board.material)))
+        self.pad_shape.setCurrentIndex(max(0, self.pad_shape.findData(board.pad_shape)))
+        self.legend.setChecked(board.labels is not None)
+        if board.labels is not None:
+            self.row_digits.setValue(board.labels.row_digits)
+        self._update_enabled()
+
+    def _update_enabled(self) -> None:
+        oblong = self.pad_shape.currentData() == "oblong"
+        self.pad_length.setEnabled(oblong)
+        self.pad_axis.setEnabled(oblong)
+        self.row_digits.setEnabled(self.legend.isChecked())
+        self._update_note()
 
     def _update_note(self) -> None:
         # The physical size, because that is what someone holds against a piece of board
         # they already own -- "80 columns" means nothing at the shop.
         width = self.cols.value() * self._pitch
         height = self.rows.value() * self._pitch
-        self._size_note.setText(
-            f"<span style='color:{TEXT_DIM}'>{width:.1f} × {height:.1f} mm "
-            f"({self.cols.value() * self.rows.value()} holes)</span>"
+        note = (
+            f"{width:.1f} × {height:.1f} mm ({self.cols.value() * self.rows.value()} holes)"
         )
+        # The gap the R5' rule is about, quoted while the shape is being chosen rather
+        # than only once DRC runs. On a round board the two numbers are the same and one
+        # is enough; on an oblong one the difference between them IS the choice.
+        board = self.board()
+        gaps = pad_edge_gap_mm(board, "horizontal"), pad_edge_gap_mm(board, "vertical")
+        if abs(gaps[0] - gaps[1]) < 1e-9:
+            note += f" — {gaps[0]:.2f} mm between pads"
+        else:
+            note += f" — {gaps[0]:.2f} mm between pads along a row, {gaps[1]:.2f} mm down a column"
+        self._size_note.setText(f"<span style='color:{TEXT_DIM}'>{note}</span>")
+
+    def preset_features(
+        self,
+    ) -> tuple[tuple[EdgeConnector, ...], tuple[MountingHole, ...]] | None:
+        """What the caller needs to apply a whole product rather than just a size."""
+        return _preset_features(self._preset, self.board())
 
     def board(self) -> Board:
+        # A legend needs somewhere to be printed. Half a pitch past the outer holes leaves
+        # 0.32 mm of bare substrate at 2.54 mm pitch, which is not room for a character --
+        # the boards that carry a legend are physically wider at the edge, so turning the
+        # legend on gives the board that border rather than drawing text under the pads.
+        # Each axis keeps its own border: a preset solves them separately so the outline
+        # is the advertised size to the tenth of a millimetre, and averaging them here
+        # would throw that away. Only a legend with nowhere to go raises either of them.
+        border_x, border_y = self._board.border_x_mm, self._board.border_y_mm
+        if self.legend.isChecked():
+            border_x = max(border_x, LEGEND_BORDER_MM)
+            border_y = max(border_y, LEGEND_BORDER_MM)
+
+        shape = cast(PadShape, self.pad_shape.currentData())
+        # The length is carried only when it means something. Writing it out on a round
+        # board would put a field in the .perf file that describes nothing, and the format
+        # omits anything at its default precisely so an unused feature leaves no trace.
+        length = round(self.pad_length.value(), 3) if shape == "oblong" else None
+        if length is not None and length <= self._pad_diameter:
+            # The dialog's own floor: board.set refuses this, and a dialog that can only
+            # be dismissed by an error message is a worse dialog than one that cannot
+            # produce the error.
+            length = round(self._pad_diameter + 0.05, 3)
         return dataclasses.replace(
             self._board,
             cols=self.cols.value(),
             rows=self.rows.value(),
             material=cast(BoardMaterial, self.material.currentData()),
+            pad_shape=shape,
+            pad_length=length,
+            pad_axis=cast(PadAxis, self.pad_axis.currentData()),
+            border_x_mm=border_x,
+            border_y_mm=border_y,
+            labels=(
+                BoardLabels(row_digits=self.row_digits.value())
+                if self.legend.isChecked()
+                else None
+            ),
         )
+
+
+def _corner_offset_mm(board: Board, diameter: float) -> float:
+    """How far diagonally OUT of the grid a corner mounting hole should sit.
+
+    Real boards put their corner holes in the border, clear of every pad — look at any
+    of them and the copper grid is untouched. That is only possible if the border is wide
+    enough to take the bore; on a flush-cut board there is nowhere to go, and the hole
+    has to land on the grid and eat the pads around it, which is what DRC then reports.
+
+    Returns 0 when it will not fit, so the caller gets the old on-grid behaviour rather
+    than a hole hanging off the edge of the board.
+    """
+    extent_x, extent_y = pad_extent_mm(board)
+    # Far enough out that the bore misses the corner pad, measured on the diagonal.
+    clears_pad = (max(extent_x, extent_y) / 2 + diameter / 2) / math.sqrt(2)
+    # Near enough in that the bore stays on the substrate, on the tighter axis.
+    stays_on_board = min(
+        board_edge_margin_mm(board, "horizontal"), board_edge_margin_mm(board, "vertical")
+    ) - diameter / 2 - 0.2
+    if stays_on_board < clears_pad:
+        return 0.0
+    return round(stays_on_board, 3)
+
+
+class BoardFeaturesDialog(QDialog):
+    """Mounting holes and edge-connector fingers: what the board has, and how to change it.
+
+    Every button here dispatches straight onto the bus rather than collecting an edit to
+    apply on OK. Two reasons. Each change is then its own undo step, which is what a
+    person means by "undo that" when they have added a connector and then four holes; and
+    the board redraws underneath the dialog as they work, which is the only way to see
+    that a corner hole has landed where a part already is.
+
+    The corner holes go in as ONE command (``mounting-hole.addMany``) because putting a
+    hole in each corner is one decision -- see the payload's own note.
+    """
+
+    EDGES: tuple[tuple[BoardEdge, str], ...] = (
+        ("top", "Top"),
+        ("bottom", "Bottom"),
+        ("left", "Left"),
+        ("right", "Right"),
+    )
+
+    def __init__(self, bus: CommandBus, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.bus = bus
+        self.setWindowTitle(t("Board Features"))
+        self.setMinimumWidth(560)
+
+        self.tree = QTreeWidget()
+        self.tree.setColumnCount(3)
+        self.tree.setHeaderLabels([t("Feature"), t("Where"), t("Size")])
+        self.tree.setRootIsDecorated(False)
+
+        self.act_remove = QPushButton(t("Remove"))
+        self.act_remove.clicked.connect(self._on_remove)
+
+        self.mount_diameter = QDoubleSpinBox()
+        self.mount_diameter.setRange(0.5, 12.0)
+        self.mount_diameter.setSingleStep(0.1)
+        self.mount_diameter.setDecimals(1)
+        self.mount_diameter.setSuffix(" mm")
+        self.mount_diameter.setValue(3.2)
+
+        self.mount_inset = QSpinBox()
+        self.mount_inset.setRange(0, 20)
+        self.mount_inset.setValue(1)
+        self.mount_inset.setToolTip(
+            t("How many holes in from each corner; 0 uses the corner hole itself.")
+        )
+
+        add_corners = QPushButton(t("Add Corner Holes"))
+        add_corners.clicked.connect(self._on_add_corners)
+
+        self.edge = QComboBox()
+        for value, label in self.EDGES:
+            self.edge.addItem(t(label), value)
+        self.edge.setCurrentIndex(1)
+
+        self.finger_start = QSpinBox()
+        self.finger_start.setRange(0, 999)
+        self.finger_count = QSpinBox()
+        self.finger_count.setRange(1, 999)
+        self.finger_count.setValue(8)
+
+        add_connector = QPushButton(t("Add Edge Connector"))
+        add_connector.clicked.connect(self._on_add_connector)
+
+        mounting = QFormLayout()
+        mounting.addRow(t("Hole diameter"), self.mount_diameter)
+        mounting.addRow(t("Inset (holes)"), self.mount_inset)
+        mounting.addRow("", add_corners)
+
+        connector = QFormLayout()
+        connector.addRow(t("Edge"), self.edge)
+        connector.addRow(t("First hole"), self.finger_start)
+        connector.addRow(t("Fingers"), self.finger_count)
+        connector.addRow("", add_connector)
+
+        self.note = QLabel()
+        self.note.setWordWrap(True)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(self.reject)
+        buttons.accepted.connect(self.accept)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.tree)
+        layout.addWidget(self.act_remove)
+        layout.addLayout(mounting)
+        layout.addLayout(connector)
+        layout.addWidget(self.note)
+        layout.addWidget(buttons)
+        self._reload()
+
+    def _reload(self) -> None:
+        doc = self.bus.document
+        self.tree.clear()
+        for mount in doc.mounting_holes:
+            item = QTreeWidgetItem(
+                [
+                    t("Mounting hole"),
+                    format_hole(mount.at),
+                    f"⌀{mount.diameter:g} mm, {mount.head_diameter:g} mm head",
+                ]
+            )
+            item.setData(0, Qt.ItemDataRole.UserRole, ("mounting-hole.delete", mount.id))
+            self.tree.addTopLevelItem(item)
+        for conn in doc.edge_connectors:
+            holes = edge_connector_holes(conn, doc.board)
+            where = (
+                f"{format_hole(holes[0])}–{format_hole(holes[-1])}" if holes else conn.edge
+            )
+            item = QTreeWidgetItem(
+                [
+                    t("Edge connector"),
+                    f"{conn.edge}, {where}",
+                    f"{conn.count} × {conn.finger_width:g} mm",
+                ]
+            )
+            item.setData(0, Qt.ItemDataRole.UserRole, ("edge-connector.delete", conn.id))
+            self.tree.addTopLevelItem(item)
+        for column in range(3):
+            self.tree.resizeColumnToContents(column)
+        self.act_remove.setEnabled(self.tree.topLevelItemCount() > 0)
+
+    def _say(self, result: DispatchResult) -> None:
+        """Report a refusal in place. The bus refuses for reasons a user can act on --
+        a hole off the board, two connectors claiming one pad -- so the message is worth
+        showing verbatim rather than replacing with "could not add"."""
+        if result.ok:
+            self.note.setText("")
+            self._reload()
+        else:
+            self.note.setText(f"<span style='color:{WARNING}'>{result.message}</span>")
+
+    def _on_remove(self) -> None:
+        item = self.tree.currentItem() or self.tree.topLevelItem(0)
+        if item is None:
+            return
+        command, id_ = item.data(0, Qt.ItemDataRole.UserRole)
+        payload: Any = (
+            DeleteMountingHolePayload(id=id_)
+            if command == "mounting-hole.delete"
+            else DeleteEdgeConnectorPayload(id=id_)
+        )
+        self._say(self.bus.dispatch(command, payload))
+
+    def _on_add_corners(self) -> None:
+        board = self.bus.document.board
+        inset = self.mount_inset.value()
+        far_col, far_row = board.cols - 1 - inset, board.rows - 1 - inset
+        if far_col <= inset or far_row <= inset:
+            self.note.setText(
+                f"<span style='color:{WARNING}'>"
+                + t("That inset does not fit on this board.")
+                + "</span>"
+            )
+            return
+        corners = (
+            HoleCoord(inset, inset),
+            HoleCoord(far_col, inset),
+            HoleCoord(inset, far_row),
+            HoleCoord(far_col, far_row),
+        )
+        diameter = self.mount_diameter.value()
+        offset = _corner_offset_mm(board, diameter)
+        self._say(
+            self.bus.dispatch(
+                "mounting-hole.addMany",
+                AddMountingHolesPayload(
+                    ats=corners,
+                    # Signs put each hole outside its own corner rather than all four in
+                    # the same direction.
+                    offsets=tuple(
+                        (
+                            -offset if hole.col <= inset else offset,
+                            -offset if hole.row <= inset else offset,
+                        )
+                        for hole in corners
+                    ),
+                    diameter=diameter,
+                    # A washer is roughly twice the bolt's clearance hole, which is the
+                    # keepout DRC warns about. Guessed here rather than asked for: a
+                    # person fitting an M3 screw does not want to be quizzed about it.
+                    head_diameter=round(diameter * 2, 2),
+                    label=f"Drill 4 corner mounting holes ({diameter:g} mm)",
+                ),
+            )
+        )
+
+    def _on_add_connector(self) -> None:
+        self._say(
+            self.bus.dispatch(
+                "edge-connector.add",
+                AddEdgeConnectorPayload(
+                    edge=cast(BoardEdge, self.edge.currentData()),
+                    start=self.finger_start.value(),
+                    count=self.finger_count.value(),
+                ),
+            )
+        )
+
+
+def _preset_features(
+    preset: BoardPreset | None, board: Board
+) -> tuple[tuple[EdgeConnector, ...], tuple[MountingHole, ...]] | None:
+    """The finger strips and corner holes the chosen product is sold with.
+
+    None when nothing was chosen from the list, which is the signal to leave the board's
+    existing features alone and merely resize -- a person who typed a column count did
+    not ask for their connectors to be rebuilt.
+    """
+    if preset is None:
+        return None
+    return preset_edge_connectors(preset, board), preset_mounting_holes(preset, board)
 
 
 def window_title(path: Path | None = None, modified: bool = False) -> str:
@@ -517,6 +951,12 @@ class MainWindow(QMainWindow):
             "temperature the build guide gives and whether the pad-lifting rule applies."
         )
         act_board.triggered.connect(self.on_board_setup)
+        act_features = file_menu.addAction(t("Board &Features…"))
+        act_features.setToolTip(
+            "Mounting holes and edge-connector fingers. A mounting bore takes the copper "
+            "off the pads around it, so DRC treats a pin left there as an error."
+        )
+        act_features.triggered.connect(self.on_board_features)
         act_import = file_menu.addAction(t("&Import KiCad Netlist…"))
         act_import.setShortcut(QKeySequence("Ctrl+I"))
         act_import.triggered.connect(self.on_import_netlist)
@@ -1017,6 +1457,19 @@ class MainWindow(QMainWindow):
         )
 
     def _refresh_status(self) -> None:
+        # The ruler is suppressed on a board that prints its own addresses on the side in
+        # view, so the toggle for it is greyed out rather than left as a control that
+        # visibly does nothing. Refreshed here because both things that change the answer
+        # -- flipping the board and editing the board setup -- already come through.
+        if hasattr(self, "act_rulers"):
+            readable = self.scene.legend_is_readable()
+            self.act_rulers.setEnabled(not readable)
+            self.act_rulers.setToolTip(
+                "This board prints its own addresses, so the editor's ruler would repeat them."
+                if readable
+                else "Column letters and row numbers along the edges of the view."
+            )
+
         errors = sum(1 for v in self._last_violations if v.severity == "error")
         warns = sum(1 for v in self._last_violations if v.severity == "warning")
         drc_colour = ERROR if errors else (WARNING if warns else OK)
@@ -1818,9 +2271,22 @@ class MainWindow(QMainWindow):
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         board = dialog.board()
-        if board == self.bus.document.board:
+        features = dialog.preset_features()
+        if board == self.bus.document.board and features is None:
             return
-        result = self.bus.dispatch("board.set", SetBoardPayload(board=board))
+        if features is None:
+            result = self.bus.dispatch("board.set", SetBoardPayload(board=board))
+        else:
+            connectors, holes = features
+            result = self.bus.dispatch(
+                "board.applyPreset",
+                ApplyBoardPresetPayload(
+                    board=board,
+                    edge_connectors=connectors,
+                    mounting_holes=holes,
+                    label=f"Use a {board.cols}x{board.rows} {board.material} board",
+                ),
+            )
         if not result.ok:
             QMessageBox.warning(
                 self,
@@ -1830,6 +2296,15 @@ class MainWindow(QMainWindow):
             )
             return
         self.view.fit_board()
+
+    def on_board_features(self) -> None:
+        """Mounting holes and edge connectors.
+
+        No result handling here: the dialog dispatches its own commands as they are made,
+        so by the time it closes the board is already whatever the user left it as, and
+        the usual bus subscription has redrawn it.
+        """
+        BoardFeaturesDialog(self.bus, self).exec()
 
     def on_open(self) -> None:
         if not self._offer_to_save():
@@ -2204,7 +2679,8 @@ def headless(argv: list[str]) -> int:
             print(f"  - {w}")
 
     board = doc.board
-    w_mm, h_mm = board_size_mm(board)
+    outline = board_outline_mm(board)
+    w_mm, h_mm = outline.width, outline.height
     sw, sh = hole_span_mm(board)
     print(f"board        {board.cols}x{board.rows} {board.material}")
     print(f"substrate    {w_mm:.2f} x {h_mm:.2f} mm   (hole span {sw:.2f} x {sh:.2f} mm)")
@@ -2223,7 +2699,7 @@ def headless(argv: list[str]) -> int:
     image.fill(QColor("#12131a"))
     painter = QPainter(image)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    source = QRectF(-board.pitch / 2 - margin, -board.pitch / 2 - margin, src_w, src_h)
+    source = QRectF(outline.x - margin, outline.y - margin, src_w, src_h)
     t0 = time.perf_counter()
     scene.render(painter, QRectF(0, 0, img_w, img_h), source)
     t_2d = (time.perf_counter() - t0) * 1000

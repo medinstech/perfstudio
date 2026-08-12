@@ -37,12 +37,16 @@ from typing import Literal, TypeAlias
 from .connectivity import FootprintLookup, PhysicalNet, PhysicalPinRef, extract_physical_nets
 from .geometry import (
     all_pin_holes,
+    consumed_holes,
+    copper_gap_mm,
     format_hole,
     hole_key,
     hole_to_mm,
     is_inside_board,
     manhattan,
+    mounting_head_covers,
     neighbors4,
+    neighbour_axis,
     path_length_mm,
     paths_cross,
     pin_hole,
@@ -61,8 +65,10 @@ from .model import (
     Net,
     NetId,
     PerfDocument,
+    Point2,
     SolderBuildup,
     SolderTraceConductor,
+    contacts_every_path_hole,
     is_crossing_blocked,
     is_solder_trace,
 )
@@ -625,13 +631,16 @@ def _check_solder_trace_proximity(
     Assumes the board actually has copper at every hole (true of 'pad-per-hole',
     the v1 target board type -- see model.py BoardType).
 
-    The gap is computed from ``board.pitch - board.pad_diameter`` rather than a
-    hardcoded 0.6 mm, so the rule (and the number quoted in its message) stays
-    correct for any board's actual pitch/pad geometry, not just the 2.54 mm /
-    1.9 mm default this docstring's numbers describe.
+    THE GAP IS NOT ONE NUMBER PER BOARD. It is measured per pair, by
+    ``geometry.copper_gap_mm``, because three things move it: the board's pitch and
+    pad size (a round-pad board gives the familiar ~0.6 mm), the PAD SHAPE (an
+    oblong pad nearly touches its neighbour along its long axis while staying
+    comfortably clear across it, so the same trace is risky running one way and
+    safe running the other), and whether either hole has been widened into an
+    edge-connector finger. Quoting one board-wide figure would understate the risk
+    on exactly the boards where it is worst.
     """
     violations: list[DrcViolation] = []
-    gap_mm = max(0.0, doc.board.pitch - doc.board.pad_diameter)
 
     for conductor in doc.conductors:
         if not is_solder_trace(conductor):
@@ -656,6 +665,9 @@ def _check_solder_trace_proximity(
                     continue
                 seen_pairs.add(pair_key)
 
+                gap_mm = copper_gap_mm(doc, hole, neighbor)
+                axis = neighbour_axis(hole, neighbor)
+                direction = "along the row" if axis == "horizontal" else "down the column"
                 # Message names both holes explicitly: they become isolation/
                 # measurement steps in the build guide, not just a description.
                 violations.append(
@@ -665,15 +677,149 @@ def _check_solder_trace_proximity(
                         message=(
                             f"Solder trace {conductor.id} passes through {_safe_hole(hole)}, whose "
                             f"orthogonal neighbour {_safe_hole(neighbor)} belongs to a different net "
-                            f"(~{gap_mm:.2f} mm pad-edge gap at this board's pitch/pad size). Dragging "
-                            f"solder along the trace risks bridging the two nets — the most common way a "
-                            f"perfboard build fails. Verify clearance between {_safe_hole(hole)} and "
-                            f"{_safe_hole(neighbor)} before soldering."
+                            f"(~{gap_mm:.2f} mm of copper-to-copper gap {direction} on this board). "
+                            f"Dragging solder along the trace risks bridging the two nets — the most "
+                            f"common way a perfboard build fails. Verify clearance between "
+                            f"{_safe_hole(hole)} and {_safe_hole(neighbor)} before soldering."
                         ),
                         holes=(hole, neighbor),
                         conductor_ids=(conductor.id,),
                     )
                 )
+    return violations
+
+
+# ---------------------------------------------------------------------------
+# Rule 6b -- mounting holes: no copper, and no room under the screw head
+# ---------------------------------------------------------------------------
+
+
+def _check_mounting_hole_conflicts(
+    doc: PerfDocument, lookup: FootprintLookup
+) -> list[DrcViolation]:
+    """Pins and conductors that land where a mounting bore has removed the copper.
+
+    An error rather than a warning, and the distinction is not fussy: every other
+    rule in this file describes a board that will probably fail, while this one
+    describes a board that CANNOT work. There is no pad there to solder to. A
+    screw hole is also the one feature that silently takes out pads it was not
+    drilled on -- an M3 bore eats its four orthogonal neighbours as well -- so it
+    is exactly the kind of thing a person does not notice until the iron is hot.
+    """
+    violations: list[DrcViolation] = []
+    if not doc.mounting_holes:
+        return violations
+
+    consumed = consumed_holes(doc)
+    by_hole = {
+        hole_key(hole): mount
+        for mount in doc.mounting_holes
+        for hole in (mount.at,)
+    }
+
+    def blame(hole: HoleCoord) -> str:
+        """Which mounting hole took this pad out, named for the message."""
+        exact = by_hole.get(hole_key(hole))
+        if exact is not None:
+            return exact.id
+        nearest = min(
+            doc.mounting_holes,
+            key=lambda m: (m.at.col - hole.col) ** 2 + (m.at.row - hole.row) ** 2,
+        )
+        return nearest.id
+
+    for component in doc.components:
+        footprint = lookup(component.footprint_id)
+        if footprint is None:
+            continue
+        for pin, hole in all_pin_holes(component, footprint):
+            if hole_key(hole) not in consumed:
+                continue
+            violations.append(
+                DrcViolation(
+                    rule="mounting-hole-conflict",
+                    severity="error",
+                    message=(
+                        f"{component.ref} pin {pin.number} sits at {_safe_hole(hole)}, where "
+                        f"mounting hole {blame(hole)} has removed the pad. There is nothing there "
+                        f"to solder to — "
+                        f"move the part, or move the mounting hole."
+                    ),
+                    holes=(hole,),
+                    component_ids=(component.id,),
+                )
+            )
+
+    for conductor in doc.conductors:
+        # Every hole on the path, not just the ends: a solder trace is soldered down
+        # at each pad it crosses, and a missing pad part-way along breaks the run.
+        # A wire only touches its ends, but a bore under one of them is just as fatal.
+        contacts = (
+            conductor.path
+            if contacts_every_path_hole(conductor)
+            else conductor.path[:1] + conductor.path[-1:]
+        )
+        for hole in contacts:
+            if hole_key(hole) not in consumed:
+                continue
+            violations.append(
+                DrcViolation(
+                    rule="mounting-hole-conflict",
+                    severity="error",
+                    message=(
+                        f"Conductor {conductor.id} is soldered at {_safe_hole(hole)}, where "
+                        f"mounting hole {blame(hole)} has removed the pad."
+                    ),
+                    holes=(hole,),
+                    conductor_ids=(conductor.id,),
+                )
+            )
+    return violations
+
+
+def _check_mounting_hole_clearance(
+    doc: PerfDocument, lookup: FootprintLookup
+) -> list[DrcViolation]:
+    """Component bodies sitting under a screw head.
+
+    A warning, not an error: the board is buildable, the screw just cannot be
+    fitted afterwards without pressing on a part -- or the part has to come off to
+    get at the screw. Worth saying while the layout can still change, which is
+    before anybody has cut a standoff to length.
+    """
+    violations: list[DrcViolation] = []
+    if not doc.mounting_holes:
+        return violations
+
+    for component in doc.components:
+        footprint = lookup(component.footprint_id)
+        if footprint is None:
+            continue
+        box = _component_aabb(component, footprint, doc.board)
+        if box is None:
+            continue
+        for mount in doc.mounting_holes:
+            centre = hole_to_mm(mount.at, doc.board)
+            # Nearest point of the body box to the screw centre. Cheaper and no less
+            # honest than a polygon test, given the box is already an approximation
+            # (see _component_aabb).
+            near_x = min(max(centre.x, box.min_x), box.max_x)
+            near_y = min(max(centre.y, box.min_y), box.max_y)
+            if not mounting_head_covers(mount, Point2(near_x, near_y), doc.board):
+                continue
+            violations.append(
+                DrcViolation(
+                    rule="mounting-hole-clearance",
+                    severity="warning",
+                    message=(
+                        f"{component.ref} extends under the {mount.head_diameter} mm screw head of "
+                        f"mounting hole {mount.id} at {_safe_hole(mount.at)}. The screw cannot be "
+                        f"fitted without pressing on the part."
+                    ),
+                    holes=(mount.at, component.anchor),
+                    component_ids=(component.id,),
+                )
+            )
     return violations
 
 
@@ -1010,6 +1156,8 @@ def run_drc(
         *_check_conductor_geometry_crossings(doc, conductor_net_index),
         *_check_solder_trace_paths(doc),
         *_check_solder_trace_proximity(doc, node_index),
+        *_check_mounting_hole_conflicts(doc, lookup),
+        *_check_mounting_hole_clearance(doc, lookup),
         *_check_pad_lifting_risk(doc, options),
         *_check_solder_trace_feasibility(doc, options),
         *_check_current_capacity(doc, options),

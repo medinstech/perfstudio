@@ -47,7 +47,7 @@ SCHEMES: tuple[BoardScheme, ...] = (
     BoardScheme("red", "Red", "#8c2a26", "#2e0b0a", (0.50, 0.13, 0.12), "#f6e6e5"),
     BoardScheme("purple", "Purple", "#4a2a72", "#170d24", (0.26, 0.14, 0.42), "#ece4f6"),
     BoardScheme("white", "White", "#d8d6ce", "#a09c90", (0.84, 0.83, 0.79), "#3a3a36"),
-    BoardScheme("phenolic", "Brown (phenolic)", "#a8834e", "#33251a", (0.62, 0.48, 0.29), "#2c2115"),
+    BoardScheme("phenolic", "Orange (phenolic)", "#c07b32", "#3a2410", (0.75, 0.48, 0.20), "#2c2115"),
 )
 
 BY_KEY = {scheme.key: scheme for scheme in SCHEMES}

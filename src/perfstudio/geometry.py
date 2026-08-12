@@ -15,18 +15,28 @@ physical board comes back wrong.
 
 from __future__ import annotations
 
+import dataclasses
 import math
 import re
 from dataclasses import dataclass
+from typing import Literal, TypeAlias
 
 from .model import (
     Board,
+    BoardEdge,
+    BoardLabels,
+    BoardMaterial,
+    BoardSide,
     ComponentInstance,
+    EdgeConnector,
     Footprint,
     FootprintPin,
     HoleCoord,
     HoleRef,
     Mm,
+    MountingHole,
+    PadAxis,
+    PerfDocument,
     Point2,
     Rotation,
 )
@@ -89,6 +99,17 @@ def row_label(row: int) -> str:
     if not isinstance(row, int) or isinstance(row, bool) or row < 0:
         raise ValueError(f"Invalid hole row index: {row!r} (must be a non-negative integer).")
     return str(row + 1)
+
+
+def printed_row_label(row: int, labels: BoardLabels) -> str:
+    """The row half as the BOARD prints it, which may be zero-padded to a fixed width.
+
+    A board that prints "01".."22" is showing the same address the guide calls row 1 —
+    the padding is typography, not a different numbering. So this exists only for
+    rendering a legend; nothing that parses or compares an address may use it, and
+    :func:`hole_ref_to_coord` deliberately rejects the padded form.
+    """
+    return row_label(row).rjust(max(1, labels.row_digits), "0")
 
 
 def hole_ref_to_coord(ref: HoleRef) -> HoleCoord:
@@ -173,11 +194,18 @@ def board_size_mm(board: Board) -> tuple[Mm, Mm]:
     ``(cols - 1) * pitch`` while the board measures ``cols * pitch``. A 60-column board
     at 2.54 mm pitch is 152.4 mm wide, which is how perfboard is actually sold and cut.
 
+    ``board.border_x_mm`` / ``border_y_mm`` widen that, for boards cut with a printed
+    border round the grid. They are added here and nowhere else, which is what keeps a
+    bordered board's substrate, printout and 3D solid the same size as each other.
+
     Must not be recomputed anywhere else. The 1:1-scale printable sheet, the 3D
     substrate and the 2D renderer have to agree to the last tenth of a millimetre,
     because the user tapes the printout onto the physical board.
     """
-    return board.cols * board.pitch, board.rows * board.pitch
+    return (
+        board.cols * board.pitch + 2 * board.border_x_mm,
+        board.rows * board.pitch + 2 * board.border_y_mm,
+    )
 
 
 def hole_span_mm(board: Board) -> tuple[Mm, Mm]:
@@ -196,11 +224,483 @@ def hole_span_mm(board: Board) -> tuple[Mm, Mm]:
     return max(0, board.cols - 1) * board.pitch, max(0, board.rows - 1) * board.pitch
 
 
+def board_edge_margin_mm(board: Board, axis: PadAxis = "horizontal") -> Mm:
+    """How much substrate sits outside the outermost hole centres, on one axis.
+
+    Half a pitch plus whatever border the board was cut with. This is the strip a printed
+    legend has to fit inside, and the distance an edge-connector finger has to cross to
+    reach the edge, so both ask this rather than assuming half a pitch.
+
+    ``horizontal`` is the margin at the LEFT and RIGHT edges (the one a row number printed
+    down the side has to fit inside); ``vertical`` is the margin at the top and bottom.
+    They differ on a real board -- see the note on ``Board.border_x_mm``.
+    """
+    border = board.border_x_mm if axis == "horizontal" else board.border_y_mm
+    return board.pitch / 2 + border
+
+
 def board_outline_mm(board: Board) -> RectMm:
     """Board outline as a rect in the same mm space as :func:`hole_to_mm`."""
     width, height = board_size_mm(board)
-    half = board.pitch / 2
-    return RectMm(-half, -half, width, height)
+    return RectMm(
+        -board_edge_margin_mm(board, "horizontal"),
+        -board_edge_margin_mm(board, "vertical"),
+        width,
+        height,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Copper: how big a pad is, and how close the next one's copper comes
+# ---------------------------------------------------------------------------
+
+
+def pad_extent_mm(board: Board) -> tuple[Mm, Mm]:
+    """One pad's size as (across columns, across rows), in mm.
+
+    A round pad is its diameter both ways. An oblong pad is ``pad_length`` along
+    ``pad_axis`` and ``pad_diameter`` across it — so on a vertical-oblong board the pads
+    nearly touch down a column while staying comfortably apart along a row.
+
+    A missing ``pad_length`` on an oblong board falls back to the diameter (i.e. round)
+    rather than raising: this is called from paint paths and from DRC, and a hand-edited
+    file that omits the length must still draw and still be checkable. ``board.set``
+    refuses that combination, so it cannot arrive from the editor.
+    """
+    if board.pad_shape != "oblong" or board.pad_length is None:
+        return board.pad_diameter, board.pad_diameter
+    long_axis = max(board.pad_length, board.pad_diameter)
+    if board.pad_axis == "horizontal":
+        return long_axis, board.pad_diameter
+    return board.pad_diameter, long_axis
+
+
+def pad_edge_gap_mm(board: Board, axis: PadAxis) -> Mm:
+    """Copper-to-copper gap between two neighbouring PADS, along one axis.
+
+    "horizontal" is the gap to the neighbour one column away, "vertical" one row away.
+    On a round-pad board the two are equal and this is the familiar ~0.6 mm figure that
+    R5' is about; on an oblong-pad board they differ, and which one applies depends on
+    which way the trace is running. See :func:`copper_gap_mm` for the question DRC
+    actually asks, which also accounts for edge-connector fingers.
+    """
+    extent_x, extent_y = pad_extent_mm(board)
+    return max(0.0, board.pitch - (extent_x if axis == "horizontal" else extent_y))
+
+
+def neighbour_axis(a: HoleCoord, b: HoleCoord) -> PadAxis:
+    """Which axis separates two holes. Rows apart counts as vertical."""
+    return "vertical" if a.row != b.row else "horizontal"
+
+
+def pad_rect_mm(board: Board, hole: HoleCoord) -> RectMm:
+    """The bounding rect of one ordinary pad's copper.
+
+    An oblong pad is a stadium rather than a rectangle, but its bounding box touches the
+    true outline exactly on the centre lines — which is where an orthogonal neighbour
+    sits — so measuring gaps off the box is exact for the only question anyone asks of
+    it, and much cheaper than the real thing.
+    """
+    centre = hole_to_mm(hole, board)
+    extent_x, extent_y = pad_extent_mm(board)
+    return RectMm(centre.x - extent_x / 2, centre.y - extent_y / 2, extent_x, extent_y)
+
+
+def copper_rect_mm(doc: PerfDocument, hole: HoleCoord) -> RectMm:
+    """The copper at one hole: its pad, or the connector finger that replaced it.
+
+    A finger is NOT centred on its hole — it reaches out to the board edge — which is
+    why gaps are measured between rects rather than by subtracting extents from the
+    pitch.
+    """
+    connector = edge_connector_at(doc, hole)
+    if connector is not None:
+        return edge_finger_rect(connector, hole, doc.board)
+    return pad_rect_mm(doc.board, hole)
+
+
+def copper_gap_mm(doc: PerfDocument, a: HoleCoord, b: HoleCoord) -> Mm:
+    """Edge-to-edge gap between the copper at two orthogonally adjacent holes.
+
+    This is the number R5' is about — how far a blob of solder has to travel to bridge
+    two nets — and it is not one number per board. It varies with the pad shape, with
+    which way the neighbour lies, and with whether either hole has been widened into a
+    connector finger. Clamped at zero: copper that already overlaps has no gap, and a
+    negative one would read as a comfortable clearance in a message.
+    """
+    rect_a = copper_rect_mm(doc, a)
+    rect_b = copper_rect_mm(doc, b)
+    if neighbour_axis(a, b) == "horizontal":
+        gap = max(rect_a.x, rect_b.x) - min(rect_a.x + rect_a.width, rect_b.x + rect_b.width)
+    else:
+        gap = max(rect_a.y, rect_b.y) - min(rect_a.y + rect_a.height, rect_b.y + rect_b.height)
+    return max(0.0, gap)
+
+
+# ---------------------------------------------------------------------------
+# Mounting holes
+# ---------------------------------------------------------------------------
+
+
+def holes_without_grid_pad(doc: PerfDocument, side: BoardSide) -> frozenset[str]:
+    """Holes where the ordinary grid pad must NOT be drawn on this face.
+
+    Two quite different reasons, answered together because a renderer only wants one
+    question answered: a mounting bore has removed the copper, or an edge-connector
+    finger IS the pad here and drawing a round one underneath makes the finger look like
+    something laid on top of the board rather than part of it.
+
+    Face-sensitive for the second reason only. A connector on the far face leaves this
+    one with its ordinary round pad, which is exactly what the board has.
+    """
+    without = set(consumed_holes(doc))
+    for connector in doc.edge_connectors:
+        if connector.face not in ("both", side):
+            continue
+        for hole in edge_connector_holes(connector, doc.board):
+            without.add(hole_key(hole))
+    return frozenset(without)
+
+
+def mounting_hole_centre_mm(hole_mount: MountingHole, board: Board) -> Point2:
+    """Where the bore actually is, in board-space mm.
+
+    Its hole address plus its offset. Everything that asks where a mounting hole is goes
+    through here: the offset is what lets a corner hole sit in the border, and a caller
+    that used ``hole_to_mm(mount.at)`` directly would put it back on the grid and report
+    pads destroyed that are perfectly intact.
+    """
+    centre = hole_to_mm(hole_mount.at, board)
+    return Point2(centre.x + hole_mount.offset_x_mm, centre.y + hole_mount.offset_y_mm)
+
+
+def mounting_bore_consumes(hole_mount: MountingHole, hole: HoleCoord, board: Board) -> bool:
+    """Whether a mounting bore destroys the copper at ``hole``.
+
+    A screw hole is far wider than a pad, so it takes out more than the hole it is drilled
+    on. An M3 clearance bore (3.2 mm) centred on a 2.54 mm grid reaches 1.6 mm out, and
+    the neighbouring pad's near edge is only 2.54 - 0.95 = 1.59 mm away — so the four
+    orthogonal neighbours lose their copper too, while the diagonals (3.59 mm away)
+    survive. That is a genuine property of the board and not a safety margin, which is
+    why the test is a plain overlap of bore against pad rather than a tunable clearance.
+    """
+    centre = mounting_hole_centre_mm(hole_mount, board)
+    pad = hole_to_mm(hole, board)
+    extent_x, extent_y = pad_extent_mm(board)
+    # Against the pad's inscribed radius: the smaller half-extent, so an oblong pad is
+    # not reported as consumed on the strength of a corner the bore never reaches.
+    reach = hole_mount.diameter / 2 + min(extent_x, extent_y) / 2
+    return math.hypot(pad.x - centre.x, pad.y - centre.y) < reach
+
+
+def consumed_holes(doc: PerfDocument) -> frozenset[str]:
+    """Every hole whose pad a mounting bore has destroyed, as :func:`hole_key` strings.
+
+    Computed once and passed around rather than re-derived per hole: the renderer asks
+    this of every hole on the board on every paint.
+    """
+    if not doc.mounting_holes:
+        return frozenset()
+    consumed: set[str] = set()
+    for mount in doc.mounting_holes:
+        # Only the immediate neighbourhood can be reached, so this stays O(mounting
+        # holes) rather than O(holes) -- 3 pitches is comfortably past any plausible bore.
+        span = int((mount.diameter + abs(mount.offset_x_mm) + abs(mount.offset_y_mm)) / doc.board.pitch) + 2
+        for d_col in range(-span, span + 1):
+            for d_row in range(-span, span + 1):
+                hole = HoleCoord(mount.at.col + d_col, mount.at.row + d_row)
+                if not is_inside_board(hole, doc.board):
+                    continue
+                if mounting_bore_consumes(mount, hole, doc.board):
+                    consumed.add(hole_key(hole))
+    return frozenset(consumed)
+
+
+def mounting_head_covers(hole_mount: MountingHole, point: Point2, board: Board) -> bool:
+    """Whether a screw head or washer would sit over this point on the component side."""
+    centre = mounting_hole_centre_mm(hole_mount, board)
+    return math.hypot(point.x - centre.x, point.y - centre.y) < hole_mount.head_diameter / 2
+
+
+# ---------------------------------------------------------------------------
+# Edge connectors
+# ---------------------------------------------------------------------------
+
+
+def edge_connector_holes(connector: EdgeConnector, board: Board) -> list[HoleCoord]:
+    """The holes a connector's fingers sit on, in run order, clipped to the board."""
+    holes: list[HoleCoord] = []
+    for step in range(max(0, connector.count)):
+        index = connector.start + step
+        if connector.edge == "top":
+            hole = HoleCoord(index, 0)
+        elif connector.edge == "bottom":
+            hole = HoleCoord(index, board.rows - 1)
+        elif connector.edge == "left":
+            hole = HoleCoord(0, index)
+        else:
+            hole = HoleCoord(board.cols - 1, index)
+        if is_inside_board(hole, board):
+            holes.append(hole)
+    return holes
+
+
+def edge_connector_at(doc: PerfDocument, hole: HoleCoord) -> EdgeConnector | None:
+    """The connector whose finger covers this hole, if any."""
+    for connector in doc.edge_connectors:
+        if any(h == hole for h in edge_connector_holes(connector, doc.board)):
+            return connector
+    return None
+
+
+def legend_strip_mm(doc: PerfDocument, axis: PadAxis) -> Mm:
+    """Bare substrate a printed legend has on one axis, after the copper takes its share.
+
+    Usually the margin less half a pad. But on an edge carrying connector fingers the
+    copper reaches much further out, and what is left is only whatever inset those
+    fingers were given — which is exactly the strip the row numbers are printed in on a
+    real board. Returning the margin there instead would print the numbers underneath the
+    fingers.
+    """
+    board = doc.board
+    margin = board_edge_margin_mm(board, axis)
+    extent_x, extent_y = pad_extent_mm(board)
+    free = margin - (extent_x if axis == "horizontal" else extent_y) / 2
+    for connector in doc.edge_connectors:
+        if edge_axis(connector.edge) != axis:
+            continue
+        free = min(free, max(0.0, connector.inset_mm))
+    return max(0.0, free)
+
+
+def edge_axis(edge: BoardEdge) -> PadAxis:
+    """Which margin an edge is measured across: left/right cross the horizontal one."""
+    return "horizontal" if edge in ("left", "right") else "vertical"
+
+
+def default_finger_length_mm(board: Board, edge: BoardEdge = "bottom") -> Mm:
+    """How far a finger should reach in from the edge when it is not told.
+
+    Enough to swallow its own hole and half a pitch beyond — which puts its inner end
+    clear of the next hole's pad, so a finger still covers exactly one hole. On a
+    flush-cut board this is one pitch; on a bordered one it is a pitch plus that edge's
+    border, and using the flush figure there would leave the finger short of its own hole.
+    """
+    return board_edge_margin_mm(board, edge_axis(edge)) + board.pitch / 2
+
+
+def edge_finger_rect(connector: EdgeConnector, hole: HoleCoord, board: Board) -> RectMm:
+    """One finger's copper: from the board edge inward, centred on its hole across the run.
+
+    Measured from the EDGE rather than from the hole centre, because that is what the
+    finger is for — reaching the edge is the whole point — and because the outermost hole
+    sits only half a pitch in, so an inward-measured length would have to be negative to
+    describe anything useful.
+    """
+    outline = board_outline_mm(board)
+    centre = hole_to_mm(hole, board)
+    inset = max(0.0, connector.inset_mm)
+    length = max(
+        0.0,
+        (
+            connector.finger_length
+            if connector.finger_length is not None
+            else default_finger_length_mm(board, connector.edge)
+        )
+        - inset,
+    )
+    half_width = max(0.0, connector.finger_width) / 2
+    if connector.edge == "top":
+        return RectMm(centre.x - half_width, outline.y + inset, 2 * half_width, length)
+    if connector.edge == "bottom":
+        bottom = outline.y + outline.height - inset
+        return RectMm(centre.x - half_width, bottom - length, 2 * half_width, length)
+    if connector.edge == "left":
+        return RectMm(outline.x + inset, centre.y - half_width, length, 2 * half_width)
+    right = outline.x + outline.width - inset
+    return RectMm(right - length, centre.y - half_width, length, 2 * half_width)
+
+
+# ---------------------------------------------------------------------------
+# The boards you can actually buy
+# ---------------------------------------------------------------------------
+
+
+#: Which family of board a preset is. Not decoration: it decides copper on one face or
+#: two, whether the board carries a printed legend, and whether its outer rows are the
+#: oblong finger pads. Those three travel together on the shelf, and setting them
+#: separately is three chances to describe a board nobody sells.
+BoardFamily: TypeAlias = Literal["double-sided-fr4", "single-sided-phenolic"]
+
+
+@dataclass(frozen=True, slots=True)
+class BoardPreset:
+    """One perfboard as it is sold: a size, and which of the two families it belongs to.
+
+    Perfboard is not bought by hole count -- it is bought as "a 5 by 7", and the listing
+    quotes the centimetres. So the presets are keyed on that, and the hole count is what
+    falls out of it: the grid is what fits once the printed border is taken off, which is
+    why a 4 x 6 cm board is 20 x 14 and not the 15 x 23 that dividing by the pitch
+    suggests.
+
+    The border is then DERIVED rather than quoted, so the outline is exactly the
+    advertised size to the tenth of a millimetre. That matters more here than anywhere
+    else: the 1:1 PDF export gets taped onto the physical board.
+    """
+
+    #: What the listing calls it, e.g. "5 x 7 cm".
+    name: str
+    width_mm: Mm
+    height_mm: Mm
+    cols: int
+    rows: int
+    family: BoardFamily = "double-sided-fr4"
+
+    @property
+    def single_sided(self) -> bool:
+        return self.family == "single-sided-phenolic"
+
+    @property
+    def material(self) -> BoardMaterial:
+        return "FR2" if self.single_sided else "FR4"
+
+    @property
+    def key(self) -> str:
+        return f"{self.width_mm:g}x{self.height_mm:g}-{self.family}"
+
+
+#: The sizes every prototyping supplier stocks, in both families.
+#:
+#: THE GREEN DOUBLE-SIDED BOARD carries a printed A..Z / 01..NN legend, plated holes on
+#: both faces, oblong finger pads down two of its edges and a screw hole in each corner.
+#: THE ORANGE-BROWN PHENOLIC BOARD carries none of that: copper on the solder side only,
+#: round pads everywhere, no legend, no fingers. They are different products, and a
+#: preset that produced a bare grid for both would be describing neither.
+STANDARD_PRESETS: tuple[BoardPreset, ...] = (
+    BoardPreset("2 x 8 cm", 20.0, 80.0, 5, 30),
+    BoardPreset("3 x 7 cm", 30.0, 70.0, 10, 24),
+    BoardPreset("4 x 6 cm", 40.0, 60.0, 14, 20),
+    BoardPreset("5 x 7 cm", 50.0, 70.0, 18, 24),
+    BoardPreset("6 x 8 cm", 60.0, 80.0, 22, 30),
+    BoardPreset("7 x 9 cm", 70.0, 90.0, 27, 35),
+    BoardPreset("9 x 15 cm", 90.0, 150.0, 34, 58),
+    BoardPreset("12 x 18 cm", 120.0, 180.0, 46, 70),
+    BoardPreset("15 x 20 cm", 150.0, 200.0, 58, 78),
+    BoardPreset("20 x 30 cm", 200.0, 300.0, 78, 118),
+    BoardPreset("5 x 7 cm", 50.0, 70.0, 18, 26, family="single-sided-phenolic"),
+    BoardPreset("7 x 9 cm", 70.0, 90.0, 27, 35, family="single-sided-phenolic"),
+    BoardPreset("9 x 15 cm", 90.0, 150.0, 34, 58, family="single-sided-phenolic"),
+    BoardPreset("15 x 20 cm", 150.0, 200.0, 58, 78, family="single-sided-phenolic"),
+)
+
+#: Bare substrate left outside a finger, for the legend printed there.
+FINGER_INSET_MM: Mm = 1.5
+#: An M2 clearance hole, which is what fits in these boards' corners.
+CORNER_HOLE_MM: Mm = 2.2
+
+
+def board_from_preset(preset: BoardPreset, base: Board) -> Board:
+    """``base`` resized to a preset, with the border solved so the outline is exact.
+
+    The border is whatever is left of the advertised size once the grid is taken out,
+    halved. A negative result would mean the grid does not fit the board at all, so it is
+    clamped -- a preset with a bad hole count then draws a flush-cut board rather than a
+    board smaller than its own holes.
+    """
+    border_x = max(0.0, (preset.width_mm - preset.cols * base.pitch) / 2)
+    border_y = max(0.0, (preset.height_mm - preset.rows * base.pitch) / 2)
+    return dataclasses.replace(
+        base,
+        cols=preset.cols,
+        rows=preset.rows,
+        material=preset.material,
+        single_sided=preset.single_sided,
+        border_x_mm=round(border_x, 4),
+        border_y_mm=round(border_y, 4),
+        labels=None if preset.single_sided else BoardLabels(row_digits=2),
+        # The oblong pads on these boards are the EDGE STRIP, never the whole grid --
+        # every interior pad is round. They come from `preset_edge_connectors`, not from
+        # a board-wide pad shape.
+        pad_shape="round",
+        pad_length=None,
+    )
+
+
+def preset_strip_edges(board: Board) -> tuple[BoardEdge, ...]:
+    """The two edges a double-sided board's oblong finger pads run along.
+
+    The pair with the WIDER border, which is where the room is and, on every board of
+    this kind, where the fingers actually are. Derived rather than named: the answer
+    changes with the aspect ratio, and a preset that named the edges would put the strip
+    down the cramped side of a portrait board.
+    """
+    if board.border_y_mm > board.border_x_mm:
+        return ("top", "bottom")
+    return ("left", "right")
+
+
+def preset_edge_connectors(preset: BoardPreset, board: Board) -> tuple[EdgeConnector, ...]:
+    """The finger strips a preset's board is sold with. None on a phenolic board."""
+    if preset.single_sided:
+        return ()
+    return tuple(
+        EdgeConnector(
+            id=f"ec-{edge}",
+            edge=edge,
+            start=0,
+            count=board.rows if edge in ("left", "right") else board.cols,
+            finger_width=round(min(2.0, board.pitch * 0.8), 3),
+            inset_mm=FINGER_INSET_MM,
+        )
+        for edge in preset_strip_edges(board)
+    )
+
+
+def corner_hole_offset_mm(board: Board, diameter: Mm) -> Mm:
+    """How far diagonally out of the grid a corner mounting hole should sit.
+
+    Far enough that the bore misses the corner pad, near enough that it stays on the
+    substrate. Zero when those two cannot both hold, which is the flush-cut case: the
+    hole then has to go on the grid and eat the pads around it, and DRC says so.
+    """
+    extent_x, extent_y = pad_extent_mm(board)
+    clears_pad = (max(extent_x, extent_y) / 2 + diameter / 2) / math.sqrt(2)
+    stays_on_board = (
+        min(board_edge_margin_mm(board, "horizontal"), board_edge_margin_mm(board, "vertical"))
+        - diameter / 2
+        - 0.2
+    )
+    return round(stays_on_board, 3) if stays_on_board >= clears_pad else 0.0
+
+
+def preset_mounting_holes(preset: BoardPreset, board: Board) -> tuple[MountingHole, ...]:
+    """A screw hole in each corner, in the BORDER, where these boards have them.
+
+    Returns nothing when the border cannot take the bore -- on a flush-cut board there is
+    nowhere for it to go, and a hole hanging off the edge is worse than no hole.
+    """
+    if preset.single_sided:
+        return ()
+    offset = corner_hole_offset_mm(board, CORNER_HOLE_MM)
+    if offset <= 0:
+        return ()
+    corners = (
+        (HoleCoord(0, 0), -1, -1),
+        (HoleCoord(board.cols - 1, 0), 1, -1),
+        (HoleCoord(0, board.rows - 1), -1, 1),
+        (HoleCoord(board.cols - 1, board.rows - 1), 1, 1),
+    )
+    return tuple(
+        MountingHole(
+            id=f"mh-{index + 1}",
+            at=at,
+            offset_x_mm=sign_x * offset,
+            offset_y_mm=sign_y * offset,
+            diameter=CORNER_HOLE_MM,
+            head_diameter=CORNER_HOLE_MM * 2,
+        )
+        for index, (at, sign_x, sign_y) in enumerate(corners)
+    )
 
 
 # ---------------------------------------------------------------------------

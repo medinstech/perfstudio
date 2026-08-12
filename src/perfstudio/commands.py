@@ -38,11 +38,20 @@ from .command import (
     NextId,
     create_id_generator,
 )
-from .geometry import format_hole, is_inside_board, validate_orthogonal_chain
+from .geometry import (
+    board_edge_margin_mm,
+    default_finger_length_mm,
+    edge_connector_holes,
+    format_hole,
+    is_inside_board,
+    validate_orthogonal_chain,
+)
 from .model import (
     DOCUMENT_FORMAT_VERSION,
     VALID_ROTATIONS,
     Board,
+    BoardEdge,
+    BoardFace,
     BoardSide,
     ComponentId,
     ComponentInstance,
@@ -50,8 +59,11 @@ from .model import (
     ConductorId,
     ConductorKind,
     DocumentMeta,
+    EdgeConnector,
     HoleCoord,
     LeadBendConductor,
+    Mm,
+    MountingHole,
     Net,
     PerfDocument,
     Rotation,
@@ -394,6 +406,23 @@ class SetBoardPayload:
 
 
 @dataclass(frozen=True, slots=True)
+class ApplyBoardPresetPayload:
+    """A whole board product: the stock, and the features it is sold with.
+
+    Separate from ``board.set`` because a preset is not just a size. Choosing "5 x 7 cm,
+    double-sided" replaces the grid AND the oblong finger strips down two of its edges AND
+    the screw hole in each corner, because that is what arrives in the envelope. Doing it
+    as four commands would put four entries in the history for one decision, and leave the
+    board describable as a product nobody sells halfway through the undo stack.
+    """
+
+    board: Board
+    edge_connectors: tuple[EdgeConnector, ...] = ()
+    mounting_holes: tuple[MountingHole, ...] = ()
+    label: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class ImportNetlistPayload:
     nets: tuple[Net, ...]
 
@@ -406,6 +435,58 @@ class AddCutPayload:
 
 @dataclass(frozen=True, slots=True)
 class DeleteCutPayload:
+    id: str
+
+
+@dataclass(frozen=True, slots=True)
+class AddMountingHolePayload:
+    at: HoleCoord
+    offset_x_mm: Mm = 0.0
+    offset_y_mm: Mm = 0.0
+    diameter: Mm = 3.2
+    head_diameter: Mm = 6.0
+    id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class AddMountingHolesPayload:
+    """Several mounting holes as ONE undo step.
+
+    The counterpart of ``conductor.addMany``, and here for the same reason: "put a hole in
+    each corner" is one decision, and a single Ctrl+Z that leaves three of the four
+    drilled is a state nobody asked for.
+    """
+
+    ats: tuple[HoleCoord, ...]
+    #: Millimetre (dx, dy) per hole, so a batch of corner holes can each be pushed out
+    #: into its OWN corner of the border. One shared offset would send all four the same
+    #: way. None means every hole sits on its grid position.
+    offsets: tuple[tuple[Mm, Mm], ...] | None = None
+    diameter: Mm = 3.2
+    head_diameter: Mm = 6.0
+    ids: tuple[str, ...] | None = None
+    label: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class DeleteMountingHolePayload:
+    id: str
+
+
+@dataclass(frozen=True, slots=True)
+class AddEdgeConnectorPayload:
+    edge: BoardEdge
+    start: int
+    count: int
+    finger_width: Mm = 2.0
+    #: None asks for the length the board implies -- see ``geometry.default_finger_length_mm``.
+    finger_length: Mm | None = None
+    face: BoardFace = "bottom"
+    id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class DeleteEdgeConnectorPayload:
     id: str
 
 
@@ -829,6 +910,18 @@ class _SetBoard:
             )
         if b.drill_diameter >= b.pad_diameter:
             raise CommandError("invalid-board", "Drill diameter must be smaller than the pad.")
+        if b.pad_shape == "oblong" and (b.pad_length is None or b.pad_length <= b.pad_diameter):
+            raise CommandError(
+                "invalid-board",
+                f"An oblong pad needs a pad length longer than its {b.pad_diameter} mm width; "
+                f"got {b.pad_length}. A pad that is as long as it is wide is a round pad.",
+            )
+        if b.border_x_mm < 0 or b.border_y_mm < 0:
+            raise CommandError("invalid-board", "A board border cannot be negative.")
+        if b.labels is not None and b.labels.row_digits < 1:
+            raise CommandError(
+                "invalid-board", "A printed row label cannot be narrower than one digit."
+            )
 
         # Shrinking the board could strand parts outside it. Refuse rather than
         # silently dropping the user's work, and name the first offender so the
@@ -850,11 +943,80 @@ class _SetBoard:
                     f"Conductor {cond.id} passes through {format_hole(stranded)}, "
                     f"outside a {b.cols}x{b.rows} board.",
                 )
+        for mount in doc.mounting_holes:
+            if not is_inside_board(mount.at, b):
+                raise CommandError(
+                    "would-strand-mounting-hole",
+                    f"Mounting hole {mount.id} at {format_hole(mount.at)} would fall outside a "
+                    f"{b.cols}x{b.rows} board.",
+                )
+        for connector in doc.edge_connectors:
+            # Checked against the NEW board, so a run that would hang off the shortened
+            # edge -- or that is no longer against an edge at all -- is caught here rather
+            # than silently drawing half a connector.
+            last = connector.start + max(0, connector.count) - 1
+            limit = b.cols if connector.edge in ("top", "bottom") else b.rows
+            if last >= limit:
+                raise CommandError(
+                    "would-strand-edge-connector",
+                    f"Edge connector {connector.id} runs to index {last} along the "
+                    f"{connector.edge} edge, past the {limit} available on a {b.cols}x{b.rows} "
+                    f"board.",
+                )
+            if connector.finger_width >= b.pitch:
+                raise CommandError(
+                    "would-merge-edge-connector",
+                    f"Edge connector {connector.id} has {connector.finger_width} mm fingers, "
+                    f"which at a {b.pitch} mm pitch would touch each other.",
+                )
 
         return dataclasses.replace(doc, board=b)
 
     def describe(self, p: SetBoardPayload, doc: PerfDocument) -> str:
         return f"Set board to {p.board.cols}x{p.board.rows} {p.board.material}"
+
+
+class _ApplyBoardPreset:
+    """Replace the board and the features that belong to it, all or nothing.
+
+    Reuses ``board.set``'s own validation for the board itself -- the stranding checks
+    matter more here than anywhere, since a preset can shrink the grid by a lot -- and
+    then swaps the mechanical features wholesale rather than merging. Merging is the wrong
+    idea: the fingers and corner holes of the board being replaced belong to that board.
+    A part the user placed is NOT touched, which is why the stranding checks still run.
+    """
+
+    type = "board.applyPreset"
+
+    def apply(
+        self, doc: PerfDocument, p: ApplyBoardPresetPayload, ctx: CommandContext
+    ) -> PerfDocument:
+        # Validated against the new board with the OLD features cleared, so a run of
+        # fingers along the previous board's longer edge cannot fail a resize it has no
+        # part in.
+        stripped = dataclasses.replace(doc, edge_connectors=(), mounting_holes=())
+        resized = _SetBoard().apply(stripped, SetBoardPayload(board=p.board), ctx)
+
+        seen: set[str] = set()
+        for connector in p.edge_connectors:
+            if connector.id in seen:
+                raise CommandError("duplicate-id", f'Duplicate edge connector id "{connector.id}".')
+            seen.add(connector.id)
+        seen.clear()
+        for mount in p.mounting_holes:
+            if mount.id in seen:
+                raise CommandError("duplicate-id", f'Duplicate mounting hole id "{mount.id}".')
+            seen.add(mount.id)
+            assert_hole_on_board(mount.at, p.board, "Mounting hole")
+
+        return dataclasses.replace(
+            resized, edge_connectors=tuple(p.edge_connectors), mounting_holes=tuple(p.mounting_holes)
+        )
+
+    def describe(self, p: ApplyBoardPresetPayload, doc: PerfDocument) -> str:
+        if p.label:
+            return p.label
+        return f"Use a {p.board.cols}x{p.board.rows} {p.board.material} board"
 
 
 class _ImportNetlist:
@@ -906,6 +1068,233 @@ class _DeleteCut:
         return f"Remove cut {p.id}"
 
 
+class _AddMountingHole:
+    """Drill a screw hole through the board.
+
+    Notice what is NOT checked here. A mounting bore destroys the copper on its own pad
+    and on its orthogonal neighbours, so drilling one under a placed component leaves
+    pins sitting on pads that no longer exist -- and this command allows it. That is the
+    division this module's header sets out: the result is still a perfectly well-formed
+    document describing a board somebody has made a mistake on, which is DRC's subject
+    (``mounting-hole-conflict``), not a command's. Refusing it here would also make the
+    obvious order of work -- place the holes, then move the parts off them -- impossible.
+    """
+
+    type = "mounting-hole.add"
+
+    def apply(
+        self, doc: PerfDocument, p: AddMountingHolePayload, ctx: CommandContext
+    ) -> PerfDocument:
+        assert_hole_on_board(p.at, doc.board, "Mounting hole")
+        if not (p.diameter > 0):
+            raise CommandError(
+                "invalid-mounting-hole", "A mounting hole needs a positive diameter."
+            )
+        if p.head_diameter < p.diameter:
+            raise CommandError(
+                "invalid-mounting-hole",
+                f"A screw head ({p.head_diameter} mm) cannot be smaller than the hole it goes "
+                f"through ({p.diameter} mm).",
+            )
+        id_ = p.id if p.id is not None else ctx.next_id("mh")
+        if any(m.id == id_ for m in doc.mounting_holes):
+            raise CommandError("duplicate-id", f'A mounting hole with id "{id_}" already exists.')
+        if any(m.at == p.at for m in doc.mounting_holes):
+            raise CommandError(
+                "duplicate-mounting-hole",
+                f"There is already a mounting hole at {format_hole(p.at)}.",
+            )
+        hole = MountingHole(
+            id=id_,
+            at=p.at,
+            offset_x_mm=p.offset_x_mm,
+            offset_y_mm=p.offset_y_mm,
+            diameter=p.diameter,
+            head_diameter=p.head_diameter,
+        )
+        return dataclasses.replace(doc, mounting_holes=doc.mounting_holes + (hole,))
+
+    def describe(self, p: AddMountingHolePayload, doc: PerfDocument) -> str:
+        return f"Drill {p.diameter} mm mounting hole at {format_hole(p.at)}"
+
+
+class _AddMountingHoles:
+    type = "mounting-hole.addMany"
+
+    def apply(
+        self, doc: PerfDocument, p: AddMountingHolesPayload, ctx: CommandContext
+    ) -> PerfDocument:
+        if not p.ats:
+            raise CommandError("nothing-to-add", "No mounting holes were given.")
+        if p.ids is not None and len(p.ids) != len(p.ats):
+            raise CommandError(
+                "id-count-mismatch",
+                f"{len(p.ids)} id(s) were supplied for {len(p.ats)} mounting hole(s).",
+            )
+        if p.offsets is not None and len(p.offsets) != len(p.ats):
+            raise CommandError(
+                "offset-count-mismatch",
+                f"{len(p.offsets)} offset(s) were supplied for {len(p.ats)} mounting hole(s).",
+            )
+        if not (p.diameter > 0):
+            raise CommandError(
+                "invalid-mounting-hole", "A mounting hole needs a positive diameter."
+            )
+        if p.head_diameter < p.diameter:
+            raise CommandError(
+                "invalid-mounting-hole",
+                f"A screw head ({p.head_diameter} mm) cannot be smaller than the hole it goes "
+                f"through ({p.diameter} mm).",
+            )
+
+        # All-or-nothing: validated in full before anything is added, so a rejected batch
+        # leaves the document exactly as it was rather than half-drilled.
+        taken_ids = {m.id for m in doc.mounting_holes}
+        taken_holes = {(m.at.col, m.at.row) for m in doc.mounting_holes}
+        added: list[MountingHole] = []
+        for index, at in enumerate(p.ats):
+            assert_hole_on_board(at, doc.board, "Mounting hole")
+            if (at.col, at.row) in taken_holes:
+                raise CommandError(
+                    "duplicate-mounting-hole",
+                    f"There is already a mounting hole at {format_hole(at)}.",
+                )
+            taken_holes.add((at.col, at.row))
+            id_ = p.ids[index] if p.ids is not None else ctx.next_id("mh")
+            if id_ in taken_ids:
+                raise CommandError(
+                    "duplicate-id", f'A mounting hole with id "{id_}" already exists.'
+                )
+            taken_ids.add(id_)
+            offset = p.offsets[index] if p.offsets is not None else (0.0, 0.0)
+            added.append(
+                MountingHole(
+                    id=id_,
+                    at=at,
+                    offset_x_mm=offset[0],
+                    offset_y_mm=offset[1],
+                    diameter=p.diameter,
+                    head_diameter=p.head_diameter,
+                )
+            )
+        return dataclasses.replace(doc, mounting_holes=doc.mounting_holes + tuple(added))
+
+    def describe(self, p: AddMountingHolesPayload, doc: PerfDocument) -> str:
+        if p.label:
+            return p.label
+        return f"Drill {len(p.ats)} mounting holes"
+
+
+class _DeleteMountingHole:
+    type = "mounting-hole.delete"
+
+    def apply(
+        self, doc: PerfDocument, p: DeleteMountingHolePayload, ctx: CommandContext
+    ) -> PerfDocument:
+        if not any(m.id == p.id for m in doc.mounting_holes):
+            raise CommandError("mounting-hole-not-found", f'No mounting hole with id "{p.id}".')
+        return dataclasses.replace(
+            doc, mounting_holes=tuple(m for m in doc.mounting_holes if m.id != p.id)
+        )
+
+    def describe(self, p: DeleteMountingHolePayload, doc: PerfDocument) -> str:
+        return f"Remove mounting hole {p.id}"
+
+
+class _AddEdgeConnector:
+    type = "edge-connector.add"
+
+    def apply(
+        self, doc: PerfDocument, p: AddEdgeConnectorPayload, ctx: CommandContext
+    ) -> PerfDocument:
+        board = doc.board
+        if not _is_plain_int(p.start) or not _is_plain_int(p.count) or p.start < 0 or p.count < 1:
+            raise CommandError(
+                "invalid-edge-connector",
+                "An edge connector needs a non-negative start and at least one finger.",
+            )
+        limit = board.cols if p.edge in ("top", "bottom") else board.rows
+        if p.start + p.count > limit:
+            raise CommandError(
+                "invalid-edge-connector",
+                f"A {p.count}-finger run starting at index {p.start} runs past the {limit} "
+                f"positions along the {p.edge} edge.",
+            )
+        # Both of these are integrity, not taste. A finger as wide as the pitch is not a
+        # finger, it is one piece of copper across two nets; a finger longer than the
+        # pitch reaches the next hole in and joins two rows. The model has no way to
+        # express either, so it must not be able to hold one.
+        if not (0 < p.finger_width < board.pitch):
+            raise CommandError(
+                "invalid-edge-connector",
+                f"Finger width must be positive and under the {board.pitch} mm pitch, else "
+                f"neighbouring fingers touch; got {p.finger_width} mm.",
+            )
+        # Measured from the board's edge, so both bounds come from where the first hole
+        # actually sits: a finger shorter than the margin never reaches its own hole, and
+        # one longer than half a pitch past it starts eating the next row's pad. On a
+        # flush-cut board those work out to "more than half a pitch, at most a pitch".
+        margin = board_edge_margin_mm(board)
+        longest = default_finger_length_mm(board)
+        length = p.finger_length if p.finger_length is not None else longest
+        if not (margin < length <= longest):
+            raise CommandError(
+                "invalid-edge-connector",
+                f"Finger length is measured in from the board edge and must be over "
+                f"{margin:g} mm (to reach its own hole) and at most {longest:g} mm (before it "
+                f"reaches the next hole in); got {length:g} mm.",
+            )
+
+        id_ = p.id if p.id is not None else ctx.next_id("ec")
+        if any(e.id == id_ for e in doc.edge_connectors):
+            raise CommandError("duplicate-id", f'An edge connector with id "{id_}" already exists.')
+
+        connector = EdgeConnector(
+            id=id_,
+            edge=p.edge,
+            start=p.start,
+            count=p.count,
+            finger_width=p.finger_width,
+            finger_length=p.finger_length,
+            face=p.face,
+        )
+        # Two fingers on one hole is one pad claimed twice, and everything downstream --
+        # the renderer, the gap maths -- would silently use whichever came first.
+        taken = {
+            (h.col, h.row)
+            for existing in doc.edge_connectors
+            for h in edge_connector_holes(existing, board)
+        }
+        clash = next(
+            (h for h in edge_connector_holes(connector, board) if (h.col, h.row) in taken), None
+        )
+        if clash is not None:
+            raise CommandError(
+                "overlapping-edge-connector",
+                f"Another edge connector already has a finger at {format_hole(clash)}.",
+            )
+        return dataclasses.replace(doc, edge_connectors=doc.edge_connectors + (connector,))
+
+    def describe(self, p: AddEdgeConnectorPayload, doc: PerfDocument) -> str:
+        return f"Add {p.count}-finger edge connector on the {p.edge} edge"
+
+
+class _DeleteEdgeConnector:
+    type = "edge-connector.delete"
+
+    def apply(
+        self, doc: PerfDocument, p: DeleteEdgeConnectorPayload, ctx: CommandContext
+    ) -> PerfDocument:
+        if not any(e.id == p.id for e in doc.edge_connectors):
+            raise CommandError("edge-connector-not-found", f'No edge connector with id "{p.id}".')
+        return dataclasses.replace(
+            doc, edge_connectors=tuple(e for e in doc.edge_connectors if e.id != p.id)
+        )
+
+    def describe(self, p: DeleteEdgeConnectorPayload, doc: PerfDocument) -> str:
+        return f"Remove edge connector {p.id}"
+
+
 # ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
@@ -924,9 +1313,15 @@ delete_conductor: CommandDefinition[DeleteConductorPayload] = _DeleteConductor()
 delete_conductors: CommandDefinition[DeleteConductorsPayload] = _DeleteConductors()
 replace_conductors: CommandDefinition[ReplaceConductorsPayload] = _ReplaceConductors()
 set_board: CommandDefinition[SetBoardPayload] = _SetBoard()
+apply_board_preset: CommandDefinition[ApplyBoardPresetPayload] = _ApplyBoardPreset()
 import_netlist: CommandDefinition[ImportNetlistPayload] = _ImportNetlist()
 add_cut: CommandDefinition[AddCutPayload] = _AddCut()
 delete_cut: CommandDefinition[DeleteCutPayload] = _DeleteCut()
+add_mounting_hole: CommandDefinition[AddMountingHolePayload] = _AddMountingHole()
+add_mounting_holes: CommandDefinition[AddMountingHolesPayload] = _AddMountingHoles()
+delete_mounting_hole: CommandDefinition[DeleteMountingHolePayload] = _DeleteMountingHole()
+add_edge_connector: CommandDefinition[AddEdgeConnectorPayload] = _AddEdgeConnector()
+delete_edge_connector: CommandDefinition[DeleteEdgeConnectorPayload] = _DeleteEdgeConnector()
 
 # Typed with Any because CommandDefinition's payload is contravariant, so a specific
 # command is deliberately NOT assignable to CommandDefinition[object]. See the note on
@@ -946,9 +1341,15 @@ STANDARD_COMMANDS: tuple[CommandDefinition[Any], ...] = (
     delete_conductors,
     replace_conductors,
     set_board,
+    apply_board_preset,
     import_netlist,
     add_cut,
     delete_cut,
+    add_mounting_hole,
+    add_mounting_holes,
+    delete_mounting_hole,
+    add_edge_connector,
+    delete_edge_connector,
 )
 
 

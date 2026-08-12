@@ -55,11 +55,18 @@ from perfstudio.connectivity import FootprintLookup
 from perfstudio.drc import DrcViolation
 from perfstudio.geometry import (
     all_pin_holes,
-    board_size_mm,
+    board_outline_mm,
     column_label,
+    edge_connector_holes,
+    edge_finger_rect,
     format_hole,
+    hole_key,
     hole_span_mm,
+    holes_without_grid_pad,
     is_inside_board,
+    legend_strip_mm,
+    pad_extent_mm,
+    printed_row_label,
     row_label,
     transform_offset,
     transform_pin_offset,
@@ -70,12 +77,15 @@ from perfstudio.geometry import (
 from perfstudio.guide import COLOR_BY_NET_CLASS, SIGNAL_COLORS
 from perfstudio.model import (
     Board,
+    BoardLabels,
     BoardSide,
     ComponentInstance,
     Conductor,
     ConductorKind,
+    EdgeConnector,
     Footprint,
     HoleCoord,
+    MountingHole,
     NetClass,
     PerfDocument,
     contacts_every_path_hole,
@@ -91,7 +101,7 @@ from .bodies import (
     polarity_pin_offset,
     style_for,
 )
-from .scenetext import draw_label
+from .scenetext import draw_label, draw_physical_label
 
 # --------------------------------------------------------------------------- theme
 
@@ -119,6 +129,17 @@ BODY_SHADOW_EDGE = QColor("#6d7a8c")
 RISK_RING = QColor("#e5484d")
 RULER_TEXT = QColor("#8b93a7")
 RULER_TEXT_MAJOR = QColor("#d3d9e8")
+#: Silkscreen. White ink on the board it is printed on, and a dim ghost of it when the
+#: board is turned over -- the same convention component bodies on the far side follow.
+LEGEND_INK = QColor("#eef2f8")
+LEGEND_INK_FAR = QColor(190, 200, 215, 70)
+#: A mounting hole: the bore is a hole, so it is near black; the head ring is a keepout
+#: rather than a thing, so it is a dashed outline in the warning colour.
+MOUNT_BORE = QColor("#14151b")
+MOUNT_EDGE = QColor("#0a0b0f")
+MOUNT_KEEPOUT = QColor(229, 116, 61, 150)
+#: A connector finger on the far face of the board.
+FINGER_FAR = QColor(150, 130, 70, 110)
 
 #: Ratsnest colours by net class -- ground and power read as rails at a glance, which is
 #: the same distinction the router orders its work by.
@@ -196,6 +217,18 @@ REF_LABEL_PX = 12
 
 
 # --------------------------------------------------------------------- coordinates
+
+
+def _outline_rect(board: Board) -> QRectF:
+    """The substrate as a Qt rect, from ``geometry.board_outline_mm``.
+
+    Every item that needs to know where the board's edge is asks this rather than
+    assuming half a pitch past the outer holes: a board with a printed border has more
+    substrate than that, and an item that guessed would draw its edge in the wrong place
+    while the substrate underneath drew its own somewhere else.
+    """
+    outline = board_outline_mm(board)
+    return QRectF(outline.x, outline.y, outline.width, outline.height)
 
 
 def hole_to_screen(hole: HoleCoord, board: Board, side: BoardSide) -> QPointF:
@@ -281,84 +314,134 @@ class PadGridItem(QGraphicsItem):
     #: the cost the cache exists to remove.
     _SIZE_BUCKET_PX = 4
 
-    def __init__(self, board: Board, side: BoardSide) -> None:
+    def __init__(
+        self,
+        board: Board,
+        side: BoardSide,
+        consumed: frozenset[str] = frozenset(),
+        copper: bool = True,
+    ) -> None:
         super().__init__()
         self.board = board
         self.side = side
+        #: False draws the drilled holes with no copper round them -- the component side
+        #: of a single-sided board, which still has every hole and none of the pads.
+        #: Without this that face renders as a blank slab, which is the same mistake the
+        #: 3D view's `build_drills` exists to correct.
+        self.copper = copper
+        #: Hole keys with no ordinary round pad on this face -- a mounting bore took the
+        #: copper, or a connector finger IS the pad here. Passed in rather than derived,
+        #: because it is a property of the whole document and this is a paint path: it
+        #: must not walk the mounting holes once per hole.
+        self.consumed = consumed
         self.drawn = 0
         self._pad_pixmap: QPixmap | None = None
         self._pad_pixmap_px = 0
         self.setZValue(-90)
 
     def boundingRect(self) -> QRectF:
-        w, h = board_size_mm(self.board)
-        p = self.board.pitch
-        return QRectF(-p / 2, -p / 2, w, h)
+        return _outline_rect(self.board)
 
-    def _pad_for(self, pad_px: float) -> QPixmap:
-        """A pad rasterised for roughly this on-screen size, cached between frames."""
+    def _pad_for(self, long_px: float) -> QPixmap:
+        """A pad rasterised for roughly this on-screen size, cached between frames.
+
+        Not necessarily square. An oblong pad is a stadium -- a rectangle capped with a
+        semicircle at each end, which is what the copper on those boards actually is --
+        so the pixmap carries the pad's aspect ratio and everything below is expressed
+        as a fraction of it rather than of a single "side".
+        """
         bucket = max(
             self._SIZE_BUCKET_PX,
-            int(round(pad_px / self._SIZE_BUCKET_PX)) * self._SIZE_BUCKET_PX,
+            int(round(long_px / self._SIZE_BUCKET_PX)) * self._SIZE_BUCKET_PX,
         )
         # Rendered at twice the on-screen size so the downscale stays crisp when the zoom
         # sits between two buckets, and capped so a deep zoom cannot ask for a huge one.
-        side = min(256, max(6, bucket * 2))
-        if self._pad_pixmap is not None and self._pad_pixmap_px == side:
+        long_side = min(256, max(6, bucket * 2))
+        if self._pad_pixmap is not None and self._pad_pixmap_px == long_side:
             return self._pad_pixmap
 
-        pixmap = QPixmap(side, side)
+        extent_x, extent_y = pad_extent_mm(self.board)
+        longest = max(extent_x, extent_y)
+        width = max(3, round(long_side * extent_x / longest))
+        height = max(3, round(long_side * extent_y / longest))
+
+        pixmap = QPixmap(width, height)
         pixmap.fill(QColor(0, 0, 0, 0))
         painter = QPainter(pixmap)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        inset = side * 0.03
-        ring = QRectF(inset, inset, side - 2 * inset, side - 2 * inset)
-        painter.setPen(QPen(PAD_RING, max(1.0, side * 0.05)))
+        if not self.copper:
+            drill_only = long_side * (self.board.drill_diameter / longest)
+            painter.setPen(QPen(QColor("#2b1d0e"), max(1.0, long_side * 0.03)))
+            painter.setBrush(QBrush(DRILL))
+            painter.drawEllipse(
+                QRectF(
+                    (width - drill_only) / 2, (height - drill_only) / 2, drill_only, drill_only
+                )
+            )
+            painter.end()
+            self._pad_pixmap = pixmap
+            self._pad_pixmap_px = long_side
+            return pixmap
+        inset = long_side * 0.03
+        ring = QRectF(inset, inset, width - 2 * inset, height - 2 * inset)
+        painter.setPen(QPen(PAD_RING, max(1.0, long_side * 0.05)))
         painter.setBrush(QBrush(PAD))
-        painter.drawEllipse(ring)
+        # Radius = half the short side, which turns the rounded rect into a true stadium
+        # and, on a square pad, into the circle this used to draw.
+        radius = min(ring.width(), ring.height()) / 2
+        painter.drawRoundedRect(ring, radius, radius)
 
         # The sheen reads as tinned copper catching the light rather than a flat yellow
         # disc, and it is what makes the board look like a board. Skipped only when the
         # pad is too small on screen for the arc to be more than a smudge.
-        if side >= 20:
+        if long_side >= 20:
             painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.setPen(QPen(PAD_SHEEN, max(1.0, side * 0.055)))
-            sheen = side * 0.68
+            painter.setPen(QPen(PAD_SHEEN, max(1.0, long_side * 0.055)))
+            sheen_w, sheen_h = width * 0.68, height * 0.68
             painter.drawArc(
-                QRectF((side - sheen) / 2, (side - sheen) / 2, sheen, sheen), 60 * 16, 100 * 16
+                QRectF((width - sheen_w) / 2, (height - sheen_h) / 2, sheen_w, sheen_h),
+                60 * 16,
+                100 * 16,
             )
 
-        drill = side * (self.board.drill_diameter / self.board.pad_diameter)
+        drill_w = long_side * (self.board.drill_diameter / longest)
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QBrush(DRILL))
-        painter.drawEllipse(QRectF((side - drill) / 2, (side - drill) / 2, drill, drill))
+        painter.drawEllipse(
+            QRectF((width - drill_w) / 2, (height - drill_w) / 2, drill_w, drill_w)
+        )
         painter.end()
 
         self._pad_pixmap = pixmap
-        self._pad_pixmap_px = side
+        self._pad_pixmap_px = long_side
         return pixmap
 
     def paint(self, painter: QPainter, option: Any, widget: Any = None) -> None:
         b = self.board
         area = option.exposedRect
-        pad_r = b.pad_diameter / 2
+        extent_x, extent_y = pad_extent_mm(b)
+        half_x, half_y = extent_x / 2, extent_y / 2
 
-        c0 = max(0, int((area.left() - pad_r) / b.pitch) - 1)
-        c1 = min(b.cols - 1, int((area.right() + pad_r) / b.pitch) + 1)
-        r0 = max(0, int((area.top() - pad_r) / b.pitch) - 1)
-        r1 = min(b.rows - 1, int((area.bottom() + pad_r) / b.pitch) + 1)
+        c0 = max(0, int((area.left() - half_x) / b.pitch) - 1)
+        c1 = min(b.cols - 1, int((area.right() + half_x) / b.pitch) + 1)
+        r0 = max(0, int((area.top() - half_y) / b.pitch) - 1)
+        r1 = min(b.rows - 1, int((area.bottom() + half_y) / b.pitch) + 1)
 
         px_per_mm = painter.transform().m11() or 1.0
-        pixmap = self._pad_for(b.pad_diameter * abs(px_per_mm))
+        pixmap = self._pad_for(max(extent_x, extent_y) * abs(px_per_mm))
         source = QRectF(0, 0, pixmap.width(), pixmap.height())
-        size = b.pad_diameter
 
         count = 0
         for col in range(c0, c1 + 1):
             for row in range(r0, r1 + 1):
+                # A mounting bore removed this pad. Drawing it anyway would show copper
+                # to solder to where there is a hole, which is the one thing the DRC rule
+                # for it exists to prevent somebody discovering with an iron in hand.
+                if self.consumed and hole_key(HoleCoord(col, row)) in self.consumed:
+                    continue
                 p = hole_to_screen(HoleCoord(col, row), b, self.side)
                 painter.drawPixmap(
-                    QRectF(p.x() - pad_r, p.y() - pad_r, size, size), pixmap, source
+                    QRectF(p.x() - half_x, p.y() - half_y, extent_x, extent_y), pixmap, source
                 )
                 count += 1
         self.drawn = count
@@ -392,10 +475,9 @@ class HoleRulerItem(QGraphicsItem):
         # need grows without limit as the view zooms out (see scenetext.label_extent_mm).
         # An over-large rect only widens a repaint region; too small leaves label debris on
         # the substrate when the view scrolls.
-        w, h = board_size_mm(self.board)
-        p = self.board.pitch
+        outline = _outline_rect(self.board)
         pad = RULER_MARGIN_MM + 30
-        return QRectF(-p / 2 - pad, -p / 2 - pad, w + pad, h + pad)
+        return outline.adjusted(-pad, -pad, pad, pad)
 
     def _label_step(self, scale: float) -> int:
         """How many holes to skip between labels, so they never collide.
@@ -423,7 +505,7 @@ class HoleRulerItem(QGraphicsItem):
             x = hole_to_screen(HoleCoord(col, 0), board, self.side).x()
             draw_label(
                 painter,
-                QPointF(x, -board.pitch / 2 - 1.4),
+                QPointF(x, _outline_rect(board).top() - 1.4),
                 column_label(col),
                 RULER_LABEL_PX,
                 Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom,
@@ -437,12 +519,203 @@ class HoleRulerItem(QGraphicsItem):
             painter.setPen(QPen(RULER_TEXT_MAJOR if major else RULER_TEXT))
             draw_label(
                 painter,
-                QPointF(-board.pitch / 2 - 1.2, row * board.pitch),
+                QPointF(_outline_rect(board).left() - 1.2, row * board.pitch),
                 row_label(row),
                 RULER_LABEL_PX,
                 Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
                 bold=major,
             )
+
+
+# ------------------------------------------------- printed legend and board features
+
+
+class BoardLegendItem(QGraphicsItem):
+    """The hole addresses the BOARD itself carries, printed on the substrate.
+
+    Not the same thing as :class:`HoleRulerItem`, and the difference is the whole point.
+    The ruler is an annotation this program draws outside the board and sizes in screen
+    pixels, so it holds its size as you zoom. This is silkscreen: it is ink on the
+    substrate, it is there when you are holding the board with the program closed, and
+    it therefore scales with the board like every other physical dimension in this scene.
+    That is also what makes it come out right on the 1:1 PDF, which is the copy that ends
+    up taped to the board.
+
+    It lives in the half-pitch margin the substrate extends past the outer hole centres
+    (``geometry.board_size_mm``), because that is the only room there is. Real boards with
+    a wider printed border have a margin this format does not model.
+
+    SEEN FROM THE OTHER SIDE the legend is drawn dim, and NOT mirrored. Mirroring the
+    glyphs would be the physically accurate thing and the useless one: reversed 1 mm text
+    is noise, and what the reader wants from a label is the address, not the reflection.
+    The position is mirrored -- that comes free from ``hole_to_screen`` -- so a label
+    still sits over the hole it names.
+    """
+
+    def __init__(self, document: PerfDocument, labels: BoardLabels, side: BoardSide) -> None:
+        super().__init__()
+        self.document = document
+        self.board = document.board
+        self.labels = labels
+        self.side = side
+        #: Printed on this face, or seen faintly through the board from the other one.
+        self.near_side = labels.face == "both" or labels.face == side
+        self.setZValue(-95)  # On the substrate, under the pads: ink goes on first.
+
+    def boundingRect(self) -> QRectF:
+        return _outline_rect(self.board)
+
+    def _free_strip_mm(self) -> tuple[float, float]:
+        """Bare substrate between the outermost pads and the board edge, (across, down).
+
+        NOT the whole margin. The outer pads eat into it -- half a pad's extent of it --
+        and ink printed there would sit under copper, which on a 2.54 mm board is most of
+        the margin gone. This is the strip a legend actually has, and both the size of the
+        characters and where they are centred come from it.
+        """
+        return (
+            legend_strip_mm(self.document, "horizontal"),
+            legend_strip_mm(self.document, "vertical"),
+        )
+
+    def _text_height_mm(self) -> float:
+        """Cap height. A real board prints this around 1.2 mm, and it is capped to
+        whatever the free strip can hold when there is less room than that."""
+        strip_x, strip_y = self._free_strip_mm()
+        return min(1.15, min(strip_x, strip_y) * 0.6)
+
+    def paint(self, painter: QPainter, option: Any, widget: Any = None) -> None:
+        board = self.board
+        color = QColor(LEGEND_INK if self.near_side else LEGEND_INK_FAR)
+        strip_x, strip_y = self._free_strip_mm()
+        extent_x, extent_y = pad_extent_mm(board)
+        height = self._text_height_mm()
+
+        painter.save()
+        painter.setPen(QPen(color))
+
+        # Letters along the top (and bottom), numbers down the left (and right) -- the
+        # layout every board in this class uses, and the reason `all_edges` defaults to
+        # true: with one edge each, the far half of the board is nearest the edge that
+        # does not carry its address, which is where counting starts again.
+        #
+        # Each run is centred in ITS OWN free strip, which is why the two offsets differ:
+        # a column letter clears the pads above it, a row number clears them to its left.
+        #
+        # THE NUMBERS ARE TURNED ON THEIR SIDE, as they are on the real boards, and for a
+        # reason rather than as decoration: the strip beside a row is narrow across and a
+        # whole pitch deep, so an upright "07" has to shrink to fit while a turned one
+        # does not.
+        span_w, span_h = hole_span_mm(board)
+        column_ys = [-(extent_y / 2 + strip_y / 2)]
+        row_xs = [-(extent_x / 2 + strip_x / 2)]
+        if self.labels.all_edges:
+            column_ys.append(span_h + extent_y / 2 + strip_y / 2)
+            row_xs.append(span_w + extent_x / 2 + strip_x / 2)
+        elif self.side == "bottom":
+            # A one-edge legend is on a PHYSICAL edge, and turning the board over moves
+            # that edge to the other side of the screen. Reflected about the hole span
+            # like every other x here, never about the substrate -- see the module note.
+            row_xs = [span_w - x for x in row_xs]
+
+        for col in range(board.cols):
+            x = hole_to_screen(HoleCoord(col, 0), board, self.side).x()
+            for y in column_ys:
+                draw_physical_label(
+                    painter, QPointF(x, y), column_label(col), height, max_width_mm=board.pitch * 0.9
+                )
+
+        for row in range(board.rows):
+            text = printed_row_label(row, self.labels)
+            for x in row_xs:
+                draw_physical_label(
+                    painter,
+                    QPointF(x, row * board.pitch),
+                    text,
+                    height,
+                    max_width_mm=board.pitch * 0.9,
+                    rotation_deg=-90.0,
+                )
+        painter.restore()
+
+
+class MountingHoleItem(QGraphicsItem):
+    """A screw hole: the bore, and the ring the screw head will cover.
+
+    The head ring is drawn because it is a keepout nobody can see otherwise -- the bore
+    looks small and harmless, and the reason you cannot put a capacitor next to it is the
+    washer, which is not on the board yet.
+    """
+
+    def __init__(self, mount: MountingHole, board: Board, side: BoardSide) -> None:
+        super().__init__()
+        self.mount = mount
+        self.board = board
+        self.side = side
+        self.setZValue(-85)  # Over the pads it removed, under the parts.
+
+    def boundingRect(self) -> QRectF:
+        centre = hole_to_screen(self.mount.at, self.board, self.side)
+        r = max(self.mount.head_diameter, self.mount.diameter) / 2 + 0.5
+        return QRectF(centre.x() - r, centre.y() - r, 2 * r, 2 * r)
+
+    def paint(self, painter: QPainter, option: Any, widget: Any = None) -> None:
+        centre = hole_to_screen(self.mount.at, self.board, self.side)
+        head_r = self.mount.head_diameter / 2
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        pen = QPen(MOUNT_KEEPOUT, 0.12)
+        pen.setStyle(Qt.PenStyle.DashLine)
+        painter.setPen(pen)
+        painter.drawEllipse(centre, head_r, head_r)
+
+        bore_r = self.mount.diameter / 2
+        painter.setPen(QPen(MOUNT_EDGE, 0.15))
+        painter.setBrush(QBrush(MOUNT_BORE))
+        painter.drawEllipse(centre, bore_r, bore_r)
+
+
+class EdgeConnectorItem(QGraphicsItem):
+    """The finger pads of one edge connector.
+
+    Drawn from ``geometry.edge_finger_rect`` rather than from a local idea of where the
+    edge is, so that what is drawn and what DRC measures its gaps against are the same
+    rectangle.
+    """
+
+    def __init__(self, connector: EdgeConnector, board: Board, side: BoardSide) -> None:
+        super().__init__()
+        self.connector = connector
+        self.board = board
+        self.side = side
+        self.near_side = connector.face == "both" or connector.face == side
+        self.setZValue(-88)
+
+    def boundingRect(self) -> QRectF:
+        return _outline_rect(self.board)
+
+    def paint(self, painter: QPainter, option: Any, widget: Any = None) -> None:
+        drill_r = self.board.drill_diameter / 2
+        for hole in edge_connector_holes(self.connector, self.board):
+            rect = edge_finger_rect(self.connector, hole, self.board)
+            # The rect is in board mm; only x needs the solder-side reflection, and it
+            # reflects about the hole span exactly as every other x in this file does.
+            left = rect.x
+            if self.side == "bottom":
+                span_w, _ = hole_span_mm(self.board)
+                left = span_w - (rect.x + rect.width)
+            radius = min(rect.width, rect.height) * 0.25
+            painter.setPen(QPen(PAD_RING, 0.08))
+            painter.setBrush(QBrush(PAD if self.near_side else FINGER_FAR))
+            painter.drawRoundedRect(QRectF(left, rect.y, rect.width, rect.height), radius, radius)
+
+            # The finger is copper laid over the pad, not instead of it, so the hole has to
+            # come back through. Without this a finger reads as a solid tab and the one
+            # thing you need to know about it -- that you can put a wire through it -- is
+            # exactly what is hidden.
+            centre = hole_to_screen(hole, self.board, self.side)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(DRILL))
+            painter.drawEllipse(centre, drill_r, drill_r)
 
 
 # ------------------------------------------------------------- references and pins
@@ -587,9 +860,7 @@ class RatsnestItem(QGraphicsItem):
         self.setZValue(30)
 
     def boundingRect(self) -> QRectF:
-        w, h = board_size_mm(self.board)
-        p = self.board.pitch
-        return QRectF(-p / 2, -p / 2, w, h)
+        return _outline_rect(self.board)
 
     def paint(self, painter: QPainter, option: Any, widget: Any = None) -> None:
         # Highlighted links last, so they sit on top of the rest rather than under it.
@@ -625,9 +896,7 @@ class RiskRingsItem(QGraphicsItem):
         self.setZValue(60)
 
     def boundingRect(self) -> QRectF:
-        w, h = board_size_mm(self.board)
-        p = self.board.pitch
-        return QRectF(-p / 2 - 1, -p / 2 - 1, w + 2, h + 2)
+        return _outline_rect(self.board).adjusted(-1, -1, 1, 1)
 
     def paint(self, painter: QPainter, option: Any, widget: Any = None) -> None:
         r = self.board.pad_diameter / 2 + 0.35
@@ -665,9 +934,8 @@ class DrawPreviewItem(QGraphicsItem):
         self.setZValue(120)
 
     def boundingRect(self) -> QRectF:
-        w, h = board_size_mm(self.board)
-        return QRectF(-self.board.pitch, -self.board.pitch, w + 2 * self.board.pitch,
-                      h + 2 * self.board.pitch)
+        pitch = self.board.pitch
+        return _outline_rect(self.board).adjusted(-pitch, -pitch, pitch, pitch)
 
     def set_path(self, path: list[HoleCoord], next_hole: HoleCoord | None, ok: bool) -> None:
         self.path = path
@@ -1367,6 +1635,16 @@ class BoardScene(QGraphicsScene):
             self.show_rulers = show
             self._build()
 
+    def legend_is_readable(self) -> bool:
+        """Whether the board's own printed addresses can be read from the side in view.
+
+        Public because the host greys out "Show Hole Addresses" when this is true: the
+        ruler is suppressed then (see ``_build``), and a menu item that silently does
+        nothing is worse than one that is visibly unavailable.
+        """
+        labels = self.document.board.labels
+        return labels is not None and labels.face in ("both", self.side)
+
     def set_highlighted_nets(self, net_ids: Sequence[str]) -> None:
         """Light up the given schematic nets' remaining connections."""
         wanted = tuple(net_ids)
@@ -1393,25 +1671,56 @@ class BoardScene(QGraphicsScene):
         self._ghost = None
         self._draw_preview = None
         board = self.document.board
-        w, h = board_size_mm(board)
-        margin = RULER_MARGIN_MM if self.show_rulers else 4.0
+        outline = _outline_rect(board)
+        # Room outside the substrate is reserved for the ruler, so it is only needed when
+        # one is actually going to be drawn -- see the note beside HoleRulerItem below.
+        margin = RULER_MARGIN_MM if (self.show_rulers and not self.legend_is_readable()) else 4.0
         self.setSceneRect(
-            -board.pitch / 2 - margin, -board.pitch / 2 - margin, w + margin + 4, h + margin + 4
+            outline.left() - margin,
+            outline.top() - margin,
+            outline.width() + margin + 4,
+            outline.height() + margin + 4,
         )
         self.setBackgroundBrush(QBrush(BACKGROUND))
 
         scheme = scheme_for(board.material)
         substrate = self.addRect(
-            QRectF(-board.pitch / 2, -board.pitch / 2, w, h),
+            outline,
             QPen(QColor(scheme.edge), 0.4),
             QBrush(QColor(scheme.fill)),
         )
         substrate.setZValue(-100)
 
-        self.pad_grid = PadGridItem(board, self.side)
+        # Ink first, then copper on top of it: the legend is printed on the substrate and
+        # a pad sits over the print, which is also the order that keeps a label legible
+        # where it passes close to the outer row of pads.
+        if board.labels is not None:
+            self.addItem(BoardLegendItem(self.document, board.labels, self.side))
+
+        # A single-sided board has copper on the solder side ONLY. From the component
+        # side you are looking at bare phenolic with holes drilled through it -- the holes
+        # are still all there, and drawing neither them nor the pads would leave a blank
+        # slab that says nothing about where anything goes.
+        self.pad_grid = PadGridItem(
+            board,
+            self.side,
+            holes_without_grid_pad(self.document, self.side),
+            copper=not (board.single_sided and self.side == "top"),
+        )
         self.addItem(self.pad_grid)
 
-        if self.show_rulers:
+        for connector in self.document.edge_connectors:
+            self.addItem(EdgeConnectorItem(connector, board, self.side))
+        for mount in self.document.mounting_holes:
+            self.addItem(MountingHoleItem(mount, board, self.side))
+
+        # THE RULER STANDS DOWN WHEN THE BOARD SPEAKS FOR ITSELF. The ruler exists to name
+        # a hole on a board that carries no addresses of its own; drawing it alongside a
+        # printed legend puts the same twenty-four letters on screen twice, a few
+        # millimetres apart and in two different styles, which reads as a rendering fault
+        # rather than as two features. Only when the legend is on the far face -- where it
+        # is a dim ghost rather than something you can read -- is the ruler wanted again.
+        if self.show_rulers and not self.legend_is_readable():
             self.addItem(HoleRulerItem(board, self.side))
 
         net_class_by_id = {net.id: net.net_class for net in self.document.nets}

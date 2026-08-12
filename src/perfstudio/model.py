@@ -79,6 +79,48 @@ BoardType: TypeAlias = Literal["pad-per-hole", "stripboard", "plain"]
 #: trace may be.
 BoardMaterial: TypeAlias = Literal["FR4", "FR2", "FR1"]
 
+#: One face, or both. Distinct from ``BoardSide``, which is always exactly one — a
+#: silkscreen legend or a set of connector fingers is routinely printed on both.
+BoardFace: TypeAlias = Literal["top", "bottom", "both"]
+
+#: Pad outline. NOT cosmetic, for the same reason the pad diameter is not: the R5'
+#: bridging risk that this whole tool is organised around is a function of the gap
+#: between one pad's edge and the next one's, and an oblong pad has TWO different such
+#: gaps — a small one along its long axis and a comfortable one across it. A board with
+#: oblong pads is therefore easy to run a solder trace along and hard to run one across,
+#: which is a real constraint on how it should be laid out. See
+#: ``geometry.pad_extent_mm``.
+PadShape: TypeAlias = Literal["round", "oblong"]
+
+#: Which way an oblong pad's long axis points. "vertical" runs down a column (so
+#: consecutive ROWS are the close pair), "horizontal" runs along a row.
+PadAxis: TypeAlias = Literal["horizontal", "vertical"]
+
+
+@dataclass(frozen=True, slots=True)
+class BoardLabels:
+    """Hole addresses printed on the substrate itself.
+
+    The boards this models carry their own legend — ``A``..``Z`` along one edge,
+    ``01``..``22`` down the other — and it is the same address space this tool speaks
+    everywhere else (``geometry.column_label`` / ``row_label``), which is what makes it
+    worth modelling rather than leaving to the editor's ruler. On a board with a printed
+    legend the builder reads "C7" straight off the copper instead of counting holes from
+    a corner, and the guide's preparation step stops having to tell them to mark A1.
+    """
+
+    #: Which face carries the print.
+    face: BoardFace = "both"
+    #: Zero-pad the row number to this many digits. 1 gives "7", matching a HoleRef
+    #: exactly; 2 gives "07", which is what boards printing "01".."22" actually show.
+    #: The addresses themselves never change — this is how the *board* renders one.
+    row_digits: int = 1
+    #: Print the legend on all four edges — letters along the top AND bottom, numbers
+    #: down the left AND right — which is what the boards being modelled do. With one
+    #: edge each, half the board is nearer the edge that does not carry its address,
+    #: which is exactly where counting starts again.
+    all_edges: bool = True
+
 
 @dataclass(frozen=True, slots=True)
 class Board:
@@ -88,10 +130,124 @@ class Board:
     pitch: Mm
     thickness: Mm
     material: BoardMaterial
+    #: Round pad: the diameter. Oblong pad: the SHORT axis, i.e. its width.
     pad_diameter: Mm
     drill_diameter: Mm
     #: Stripboard only: the axis the copper strips run along.
     strip_axis: Literal["horizontal", "vertical"] | None = None
+    pad_shape: PadShape = "round"
+    #: Oblong only: the long axis, which must exceed ``pad_diameter``. Required when
+    #: ``pad_shape`` is "oblong" and meaningless otherwise.
+    pad_length: Mm | None = None
+    pad_axis: PadAxis = "vertical"
+    #: Extra substrate beyond the usual half pitch, left/right and top/bottom.
+    #:
+    #: Zero on a plain board, which is cut flush half a pitch past the outermost hole
+    #: centres. A board with a printed legend is NOT: at 2.54 mm pitch with 1.9 mm pads
+    #: that half pitch leaves 0.32 mm of bare substrate, which is not room to print a
+    #: character in, and the boards this models are physically wider at the edge for
+    #: exactly that reason.
+    #:
+    #: TWO NUMBERS, NOT ONE, because real boards are not square about it: a 4 x 6 cm board
+    #: with 20 x 14 holes carries about 4.6 mm of border on the edges with the numbers and
+    #: the oblong pads, and about 2.2 mm on the edges with the letters. One figure would
+    #: put the 1:1 printout several millimetres out on one axis, and that printout gets
+    #: taped to the board.
+    #:
+    #: Anything that must land on a hole still measures from ``hole_span_mm``, which this
+    #: deliberately does not touch — see the note there about mirroring.
+    border_x_mm: Mm = 0.0
+    border_y_mm: Mm = 0.0
+    #: Copper on the solder side only, with plain drilled holes on the component side.
+    #:
+    #: The cheap brown/orange phenolic board. It is not a rendering detail: there is no
+    #: pad to solder to on the component side at all, so nothing may be soldered there,
+    #: and the pads lift more readily because there is no second annulus holding them on.
+    single_sided: bool = False
+    #: None when the board carries no printed legend, which is the common cheap board.
+    labels: BoardLabels | None = None
+
+
+# ---------------------------------------------------------------------------
+# Mechanical features of the board itself
+# ---------------------------------------------------------------------------
+
+#: Which edge of the board something runs along.
+BoardEdge: TypeAlias = Literal["top", "bottom", "left", "right"]
+
+
+@dataclass(frozen=True, slots=True)
+class MountingHole:
+    """A screw hole drilled through the board, addressed by the grid hole it replaces.
+
+    Addressed by hole rather than by millimetres on purpose: every message and every
+    measurement step in this system names a hole (PLAN.md §4.1), and "MH1 at A1" is
+    something a builder can find where a coordinate pair is not.
+
+    The bore is much wider than a pad, so it does not merely occupy its own hole — an M3
+    clearance hole at 2.54 mm pitch eats the copper off its four orthogonal neighbours as
+    well. Which holes those are is derived, once, by ``geometry.mounting_bore_consumes``,
+    and it is why DRC has to be able to say that a pin has been placed on a pad that no
+    longer exists.
+    """
+
+    id: str
+    at: HoleCoord
+    #: Millimetres from ``at``'s centre, which is how a hole gets to sit in the BORDER
+    #: rather than on the grid. That is where these boards actually put their corner
+    #: holes: outside the A column and the 01 row, eating no pads at all. Addressed by
+    #: the nearest hole regardless, so "the hole outside A1" is still something a builder
+    #: can find. Zero puts the bore on the grid, which destroys the pads around it.
+    offset_x_mm: Mm = 0.0
+    offset_y_mm: Mm = 0.0
+    #: The drilled bore. 3.2 mm is an M3 clearance hole.
+    diameter: Mm = 3.2
+    #: Screw head or washer footprint. Nothing may sit under it on the component side,
+    #: which is a separate and larger keepout than the bore's.
+    head_diameter: Mm = 6.0
+
+
+@dataclass(frozen=True, slots=True)
+class EdgeConnector:
+    """A run of elongated finger pads along one board edge.
+
+    A finger is the pad of the hole it sits on, stretched out to the board edge and
+    usually widened — more copper to take the mechanical load of a connector, and a
+    target you can solder a shell or a ribbon to. It covers EXACTLY ONE HOLE, which is
+    what makes this a purely physical feature: a finger is electrically its own pad and
+    nothing more, so connectivity, LVS and the router are untouched by it. A true
+    multi-hole card edge would join the rows it spans, and the format does not model one.
+
+    ``finger_width`` must stay below the pitch. Two fingers as wide as the pitch are not
+    two fingers, they are one piece of copper shorting two nets, and the model has no way
+    to say that.
+    """
+
+    id: str
+    edge: BoardEdge
+    #: First column (top/bottom edge) or row (left/right edge) of the run, 0-indexed.
+    start: int
+    count: int
+    #: Across the run. Wider than a pad, narrower than the pitch.
+    finger_width: Mm = 2.0
+    #: Inward from the BOARD EDGE, not from the hole. None means "as far as it should
+    #: go": past its own hole by half a pitch, which is ``board_edge_margin_mm(board) +
+    #: pitch / 2``. Left to be derived because the right answer depends on the board's
+    #: border — a fixed length that reaches the hole on a flush-cut board stops short of
+    #: it on one with a printed border, and a finger that does not include its own hole
+    #: is not a finger.
+    finger_length: Mm | None = None
+    #: Bare substrate left between the finger's outer end and the board edge.
+    #:
+    #: Zero is a true card edge, where reaching the edge is the point. Anything else is
+    #: what the prototyping boards actually do: the elongated pads stop short, and the
+    #: strip left outside them is where the row numbers are printed. Without this the
+    #: fingers swallow the whole border and the legend has nowhere to go.
+    inset_mm: Mm = 0.0
+    #: Both faces by default: these are plated through-hole pads like every other one on
+    #: the board, just a different shape, so copper on one side only would be the odd
+    #: case rather than the normal one.
+    face: BoardFace = "both"
 
 
 # ---------------------------------------------------------------------------
@@ -330,6 +486,12 @@ class PerfDocument:
     cuts: tuple[TrackCut, ...] = ()
     #: Schematic intent, imported from a netlist. Empty until a netlist is loaded.
     nets: tuple[Net, ...] = ()
+    #: Mechanical features of the board. They sit on the document rather than on
+    #: ``board`` — following ``cuts``, which is the same kind of thing — so that adding
+    #: one is its own command and its own undo step instead of a wholesale board
+    #: replacement.
+    mounting_holes: tuple[MountingHole, ...] = ()
+    edge_connectors: tuple[EdgeConnector, ...] = ()
     format_version: int = DOCUMENT_FORMAT_VERSION
 
 

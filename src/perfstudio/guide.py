@@ -52,7 +52,7 @@ from typing import Literal, TypeAlias
 
 from .connectivity import FootprintLookup, PhysicalPinRef
 from .drc import DEFAULT_DRC_OPTIONS, DrcOptions, DrcViolation, run_drc, trace_electrical
-from .geometry import all_pin_holes, format_hole, path_length_mm
+from .geometry import all_pin_holes, edge_connector_holes, format_hole, path_length_mm
 from .lvs import continuity_checks, isolation_checks, run_lvs
 from .model import (
     Board,
@@ -459,7 +459,7 @@ def build_guide(
         GuidePhase(
             number=number,
             title=PHASE_TITLES[number],
-            summary=PHASE_SUMMARIES[number],
+            summary=_phase_summary(number, doc),
             steps=tuple(by_phase[number]),
             checkpoints=tuple(checkpoints.get(number, ())),
         )
@@ -481,6 +481,65 @@ def build_guide(
         conductor_steps=len(conductor_steps),
         checkpoint_count=all_checks,
     )
+
+
+def _phase_summary(number: PhaseNumber, doc: PerfDocument) -> str:
+    """The phase's standing summary, with what the BOARD changes about it folded in.
+
+    Only phase 0 varies today, and it varies for a reason worth stating: every hole
+    address in this guide is counted from a corner unless the board says otherwise, so
+    "mark hole A1" is the step the whole document depends on. A board that prints its own
+    A..Z / 01..NN legend has already done it, and telling somebody to mark a corner that
+    is already labelled is how a guide starts feeling like it was not written for the
+    board in front of them.
+    """
+    if number != 0:
+        return PHASE_SUMMARIES[number]
+
+    board = doc.board
+    parts: list[str] = ["Cut the board"]
+    if doc.mounting_holes:
+        count = len(doc.mounting_holes)
+        sizes = ", ".join(f"{d:g} mm" for d in sorted({m.diameter for m in doc.mounting_holes}))
+        where = ", ".join(
+            format_hole(m.at)
+            for m in sorted(doc.mounting_holes, key=lambda m: (m.at.row, m.at.col))
+        )
+        # Parenthesised rather than run on with a dash: this clause sits inside a comma
+        # list, and a second comma list beside it reads as one long ambiguous string.
+        parts.append(
+            f"drill the {count} mounting {'hole' if count == 1 else 'holes'} ({sizes} at {where})"
+        )
+    parts.append(
+        "mark hole A1"
+        if board.labels is None
+        else "check which corner the board's printed A1 is in"
+    )
+    parts.append("get the iron and the parts ready")
+
+    summary = ", ".join(parts[:-1]) + f", and {parts[-1]}."
+    summary = summary[0].upper() + summary[1:]
+
+    if doc.mounting_holes:
+        # Its own sentence, because it is an instruction about ORDER rather than another
+        # thing to do: swarf brushes off a bare board and digs out of a finished one, and
+        # a board that still has to go in a vice should not have parts on it yet.
+        summary += (
+            " Drill before anything is soldered — the board can still go in a vice, and "
+            "swarf brushes off a bare board instead of having to be picked out of a built one."
+        )
+
+    if board.pad_shape == "oblong" and board.pad_length is not None:
+        along = "along a row" if board.pad_axis == "horizontal" else "down a column"
+        across = "down a column" if board.pad_axis == "horizontal" else "along a row"
+        summary += (
+            f" This board's pads are oblong ({board.pad_length:g} × {board.pad_diameter:g} mm), "
+            f"so neighbouring pads {along} nearly touch while pads {across} are well clear. "
+            f"Solder flows between them far more easily in the first direction than the "
+            f"second — which is what makes the traces below quick, and what makes an "
+            f"accidental bridge {along} quick too."
+        )
+    return summary
 
 
 # -- parts ------------------------------------------------------------------
@@ -1098,6 +1157,13 @@ def _tools(doc: PerfDocument, cuts: list[WireCut], spines: list[SpineCut]) -> tu
         )
         if any(cut.insulated for cut in cuts):
             tools.append("Wire strippers")
+    if doc.mounting_holes:
+        diameters = sorted({m.diameter for m in doc.mounting_holes})
+        sizes = ", ".join(f"{d:g} mm" for d in diameters)
+        tools.append(
+            f"A drill and {sizes} bit{'s' if len(diameters) > 1 else ''} for the mounting "
+            f"holes, plus a deburring tool or a larger bit turned by hand"
+        )
     if spines:
         total_spine = sum(spine.length_mm for spine in spines)
         spine_gauges = sorted({spine.gauge_mm for spine in spines})
@@ -1127,6 +1193,29 @@ def _warnings(
                 message=(
                     f"No step was written for {', '.join(unknown)}: their footprint is not in "
                     "the library, so this guide cannot say which holes they go in."
+                ),
+            )
+        )
+
+    if doc.edge_connectors:
+        # Said out loud because nothing else in the guide will mention it. The fingers
+        # are copper the board came with, so they generate no step -- and a builder who
+        # never reads that they are there is a builder who solders a connector to the
+        # wrong end of the board.
+        runs = ", ".join(
+            f"{connector.count} fingers on the {connector.edge} edge from "
+            f"{format_hole(edge_connector_holes(connector, doc.board)[0])}"
+            for connector in doc.edge_connectors
+            if edge_connector_holes(connector, doc.board)
+        )
+        warnings.append(
+            GuideWarning(
+                code="edge-connector",
+                message=(
+                    f"This board has edge-connector fingers ({runs}). No step below covers "
+                    "them: they are part of the board, not something to make. Fit whatever "
+                    "mates with them last, and keep the iron off them until then — a tinned "
+                    "finger no longer fits a connector."
                 ),
             )
         )
