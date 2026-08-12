@@ -818,12 +818,26 @@ class BoardSession:
         if directory is None:
             return _ok(written=[], **report)
 
+        # A picture per step if VTK is usable here, and a guide without them if it is
+        # not. Illustrations are worth having and are not worth failing an export over:
+        # every word of the guide is still correct without one, and `report` says how
+        # many were made so an agent is not left guessing whether it got them.
+        images: dict[str, bytes] = {}
+        try:
+            from perfstudio.ui.view3d import render_step_images
+
+            _ensure_qt_application()
+            images = render_step_images(self.document, guide, self.lookup)
+        except Exception:  # pragma: no cover - only on a VTK-less install
+            images = {}
+        report["step_images"] = len(images)
+
         out = Path(directory)
         try:
             out.mkdir(parents=True, exist_ok=True)
             written = []
             for name, text in (
-                ("guide.html", guide_to_html(guide)),
+                ("guide.html", guide_to_html(guide, images)),
                 ("guide.json", guide_to_json(guide)),
                 ("cut_list.csv", cut_list_to_csv(guide)),
                 ("bom.csv", bom_to_csv(guide)),

@@ -2652,10 +2652,20 @@ class MainWindow(QMainWindow):
         base = self.current_path.with_suffix("") if self.current_path else Path.cwd() / "board"
         guide = build_guide(self.bus.document, self.lookup)
 
+        # One 3D render per step, before anything is written. The cursor is the only
+        # feedback worth giving: it is well under a second on a board of this size,
+        # because the render window is built once and re-actored per step rather than
+        # stood up again for each one.
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            images = view3d.render_step_images(self.bus.document, guide, self.lookup)
+        finally:
+            QApplication.restoreOverrideCursor()
+
         written: list[Path] = []
         try:
             for suffix, text in (
-                ("_guide.html", guide_to_html(guide)),
+                ("_guide.html", guide_to_html(guide, images)),
                 ("_cut_list.csv", cut_list_to_csv(guide)),
                 ("_bom.csv", bom_to_csv(guide)),
                 ("_guide.json", guide_to_json(guide)),
@@ -2861,13 +2871,22 @@ def headless(argv: list[str]) -> int:
     # headless run that renders the board and does not produce it is only testing half
     # the pipeline.
     guide = build_guide(doc, lookup)
-    (out_dir / "guide.html").write_text(guide_to_html(guide), encoding="utf-8")
+    t0 = time.perf_counter()
+    images = view3d.render_step_images(doc, guide, lookup)
+    t_shots = (time.perf_counter() - t0) * 1000
+    html = guide_to_html(guide, images)
+    (out_dir / "guide.html").write_text(html, encoding="utf-8")
     (out_dir / "guide.json").write_text(guide_to_json(guide), encoding="utf-8")
     (out_dir / "cut_list.csv").write_text(cut_list_to_csv(guide), encoding="utf-8")
     (out_dir / "bom.csv").write_text(bom_to_csv(guide), encoding="utf-8")
     print(f"\nbuild guide  {describe_guide(guide)}")
     print(f"             {guide.part_steps} part step(s), {guide.conductor_steps} connection(s), "
           f"{len(guide.cut_list)} wire(s) -> guide.html")
+    # The weight is printed because the images are inlined: the guide has to stay a file
+    # somebody opens on a phone, and this is the number that would quietly stop being
+    # true.
+    print(f"step images  {t_shots:6.1f} ms   {len(images)} render(s), "
+          f"guide.html is {len(html.encode('utf-8')) // 1024} KB")
     for warning in guide.warnings:
         print(f"  ! {warning.code}: {warning.message}")
 

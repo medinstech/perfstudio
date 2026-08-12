@@ -263,6 +263,31 @@ closed without a bump.
   step card's illustration. Highlighting dims the other parts and the copper and never
   the board — a step card says which holes a part goes in, and a reader who cannot see
   the holes has been handed the answer with the question rubbed out.
+- **The build guide has pictures** (PLAN.md §7.2), one per step: the board as it stands
+  at that point with the thing that step asks for picked out of it. Written by
+  **File → Export Build Guide**, by headless mode, and by the MCP `generate_guide`.
+  22 renders in about half a second on the NE555 fixture, because one render window is
+  re-actored per step rather than stood up again for each.
+  - **Photographed from the side the work is done on.** Almost every connection is made
+    on the solder side, and shot from the component side it is behind 1.6 mm of board:
+    the first version produced fourteen pictures of a board with nothing happening in
+    them. There are two cameras now, and a step is shot from the face the builder is
+    actually looking at when they do it.
+  - **Tinted, not merely brightened.** The subject was first given its own colour with
+    the light turned up, which is invisible when the subject is a black DIP and
+    everything around it has been dimmed to near-black. A step image cannot depend on the
+    part happening to be a light colour.
+  - Within a face the camera frames the finished board once and is then left alone, so
+    flipping through the guide reads as one board being built rather than a series of
+    unrelated photographs.
+  - `guide_export.guide_to_html` takes **raw PNG bytes** and base64s them into the
+    document itself. Not paths and not URLs: a caller cannot hand it a link, so the
+    finished guide cannot acquire a dependency on a server or on the folder it was
+    written into. It still opens from a USB stick in five years, which is the whole
+    reason that file has no CDN, no fonts and no network. Headless prints the resulting
+    size, because that is the property that would quietly stop being true.
+  - A guide with no pictures is still a complete guide. On an install where VTK will not
+    load, MCP reports `step_images: 0` and writes every word of it anyway.
 
 ### Changed
 

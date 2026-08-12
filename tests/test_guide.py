@@ -25,7 +25,9 @@ resistance quoted back as an expectation, and the phase a check lands in.
 from __future__ import annotations
 
 import csv
+import base64
 import dataclasses
+from html import escape
 import io
 import json
 from pathlib import Path
@@ -875,3 +877,59 @@ def test_a_part_the_guide_could_not_describe_is_never_drawn() -> None:
 
     assert "cmp-x" not in {c.id for c in finished.components}
     assert any(w.code == "unknown-footprint" for w in guide.warnings)
+
+
+# ---------------------------------------------------------------------------
+# Step illustrations (PLAN.md §7.2)
+# ---------------------------------------------------------------------------
+
+
+def test_a_step_picture_is_carried_in_the_file_rather_than_linked() -> None:
+    """The guide has to open from a USB stick on a phone in five years. A caller hands
+    over PNG BYTES and this module base64s them, so there is no way to give the finished
+    document a dependency on a server or on the folder it was written into."""
+    doc = routed_ne555()
+    guide = build_guide(doc, REGISTRY)
+    first = all_steps(guide)[0]
+    png = b"\x89PNG\r\n\x1a\n-not-really-a-png-but-bytes-are-bytes"
+
+    html = guide_to_html(guide, {step_focus(first): png})
+
+    encoded = base64.b64encode(png).decode("ascii")
+    assert f'src="data:image/png;base64,{encoded}"' in html
+    assert "http://" not in html and "https://" not in html
+
+
+def test_a_step_with_no_picture_is_still_a_complete_step() -> None:
+    """Illustrations are worth having and not worth failing an export over: on a machine
+    with no usable VTK every word of the guide is still correct."""
+    guide = build_guide(routed_ne555(), REGISTRY)
+
+    plain = guide_to_html(guide)
+
+    assert "<img" not in plain
+    # ...and the steps themselves are untouched by their absence.
+    assert plain.count('class="step"') == guide.total_steps
+
+
+def test_only_the_steps_that_were_rendered_get_a_picture() -> None:
+    doc = routed_ne555()
+    guide = build_guide(doc, REGISTRY)
+    steps = all_steps(guide)
+    some = {step_focus(s): b"\x89PNG fake" for s in steps[:3]}
+
+    html = guide_to_html(guide, some)
+
+    assert html.count("<img") == 3
+
+
+def test_the_picture_is_labelled_with_what_to_do_not_with_what_it_is() -> None:
+    """Printed, read aloud, or opened where images do not load, the sentence that
+    survives has to be the instruction."""
+    doc = routed_ne555()
+    guide = build_guide(doc, REGISTRY)
+    first = all_steps(guide)[0]
+
+    html = guide_to_html(guide, {step_focus(first): b"\x89PNG fake"})
+
+    assert f'alt="{escape(first.title)}"' in html

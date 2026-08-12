@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import vtk  # type: ignore[import-untyped]
+from vtkmodules.util import numpy_support
 
 from perfstudio.connectivity import FootprintLookup
 from perfstudio.geometry import (
@@ -36,6 +37,7 @@ from perfstudio.geometry import (
     printed_row_label,
     transform_offset,
 )
+from perfstudio.guide import Guide, all_steps, document_at_step, step_focus
 from perfstudio.model import (
     Board,
     BoardSide,
@@ -1263,10 +1265,29 @@ def _dim(actor: vtk.vtkActor) -> vtk.vtkActor:
     return actor
 
 
+#: What the subject of a step is tinted towards. A fixed colour rather than "the part's
+#: own, but brighter": raising the brightness of a BLACK DIP against parts dimmed to
+#: near-black leaves the two indistinguishable, which is exactly what the first attempt
+#: produced. A step image has one job, and it cannot depend on the part having a light
+#: colour to begin with.
+HIGHLIGHT_RGB: tuple[float, float, float] = (0.44, 0.72, 1.0)
+
+#: How far towards it. Short of 1 so the shape still shades and reads as a solid object
+#: rather than a flat silhouette.
+HIGHLIGHT_MIX: float = 0.75
+
+
 def _pick_out(actor: vtk.vtkActor) -> vtk.vtkActor:
-    """The one thing this step is about: its own colour, lit so it reads at thumbnail size
-    without being recoloured into something the builder then cannot recognise."""
-    actor.GetProperty().SetAmbient(0.42)
+    """The one thing this step is about. The caption names the part; this says WHERE."""
+    prop = actor.GetProperty()
+    prop.SetColor(
+        *(
+            channel * (1 - HIGHLIGHT_MIX) + target * HIGHLIGHT_MIX
+            for channel, target in zip(prop.GetColor(), HIGHLIGHT_RGB, strict=True)
+        )
+    )
+    prop.SetAmbient(0.45)
+    prop.SetSpecular(0.15)
     return actor
 
 
@@ -1456,3 +1477,80 @@ def render_offscreen(
     writer.SetInputConnection(w2i.GetOutputPort())
     writer.Write()
     return stats
+
+
+def step_is_solder_side(doc: PerfDocument, focus: str) -> bool:
+    """Which face a step's work happens on, given what it is about.
+
+    A part goes in from the component side. A connection is made on whichever face its
+    conductor lies on, which for everything except a top jumper is the solder side --
+    so this is the difference between illustrating a step and photographing the back of
+    the board it is behind.
+    """
+    for conductor in doc.conductors:
+        if conductor.id == focus:
+            return conductor.side == "bottom"
+    return False
+
+
+def render_step_images(
+    doc: PerfDocument,
+    guide: Guide,
+    lookup: FootprintLookup,
+    width: int = 560,
+    height: int = 370,
+) -> dict[str, bytes]:
+    """One picture per build step (PLAN.md §7.2), keyed by ``guide.step_focus``.
+
+    PNG bytes rather than files, because that is what ``guide_export.guide_to_html``
+    takes: it base64s them into the document, so the finished guide cannot acquire a
+    dependency on a folder beside it.
+
+    FROM THE SIDE THE WORK IS DONE ON. Most connections are made on the solder side, and
+    photographed from the component side they are behind 1.6 mm of board -- the first
+    version of this produced fourteen pictures of a board with nothing happening in them.
+    So there are two cameras, and a step is shot from whichever face its subject is on,
+    which is also the face the builder is looking at when they do it.
+
+    Within a face the camera is framed on the FINISHED board and then left alone. Framing
+    each step on its own contents would zoom in hard on the first part and back out as
+    the board filled, so flipping through the guide would read as a series of unrelated
+    photographs rather than one board being built.
+
+    One render window per face, re-actored per step -- which is what ``populate_renderer``
+    exists for, and is the difference between half a second and a minute.
+    """
+    steps = all_steps(guide)
+    if not steps:
+        return {}
+
+    windows: dict[bool, tuple[vtk.vtkRenderer, vtk.vtkRenderWindow]] = {}
+
+    def window_for(flipped: bool) -> tuple[vtk.vtkRenderer, vtk.vtkRenderWindow]:
+        if flipped not in windows:
+            ren, _stats = build_renderer(doc, lookup, flipped=flipped)
+            win = vtk.vtkRenderWindow()
+            win.SetOffScreenRendering(1)
+            win.AddRenderer(ren)
+            win.SetSize(width, height)
+            windows[flipped] = (ren, win)
+        return windows[flipped]
+
+    images: dict[str, bytes] = {}
+    for index, step in enumerate(steps):
+        focus = step_focus(step)
+        ren, win = window_for(step_is_solder_side(doc, focus))
+        populate_renderer(
+            ren, document_at_step(doc, guide, index), lookup, highlight=focus
+        )
+        win.Render()
+        grab = vtk.vtkWindowToImageFilter()
+        grab.SetInput(win)
+        grab.Update()
+        writer = vtk.vtkPNGWriter()
+        writer.WriteToMemoryOn()
+        writer.SetInputConnection(grab.GetOutputPort())
+        writer.Write()
+        png = numpy_support.vtk_to_numpy(writer.GetResult())  # type: ignore[no-untyped-call]
+        images[focus] = bytes(png.tobytes())
+    return images

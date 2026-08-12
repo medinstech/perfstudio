@@ -1503,6 +1503,55 @@ def _actor_colours(ren: object) -> list[tuple[float, float, float]]:
     ]
 
 
+def test_every_step_gets_a_picture_of_its_own() -> None:
+    """PLAN.md §7.2. Keyed by guide.step_focus, which is what guide_export looks them up
+    by, so a mismatch here shows as a guide with no illustrations rather than a crash."""
+    from perfstudio.guide import all_steps, build_guide, step_focus
+    from perfstudio.ui import view3d
+
+    doc = _load_dense()
+    lookup = footprint_lookup()
+    guide = build_guide(doc, lookup)
+
+    images = view3d.render_step_images(doc, guide, lookup, width=200, height=140)
+
+    assert set(images) == {step_focus(step) for step in all_steps(guide)}
+    png_magic = bytes([0x89]) + b"PNG"
+    assert all(png.startswith(png_magic) for png in images.values())
+
+
+def test_a_connection_is_photographed_from_the_side_it_is_made_on() -> None:
+    """The fault this exists to prevent: almost every connection is made on the solder
+    side, and shot from the component side it is behind 1.6 mm of board. The first version
+    of the step images produced fourteen pictures of a board with nothing happening."""
+    from perfstudio.guide import all_steps, build_guide, step_focus
+    from perfstudio.ui import view3d
+
+    doc = _load_dense()
+    guide = build_guide(doc, footprint_lookup())
+    side_of = {c.id: c.side for c in doc.conductors}
+
+    seen_bottom = False
+    for step in all_steps(guide):
+        focus = step_focus(step)
+        expected = side_of.get(focus) == "bottom"
+        assert view3d.step_is_solder_side(doc, focus) is expected
+        seen_bottom |= expected
+
+    assert seen_bottom, "this fixture is meant to have solder-side connections"
+    # ...and the other way too, or the test would pass on a rule that always said True.
+    assert any(c.side == "top" for c in doc.conductors), "and top-side ones"
+
+
+def test_a_part_is_always_photographed_from_the_component_side() -> None:
+    """Parts go in from the top, whatever else is on the board."""
+    from perfstudio.ui import view3d
+
+    doc = _load_dense()
+
+    assert not any(view3d.step_is_solder_side(doc, c.id) for c in doc.components)
+
+
 def test_solder_and_wire_are_not_the_same_grey() -> None:
     """PLAN.md Sec 8.3 makes telling them apart at a glance a requirement of this view.
     They were (0.72, 0.74, 0.77) and (0.85, 0.87, 0.89) -- the same grey."""

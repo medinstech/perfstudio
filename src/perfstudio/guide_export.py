@@ -22,15 +22,17 @@ they need a real renderer. This file references them rather than reproducing the
 
 from __future__ import annotations
 
+import base64
 import csv
 import io
 import json
+from collections.abc import Mapping
 from dataclasses import fields, is_dataclass
 from html import escape
 from typing import Any
 
 from .geometry import format_hole
-from .guide import Checkpoint, ConductorStep, Guide, GuideStep, PartStep
+from .guide import Checkpoint, ConductorStep, Guide, GuideStep, PartStep, step_focus
 from .model import HoleCoord
 from .version import __version__
 
@@ -204,6 +206,8 @@ input[type=checkbox] { width: 1.25rem; height: 1.25rem; margin-top: .2rem; flex:
 .title { font-weight: 600; }
 .meta { color: var(--dim); font-size: .875rem; }
 .note { font-size: .9rem; margin-top: .35rem; }
+.shot { display: block; width: 100%; max-width: 30rem; margin: .6rem 0 .1rem;
+        border: 1px solid var(--line); border-radius: 8px; background: #14161b; }
 .hole { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
         background: var(--panel-2); border-radius: 4px; padding: 0 .3rem; }
 .tag { font-size: .72rem; text-transform: uppercase; letter-spacing: .05em;
@@ -277,11 +281,19 @@ _SCRIPT = """
 """
 
 
-def guide_to_html(guide: Guide) -> str:
+def guide_to_html(guide: Guide, step_images: Mapping[str, bytes] | None = None) -> str:
     """One self-contained HTML file: no network, no assets, no build step.
 
     Deliberately not a framework. This file has to open from a USB stick on a phone in
     five years' time, which rules out every dependency that could stop existing.
+
+    ``step_images`` are the illustrations PLAN.md §7.2 asks for, keyed by
+    ``guide.step_focus(step)``. **Raw PNG bytes, not URLs or paths** — this function
+    base64s them into the document itself. That is the whole point: a caller cannot hand
+    it a link, so the finished file cannot acquire a dependency on a server, a folder
+    beside it, or a phone's network. Rendering them needs VTK and a real board, which is
+    the host's job (``ui/view3d.render_offscreen``); this module has never known what a
+    board looks like and still does not.
     """
     parts: list[str] = [
         "<!doctype html>",
@@ -305,6 +317,7 @@ def guide_to_html(guide: Guide) -> str:
 
     parts.append(_html_preparation(guide))
 
+    images = step_images or {}
     step_id = 0
     for phase in guide.phases:
         if phase.is_empty or phase.number == 0:
@@ -316,7 +329,7 @@ def guide_to_html(guide: Guide) -> str:
         )
         for step in phase.steps:
             step_id += 1
-            parts.append(_html_step(step, f"s{step_id}"))
+            parts.append(_html_step(step, f"s{step_id}", images))
         if phase.checkpoints:
             parts.append("<h3>Check before moving on</h3>")
             for check in phase.checkpoints:
@@ -358,13 +371,31 @@ def _html_preparation(guide: Guide) -> str:
     )
 
 
-def _html_step(step: GuideStep, dom_id: str) -> str:
+def _html_step(step: GuideStep, dom_id: str, images: Mapping[str, bytes]) -> str:
+    picture = _html_step_image(step, images)
     if isinstance(step, PartStep):
-        return _html_part_step(step, dom_id)
-    return _html_conductor_step(step, dom_id)
+        return _html_part_step(step, dom_id, picture)
+    return _html_conductor_step(step, dom_id, picture)
 
 
-def _html_part_step(step: PartStep, dom_id: str) -> str:
+def _html_step_image(step: GuideStep, images: Mapping[str, bytes]) -> str:
+    """The board as it stands at this step, with this step's own part picked out.
+
+    Inlined as a data URI. The alt text is the step's title rather than "step image":
+    printed, or read aloud, or opened where the picture will not load, the sentence that
+    survives has to be the one that says what to do.
+    """
+    png = images.get(step_focus(step))
+    if not png:
+        return ""
+    encoded = base64.b64encode(png).decode("ascii")
+    return (
+        f'<img class="shot" alt="{escape(step.title)}" '
+        f'src="data:image/png;base64,{encoded}">'
+    )
+
+
+def _html_part_step(step: PartStep, dom_id: str, picture: str = "") -> str:
     holes = " ".join(f"{escape(number)}:{_hole(at)}" for number, at in step.pin_holes)
     bits = [
         f'<div class="title">{escape(step.title)}</div>',
@@ -384,12 +415,12 @@ def _html_part_step(step: PartStep, dom_id: str) -> str:
     return (
         f'<label class="step" for="{dom_id}">'
         f'<input type="checkbox" id="{dom_id}">'
-        f'<span class="body">{"".join(bits)}</span>'
+        f'<span class="body">{"".join(bits)}{picture}</span>'
         f'<span class="tag">{escape(step.archetype)}</span></label>'
     )
 
 
-def _html_conductor_step(step: ConductorStep, dom_id: str) -> str:
+def _html_conductor_step(step: ConductorStep, dom_id: str, picture: str = "") -> str:
     bits = [
         f'<div class="title">{escape(step.net_name)}: '
         f"{_hole(step.path[0])} → {_hole(step.path[-1])}</div>"
@@ -430,7 +461,7 @@ def _html_conductor_step(step: ConductorStep, dom_id: str) -> str:
     return (
         f'<label class="step" for="{dom_id}">'
         f'<input type="checkbox" id="{dom_id}">'
-        f'<span class="body">{"".join(bits)}</span>'
+        f'<span class="body">{"".join(bits)}{picture}</span>'
         f'<span class="tag" style="color:var(--trace)">'
         f'{escape(step.conductor_kind.replace("-", " "))}</span></label>'
     )
