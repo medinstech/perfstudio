@@ -235,6 +235,34 @@ closed without a bump.
   in the File menu. Hole addresses, rule ids and every engine message stay untranslated
   on purpose: the addresses are the tool's vocabulary, and the engine's strings are
   compared byte for byte against the reference implementation.
+- **The exploded view** (PLAN.md D7, milestone M4), **View → Exploded View** in the 3D
+  panel. Every part rises off the board with a **leader line down to each hole it drops
+  into**, which is not decoration: a plain vertical lift is ambiguous, and measurably so.
+  From the standard three-quarter viewpoint a part over the middle of the board projects
+  onto the board and reads as sitting on it, while an identical part near an edge reads
+  as floating — the same lift meaning two different things depending only on where the
+  part happens to be. The lines settle it at any lift, and they answer the question the
+  view exists to ask, which is not "what is on this board" but "which holes does *this*
+  one go in". The camera is left alone, as everywhere else in this view.
+- **The board part-way through being built** (`guide.document_at_step`,
+  `guide.step_focus`). One function that knows what "partly built" means, because the two
+  things that need it must agree: an assembly animation is these documents played in
+  sequence, and a step image is one of them with the step's own part picked out. Worked
+  out separately they would drift, and a board would end up drawn with a part the step
+  beside it has not asked for yet.
+  - Build order, not document order and not the order the router produced: lowest part
+    first, jumpers before whatever stands on them.
+  - The board, its mechanical features and the schematic intent never change — they are
+    what you started with. Only the parts and the copper arrive over time, one per step,
+    and the last step is the document itself rather than a reconstruction of it.
+  - The index is clamped at both ends, so a caller rendering a "before" frame and a
+    "done" frame needs no special cases. A part the guide could not write a step for
+    never appears at any index: a picture must not show a part in a hole the guide
+    declined to name.
+- **`view3d.render_offscreen` takes `exploded_mm` and `highlight`**, so one call is one
+  step card's illustration. Highlighting dims the other parts and the copper and never
+  the board — a step card says which holes a part goes in, and a reader who cannot see
+  the holes has been handed the answer with the question rubbed out.
 
 ### Changed
 

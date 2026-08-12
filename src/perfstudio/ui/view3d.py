@@ -1175,10 +1175,119 @@ def _insulation_rgb(net_class: NetClass | None, signal_index: int) -> tuple[floa
 # --------------------------------------------------------------------------- scene
 
 
+#: How far a part rises off the board in the exploded view, in mm. Well clear of the
+#: tallest thing in the registry (a 20 mm TO-220), so no part floats inside its
+#: neighbour, and the leads stay pointing at the holes they came out of.
+EXPLODED_LIFT_MM: float = 26.0
+
+#: What a dimmed actor's colour is multiplied by. Enough that the part a step is about is
+#: unmistakable in a thumbnail; not so far that the rest of the board stops being legible
+#: context, because a step image that does not show WHERE is not worth printing.
+DIM_FACTOR: float = 0.42
+
+
+#: Leader lines in the exploded view: thin, unlit, and darker than any part, so they
+#: read as annotation rather than as wire.
+LEADER_RGB: tuple[float, float, float] = (0.42, 0.45, 0.50)
+
+
+def build_drop_lines(
+    lookup: FootprintLookup, doc: PerfDocument, lift: float
+) -> vtk.vtkActor | None:
+    """A line from every lifted part down to the holes it drops into.
+
+    Without these a vertical explosion is ambiguous, and measurably so: a part over the
+    MIDDLE of the board projects onto the board from the standard three-quarter viewpoint
+    and reads as sitting on it, while one near an edge reads as floating. Same lift, two
+    different apparent meanings, decided by nothing but where the part happens to be.
+
+    Lines fix it at any lift, and they are what the view is for (PLAN.md D7): the question
+    an exploded view answers is not "what is on this board" — the assembled view answers
+    that — but "which holes does THIS go in", and a leader line is the answer drawn.
+
+    One actor for every line on the board. A part with no known footprint contributes
+    nothing, as everywhere else.
+    """
+    if lift <= 0:
+        return None
+
+    points = vtk.vtkPoints()
+    lines = vtk.vtkCellArray()
+    for comp in doc.components:
+        footprint = lookup(comp.footprint_id)
+        if footprint is None:
+            continue
+        for _pin, hole in all_pin_holes(comp, footprint):
+            x, y = _xy(doc.board, hole)
+            first = points.InsertNextPoint(x, y, 0.0)
+            second = points.InsertNextPoint(x, y, lift)
+            lines.InsertNextCell(2)
+            lines.InsertCellPoint(first)
+            lines.InsertCellPoint(second)
+
+    if points.GetNumberOfPoints() == 0:
+        return None
+
+    data = vtk.vtkPolyData()
+    data.SetPoints(points)
+    data.SetLines(lines)
+    mapper = vtk.vtkPolyDataMapper()
+    mapper.SetInputData(data)
+    actor = vtk.vtkActor()
+    actor.SetMapper(mapper)
+    prop = actor.GetProperty()
+    prop.SetColor(*LEADER_RGB)
+    prop.SetLineWidth(1.0)
+    prop.SetAmbient(1.0)
+    prop.SetDiffuse(0.0)
+    return actor
+
+
+def _lift(actor: vtk.vtkActor, dz: float) -> vtk.vtkActor:
+    """Raise one actor off the board. Added to its position rather than assigned: a
+    glyphed piece bakes its instances into the points and leaves the actor at the origin,
+    while a solid piece has already been positioned."""
+    if dz:
+        x, y, z = actor.GetPosition()
+        actor.SetPosition(x, y, z + dz)
+    return actor
+
+
+def _dim(actor: vtk.vtkActor) -> vtk.vtkActor:
+    """Push an actor back so something else can come forward. Keeps its hue -- a dimmed
+    resistor still reads as a resistor -- and drops the specular, since a highlight on a
+    part that is not the subject is exactly what the eye goes to."""
+    prop = actor.GetProperty()
+    prop.SetColor(*(channel * DIM_FACTOR for channel in prop.GetColor()))
+    prop.SetSpecular(0.0)
+    return actor
+
+
+def _pick_out(actor: vtk.vtkActor) -> vtk.vtkActor:
+    """The one thing this step is about: its own colour, lit so it reads at thumbnail size
+    without being recoloured into something the builder then cannot recognise."""
+    actor.GetProperty().SetAmbient(0.42)
+    return actor
+
+
 def populate_renderer(
-    ren: vtk.vtkRenderer, doc: PerfDocument, lookup: FootprintLookup
+    ren: vtk.vtkRenderer,
+    doc: PerfDocument,
+    lookup: FootprintLookup,
+    *,
+    exploded_mm: float = 0.0,
+    highlight: str | None = None,
 ) -> dict[str, int]:
     """Rebuild the board's actors in an EXISTING renderer, leaving the camera alone.
+
+    ``exploded_mm`` lifts every part off the board, so the holes each one drops into are
+    visible at once (PLAN.md D7). ``highlight`` is a component or conductor id — the value
+    ``guide.step_focus`` returns — and dims everything else, which is what turns a frame
+    of the assembly sequence into an illustration of one step.
+
+    The BOARD is never dimmed, only the other parts and the copper. A step card says which
+    holes a part goes in, and a reader who cannot see the holes has been given a picture
+    of the answer with the question rubbed out.
 
     This separation is the whole point. The interactive view is refreshed after every
     command, and refreshing used to mean constructing a fresh renderer -- which meant
@@ -1208,8 +1317,15 @@ def populate_renderer(
         ren.AddActor(actor)
     for actor in build_mounting_holes(doc):
         ren.AddActor(actor)
+    leaders = build_drop_lines(lookup, doc, exploded_mm)
+    if leaders is not None:
+        ren.AddActor(leaders)
     for comp in doc.components:
+        subject = highlight is not None and comp.id == highlight
         for actor in build_component(lookup, comp, board):
+            _lift(actor, exploded_mm)
+            if highlight is not None:
+                (_pick_out if subject else _dim)(actor)
             ren.AddActor(actor)
     net_class_by_id = {net.id: net.net_class for net in doc.nets}
     signal_index = {
@@ -1217,6 +1333,7 @@ def populate_renderer(
         for index, net in enumerate(n for n in doc.nets if n.net_class == "signal")
     }
     for stack, cond in enumerate(doc.conductors):
+        subject = highlight is not None and cond.id == highlight
         for actor in build_conductor(
             cond,
             board,
@@ -1224,6 +1341,8 @@ def populate_renderer(
             net_class=net_class_by_id.get(cond.net_id or ""),
             signal_index=signal_index.get(cond.net_id or "", 0),
         ):
+            if highlight is not None:
+                (_pick_out if subject else _dim)(actor)
             ren.AddActor(actor)
 
     ren.ResetCameraClippingRange()
@@ -1259,13 +1378,18 @@ def apply_default_camera(ren: vtk.vtkRenderer, flipped: bool = False) -> None:
 
 
 def build_renderer(
-    doc: PerfDocument, lookup: FootprintLookup, flipped: bool = False
+    doc: PerfDocument,
+    lookup: FootprintLookup,
+    flipped: bool = False,
+    *,
+    exploded_mm: float = 0.0,
+    highlight: str | None = None,
 ) -> tuple[vtk.vtkRenderer, dict[str, int]]:
     """A renderer with the board in it, framed and lit. For a first build or a one-off
     offscreen render; an interactive view refreshes with :func:`populate_renderer`."""
     ren = vtk.vtkRenderer()
     ren.SetBackground(0.09, 0.09, 0.11)
-    stats = populate_renderer(ren, doc, lookup)
+    stats = populate_renderer(ren, doc, lookup, exploded_mm=exploded_mm, highlight=highlight)
     apply_default_camera(ren, flipped)
 
     # TWO lights, above and below. With only the upper one, flipping to the solder side
@@ -1305,9 +1429,19 @@ def render_offscreen(
     width: int = 1400,
     height: int = 950,
     flipped: bool = False,
+    *,
+    exploded_mm: float = 0.0,
+    highlight: str | None = None,
 ) -> dict[str, int]:
-    """Headless render. This is the path the build guide's step images would use."""
-    ren, stats = build_renderer(doc, lookup, flipped=flipped)
+    """Headless render. This is the path the build guide's step images take.
+
+    Pair it with ``guide.document_at_step`` and ``guide.step_focus`` and one call is one
+    step card's illustration: the board as it stands at that point in the build, with the
+    thing that step asks for picked out of it.
+    """
+    ren, stats = build_renderer(
+        doc, lookup, flipped=flipped, exploded_mm=exploded_mm, highlight=highlight
+    )
     win = vtk.vtkRenderWindow()
     win.SetOffScreenRendering(1)
     win.AddRenderer(ren)

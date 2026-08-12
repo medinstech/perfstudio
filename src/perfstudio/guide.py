@@ -47,6 +47,7 @@ what the output looks like.
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass
 from typing import Literal, TypeAlias
 
@@ -1385,3 +1386,48 @@ def all_checkpoints(guide: Guide) -> tuple[Checkpoint, ...]:
 
 def all_steps(guide: Guide) -> tuple[GuideStep, ...]:
     return tuple(step for phase in guide.phases for step in phase.steps)
+
+
+def step_focus(step: GuideStep) -> str:
+    """What one step is ABOUT: a component id or a conductor id.
+
+    The thing a step image highlights and an animation frame brings in. Both need it and
+    neither should be reaching into the union to find out which kind it has.
+    """
+    return step.component_id if isinstance(step, PartStep) else step.conductor_id
+
+
+def document_at_step(doc: PerfDocument, guide: Guide, step_index: int) -> PerfDocument:
+    """``doc`` as the board actually stands once step ``step_index`` has been done.
+
+    The board, its mechanical features and its schematic intent are unchanged -- they are
+    what you started with. The parts and the copper are whatever the guide has told you to
+    fit BY THAT POINT, in the guide's own order, which is not document order and is not
+    the order the router produced: it is build order, lowest part first, jumpers before
+    whatever stands on them.
+
+    This is the one place that knows what "partly built" means, because both things that
+    need it must agree. An assembly animation is these documents played in sequence; a
+    step image is one of them with :func:`step_focus`'s part picked out. If the animation
+    and the guide's illustrations each worked it out their own way, a board would
+    eventually be drawn with a part that the step beside it has not asked for yet.
+
+    ``step_index`` is clamped: below zero gives the bare board as it comes out of the
+    envelope, and at or past the last step gives the finished article. Callers rendering a
+    "before" frame and a "done" frame therefore need no special cases.
+
+    Components the guide could not write a step for -- an unknown footprint, reported in
+    ``guide.warnings`` -- never appear, at any index. A picture cannot honestly show a
+    part in a hole the guide declined to name.
+    """
+    steps = all_steps(guide)
+    done = steps[: max(0, min(step_index + 1, len(steps)))]
+
+    fitted = {step.component_id for step in done if isinstance(step, PartStep)}
+    laid = {step.conductor_id for step in done if isinstance(step, ConductorStep)}
+
+    return dataclasses.replace(
+        doc,
+        components=tuple(c for c in doc.components if c.id in fitted),
+        conductors=tuple(c for c in doc.conductors if c.id in laid),
+    )

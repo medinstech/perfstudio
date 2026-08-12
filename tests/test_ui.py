@@ -1397,6 +1397,112 @@ def test_the_legend_on_the_underside_reads_the_right_way_round() -> None:
     assert bottom_points != top_points
 
 
+def test_the_exploded_view_lifts_the_parts_and_leaves_the_board_alone() -> None:
+    """PLAN.md D7. The board is what the parts come off; lifting that too would just be
+    moving the camera.
+
+    Measured on the PARTS, not on the scene bounds: the leader lines reach the full lift
+    whether or not anything rose with them, so a bounds check passes on a view where every
+    part is still flat on the board.
+    """
+    import vtk
+
+    from perfstudio.ui import view3d
+
+    doc = _load_dense()
+    lookup = footprint_lookup()
+    lift = view3d.EXPLODED_LIFT_MM
+
+    for comp in doc.components:
+        actors = view3d.build_component(lookup, comp, doc.board)
+        for actor in actors:
+            before = actor.GetBounds()[4]
+            view3d._lift(actor, lift)
+            assert actor.GetBounds()[4] == pytest.approx(before + lift)
+
+    flat = vtk.vtkRenderer()
+    view3d.populate_renderer(flat, doc, lookup)
+    blown = vtk.vtkRenderer()
+    view3d.populate_renderer(blown, doc, lookup, exploded_mm=lift)
+
+    # The substrate's underside is the lowest thing in either scene and has not moved.
+    assert _lowest(blown) == pytest.approx(_lowest(flat))
+
+
+def test_every_exploded_part_has_a_line_down_to_its_own_holes() -> None:
+    """Without them a vertical explosion is ambiguous: a part over the MIDDLE of the board
+    projects onto it from the standard viewpoint and reads as sitting on it, while an
+    identical part near an edge reads as floating. The line is the answer to the question
+    the view exists to ask -- which holes does this one go in."""
+    from perfstudio.geometry import all_pin_holes
+    from perfstudio.ui import view3d
+
+    doc = _load_dense()
+    lookup = footprint_lookup()
+    lift = view3d.EXPLODED_LIFT_MM
+    leaders = view3d.build_drop_lines(lookup, doc, lift)
+    assert leaders is not None
+
+    pins = sum(
+        len(all_pin_holes(c, lookup(c.footprint_id)))
+        for c in doc.components
+        if lookup(c.footprint_id) is not None
+    )
+    data = leaders.GetMapper().GetInput()
+    assert data.GetNumberOfLines() == pins, "one leader per pin hole"
+
+    bounds = data.GetBounds()
+    assert bounds[4] == pytest.approx(0.0)
+    assert bounds[5] == pytest.approx(lift), "the lines must reach the parts they belong to"
+
+    assert view3d.build_drop_lines(lookup, doc, 0.0) is None, "nothing to lead to"
+
+
+def test_highlighting_a_step_dims_the_other_parts_but_never_the_board() -> None:
+    """A step card says which holes a part goes in. Dimming the board with everything else
+    would be printing the answer with the question rubbed out."""
+    import vtk
+
+    from perfstudio.ui import view3d
+
+    doc = _load_dense()
+    lookup = footprint_lookup()
+    subject = doc.components[0]
+
+    plain = vtk.vtkRenderer()
+    view3d.populate_renderer(plain, doc, lookup)
+    picked = vtk.vtkRenderer()
+    view3d.populate_renderer(picked, doc, lookup, highlight=subject.id)
+
+    # The substrate is built first either way, so position 0 is comparable.
+    assert _actor_colours(picked)[0] == _actor_colours(plain)[0], "the board was dimmed"
+    assert _actor_colours(picked) != _actor_colours(plain), "nothing was dimmed at all"
+
+    others = view3d.build_component(lookup, doc.components[1], doc.board)
+    before = others[0].GetProperty().GetColor()
+    view3d._dim(others[0])
+    after = others[0].GetProperty().GetColor()
+    assert all(a < b for a, b in zip(after, before, strict=True) if b > 0)
+    assert after != before
+
+
+def _highest(ren: object) -> float:
+    return ren.ComputeVisiblePropBounds()[5]  # type: ignore[attr-defined]
+
+
+def _lowest(ren: object) -> float:
+    return ren.ComputeVisiblePropBounds()[4]  # type: ignore[attr-defined]
+
+
+def _actor_colours(ren: object) -> list[tuple[float, float, float]]:
+    actors = ren.GetActors()  # type: ignore[attr-defined]
+    actors.InitTraversal()
+    return [
+        actors.GetNextActor().GetProperty().GetColor()
+        for _ in range(actors.GetNumberOfItems())
+    ]
+
+
 def test_solder_and_wire_are_not_the_same_grey() -> None:
     """PLAN.md Sec 8.3 makes telling them apart at a glance a requirement of this view.
     They were (0.72, 0.74, 0.77) and (0.85, 0.87, 0.89) -- the same grey."""

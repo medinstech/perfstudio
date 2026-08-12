@@ -950,9 +950,24 @@ class MainWindow(QMainWindow):
         if not self.dock_3d.isVisible():
             self._3d_stale = True
             return
-        view3d.populate_renderer(self._vtk_renderer, self.bus.document, self.lookup)
+        view3d.populate_renderer(
+            self._vtk_renderer,
+            self.bus.document,
+            self.lookup,
+            exploded_mm=view3d.EXPLODED_LIFT_MM if self.act_exploded.isChecked() else 0.0,
+        )
         self.vtk_widget.GetRenderWindow().Render()
         self._3d_stale = False
+
+    def on_toggle_exploded(self) -> None:
+        """Lift the parts off the board, or set them back down.
+
+        The camera is left where it is on purpose, as everywhere else in this view: a
+        person who has just framed the corner they care about does not want exploding the
+        board to throw that away. The parts rise in place and the leader lines show where
+        each one goes back down to.
+        """
+        self._refresh_3d()
 
     def on_reset_3d_camera(self) -> None:
         if self._vtk_renderer is None:
@@ -1188,6 +1203,12 @@ class MainWindow(QMainWindow):
         self.act_3d.setToolTip("Open the 3D board view (Ctrl+3). Closed by default: it is the "
                               "most expensive thing in the window to keep up to date.")
         view_menu.addAction(self.act_3d)
+        self.act_exploded = view_menu.addAction(t("&Exploded View"))
+        self.act_exploded.setCheckable(True)
+        self.act_exploded.setToolTip(
+            t("Lift every part off the board, with a line down to the holes it goes in.")
+        )
+        self.act_exploded.toggled.connect(self.on_toggle_exploded)
         act_reset_3d = view_menu.addAction(t("Reset 3D &Camera"))
         act_reset_3d.triggered.connect(self.on_reset_3d_camera)
 

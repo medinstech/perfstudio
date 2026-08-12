@@ -53,6 +53,8 @@ from perfstudio.guide import (
     all_steps,
     build_guide,
     describe,
+    document_at_step,
+    step_focus,
 )
 from perfstudio.guide_export import bom_to_csv, cut_list_to_csv, guide_to_html, guide_to_json
 from perfstudio.model import (
@@ -791,3 +793,85 @@ def _part_step_for(guide: Guide, ref: str) -> PartStep:
             if isinstance(step, PartStep) and step.ref == ref:
                 return step
     raise AssertionError(f"no part step for {ref}")
+
+
+# ---------------------------------------------------------------------------
+# The board part-way through being built (assembly animation, step images)
+# ---------------------------------------------------------------------------
+
+
+def test_the_board_gains_exactly_one_thing_per_step() -> None:
+    """The sequence an assembly animation plays and a step image samples. Each step adds
+    the one thing its card describes, so a frame can never be ahead of its caption."""
+    doc = routed_ne555()
+    guide = build_guide(doc, REGISTRY)
+    steps = all_steps(guide)
+
+    previous = document_at_step(doc, guide, -1)
+    assert previous.components == () and previous.conductors == ()
+
+    for index, step in enumerate(steps):
+        current = document_at_step(doc, guide, index)
+        gained = (len(current.components) - len(previous.components)) + (
+            len(current.conductors) - len(previous.conductors)
+        )
+        assert gained == 1, f"step {index} added {gained} things"
+
+        focus = step_focus(step)
+        present = {c.id for c in current.components} | {c.id for c in current.conductors}
+        assert focus in present, f"step {index} is about {focus}, which is not on the board yet"
+        previous = current
+
+
+def test_the_last_step_is_the_document_you_started_with() -> None:
+    """Nothing is lost on the way through, and nothing is added. The finished frame of the
+    animation is the board itself, not a reconstruction of it."""
+    doc = routed_ne555()
+    guide = build_guide(doc, REGISTRY)
+
+    assert document_at_step(doc, guide, len(all_steps(guide)) - 1) == doc
+
+
+def test_the_step_index_is_clamped_at_both_ends() -> None:
+    """A caller rendering a "before" frame and a "done" frame needs no special cases."""
+    doc = routed_ne555()
+    guide = build_guide(doc, REGISTRY)
+    last = len(all_steps(guide)) - 1
+
+    assert document_at_step(doc, guide, -50).components == ()
+    assert document_at_step(doc, guide, 9999) == document_at_step(doc, guide, last)
+
+
+def test_the_board_itself_is_never_part_way_built() -> None:
+    """The substrate, its mechanical features and the schematic intent are what you
+    started with — only the parts and the copper arrive over time."""
+    doc = dataclasses.replace(routed_ne555(), height_limit_mm=25.0)
+    guide = build_guide(doc, REGISTRY)
+
+    half = document_at_step(doc, guide, len(all_steps(guide)) // 2)
+
+    assert half.board == doc.board
+    assert half.nets == doc.nets
+    assert half.cuts == doc.cuts
+    assert half.mounting_holes == doc.mounting_holes
+    assert half.edge_connectors == doc.edge_connectors
+    assert half.height_limit_mm == doc.height_limit_mm
+
+
+def test_a_part_the_guide_could_not_describe_is_never_drawn() -> None:
+    """It has no step, so there is no moment at which it arrives. A picture must not show
+    a part in a hole the guide declined to name — the warning is the honest answer."""
+    doc = routed_ne555()
+    doc = dataclasses.replace(
+        doc,
+        components=(
+            *doc.components,
+            dataclasses.replace(doc.components[0], id="cmp-x", ref="X1", footprint_id="nope"),
+        ),
+    )
+    guide = build_guide(doc, REGISTRY)
+
+    finished = document_at_step(doc, guide, len(all_steps(guide)))
+
+    assert "cmp-x" not in {c.id for c in finished.components}
+    assert any(w.code == "unknown-footprint" for w in guide.warnings)

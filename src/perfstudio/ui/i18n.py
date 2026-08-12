@@ -168,6 +168,10 @@ TURKISH: Mapping[str, str] = {
     "First hole": "İlk delik",
     "Fingers": "Parmak sayısı",
     "That inset does not fit on this board.": "Bu kaçıklık bu karta sığmıyor.",
+    "&Exploded View": "&Patlatılmış Görünüm",
+    "Lift every part off the board, with a line down to the holes it goes in.": (
+        "Her parçayı karttan kaldırır; girdiği deliklere inen bir çizgi ile birlikte."
+    ),
     "Height limit": "Yükseklik sınırı",
     "No limit": "Sınırsız",
     "Set Height Limit": "Yükseklik Sınırını Uygula",
