@@ -71,6 +71,7 @@ from perfstudio.geometry import (
     row_label,
     transform_offset,
     transform_pin_offset,
+    undrilled_holes,
 )
 
 # The one place the wire-colour convention is defined, so the editor and the cut list a
@@ -109,6 +110,9 @@ from .scenetext import draw_label, draw_physical_label
 BACKGROUND = QColor("#12131a")
 SUBSTRATE = {"FR4": QColor("#2e6b3f"), "FR2": QColor("#a8834e"), "FR1": QColor("#b8925c")}
 SUBSTRATE_EDGE = QColor("#0d1a12")
+#: The copper comes from the board's own scheme, because a phenolic board's pads are
+#: BARE copper and a plated FR-4 board's are gold. These are the fallbacks for a painter
+#: with no board to ask, and are the plated ones.
 PAD = QColor("#c8a951")
 PAD_RING = QColor("#8a7331")
 PAD_SHEEN = QColor("#e4cd83")
@@ -385,8 +389,9 @@ class PadGridItem(QGraphicsItem):
             return pixmap
         inset = long_side * 0.03
         ring = QRectF(inset, inset, width - 2 * inset, height - 2 * inset)
-        painter.setPen(QPen(PAD_RING, max(1.0, long_side * 0.05)))
-        painter.setBrush(QBrush(PAD))
+        scheme = scheme_for(self.board.material)
+        painter.setPen(QPen(QColor(scheme.pad_ring), max(1.0, long_side * 0.05)))
+        painter.setBrush(QBrush(QColor(scheme.pad)))
         # Radius = half the short side, which turns the rounded rect into a true stadium
         # and, on a square pad, into the circle this used to draw.
         radius = min(ring.width(), ring.height()) / 2
@@ -397,7 +402,7 @@ class PadGridItem(QGraphicsItem):
         # pad is too small on screen for the arc to be more than a smudge.
         if long_side >= 20:
             painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.setPen(QPen(PAD_SHEEN, max(1.0, long_side * 0.055)))
+            painter.setPen(QPen(QColor(scheme.pad_sheen), max(1.0, long_side * 0.055)))
             sheen_w, sheen_h = width * 0.68, height * 0.68
             painter.drawArc(
                 QRectF((width - sheen_w) / 2, (height - sheen_h) / 2, sheen_w, sheen_h),
@@ -703,7 +708,6 @@ class EdgeConnectorItem(QGraphicsItem):
         return _outline_rect(self.board)
 
     def paint(self, painter: QPainter, option: Any, widget: Any = None) -> None:
-        drill_r = self.board.drill_diameter / 2
         for hole in edge_connector_holes(self.connector, self.board):
             rect = edge_finger_rect(self.connector, hole, self.board)
             # The rect is in board mm; only x needs the solder-side reflection, and it
@@ -713,18 +717,16 @@ class EdgeConnectorItem(QGraphicsItem):
                 span_w, _ = hole_span_mm(self.board)
                 left = span_w - (rect.x + rect.width)
             radius = min(rect.width, rect.height) * 0.25
-            painter.setPen(QPen(PAD_RING, 0.08))
-            painter.setBrush(QBrush(PAD if self.near_side else FINGER_FAR))
+            scheme = scheme_for(self.board.material)
+            painter.setPen(QPen(QColor(scheme.pad_ring), 0.08))
+            painter.setBrush(QBrush(QColor(scheme.pad) if self.near_side else FINGER_FAR))
             painter.drawRoundedRect(QRectF(left, rect.y, rect.width, rect.height), radius, radius)
 
-            # The finger is copper laid over the pad, not instead of it, so the hole has to
-            # come back through. Without this a finger reads as a solid tab and the one
-            # thing you need to know about it -- that you can put a wire through it -- is
-            # exactly what is hidden.
-            centre = hole_to_screen(hole, self.board, self.side)
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QBrush(DRILL))
-            painter.drawEllipse(centre, drill_r, drill_r)
+            # NO HOLE. A finger is a solid contact, soldered to from the surface -- there
+            # is nothing to put a lead through, and that is the whole difference between a
+            # finger and a pad. This used to punch the drill back through on the reasoning
+            # that the finger is copper laid OVER the pad; it is not, it is the pad, and
+            # drawing a bore in it made the strip read as an ordinary row of long pads.
 
 
 # ------------------------------------------------------------- references and pins
@@ -1710,10 +1712,14 @@ class BoardScene(QGraphicsScene):
         # side you are looking at bare phenolic with holes drilled through it -- the holes
         # are still all there, and drawing neither them nor the pads would leave a blank
         # slab that says nothing about where anything goes.
+        # `undrilled_holes` on top of the face-sensitive set, and unconditionally: a
+        # finger has no bore, so its position gets neither a pad NOR a hole, on either
+        # face. Without it the component side of a board whose fingers are on the solder
+        # side shows a drilled hole where the board is solid.
         self.pad_grid = PadGridItem(
             board,
             self.side,
-            holes_without_grid_pad(self.document, self.side),
+            holes_without_grid_pad(self.document, self.side) | undrilled_holes(self.document),
             copper=not (board.single_sided and self.side == "top"),
         )
         self.addItem(self.pad_grid)

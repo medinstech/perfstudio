@@ -24,12 +24,12 @@ resistance quoted back as an expectation, and the phase a check lands in.
 
 from __future__ import annotations
 
-import csv
 import base64
+import csv
 import dataclasses
-from html import escape
 import io
 import json
+from html import escape
 from pathlib import Path
 
 import pytest

@@ -36,6 +36,7 @@ from perfstudio.geometry import (
     pad_extent_mm,
     printed_row_label,
     transform_offset,
+    undrilled_holes,
 )
 from perfstudio.guide import Guide, all_steps, document_at_step, step_focus
 from perfstudio.model import (
@@ -56,6 +57,8 @@ SUBSTRATE_RGB = {
     "FR2": (0.62, 0.48, 0.29),
     "FR1": (0.68, 0.55, 0.35),
 }
+#: Fallback copper. The real colour comes from the board's scheme -- bare copper on a
+#: phenolic board, plated gold on a masked one.
 PAD_RGB = (0.80, 0.66, 0.32)
 #: Solder: dull pewter, and rough. Solder is NOT shiny wire, and PLAN.md Sec 8.3 makes
 #: telling the two apart at a glance a requirement of this view rather than a nicety --
@@ -287,7 +290,7 @@ def build_pads(
 
     actor = vtk.vtkActor()
     actor.SetMapper(glyph)
-    actor.GetProperty().SetColor(*PAD_RGB)
+    actor.GetProperty().SetColor(*scheme_for(board.material).pad_rgb)
     actor.GetProperty().SetSpecular(0.4)
     return actor
 
@@ -359,7 +362,7 @@ def build_edge_connectors(doc: PerfDocument) -> list[vtk.vtkActor]:
             mapper.SetInputConnection(append.GetOutputPort())
             actor = vtk.vtkActor()
             actor.SetMapper(mapper)
-            actor.GetProperty().SetColor(*PAD_RGB)
+            actor.GetProperty().SetColor(*scheme_for(board.material).pad_rgb)
             actor.GetProperty().SetSpecular(0.4)
             actors.append(actor)
     return actors
@@ -1331,7 +1334,8 @@ def populate_renderer(
         if board.single_sided and face == "top":
             continue
         ren.AddActor(build_pads(board, face, holes_without_grid_pad(doc, face)))
-    ren.AddActor(build_drills(board, consumed_holes(doc)))
+    # A finger has no bore, so it gets no drill cylinder either.
+    ren.AddActor(build_drills(board, consumed_holes(doc) | undrilled_holes(doc)))
     for actor in build_legend(doc):
         ren.AddActor(actor)
     for actor in build_edge_connectors(doc):

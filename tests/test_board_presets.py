@@ -44,13 +44,16 @@ from perfstudio.geometry import (
     board_outline_mm,
     board_size_mm,
     consumed_holes,
-    edge_axis,
+    edge_connector_holes,
     edge_finger_rect,
+    hole_key,
+    holes_without_grid_pad,
     legend_strip_mm,
     mounting_hole_centre_mm,
     preset_edge_connectors,
     preset_mounting_holes,
     preset_strip_edges,
+    undrilled_holes,
 )
 from perfstudio.model import (
     Board,
@@ -334,29 +337,38 @@ def test_a_green_board_arrives_with_its_finger_strips_and_corner_holes() -> None
     assert board.labels is not None
 
 
-def test_an_orange_phenolic_board_arrives_with_its_legend_and_nothing_else() -> None:
-    """Copper on one face, round pads everywhere, no fingers, no corner holes — but the
-    printed addresses are there, because they are on the real board."""
+def test_an_orange_phenolic_board_arrives_with_what_it_actually_has() -> None:
+    """Copper on one face, round pads through the grid, no corner holes — and the two
+    things it was wrongly denied: its printed addresses, and the finger strips across its
+    short edges. What separates the families is the copper and the screws, not those."""
     preset = next(p for p in STANDARD_PRESETS if p.single_sided)
     board = board_from_preset(preset, DEFAULT_BOARD)
+    connectors = preset_edge_connectors(preset, board)
 
-    assert preset_edge_connectors(preset, board) == ()
-    assert preset_mounting_holes(preset, board) == ()
     assert board.single_sided
     assert board.labels is not None
     assert board.pad_shape == "round"
+    assert preset_mounting_holes(preset, board) == ()
+
+    assert len(connectors) == 2
+    # One face, and the fingers are no exception: "both" would put a strip of contacts on
+    # the bare phenolic side, where the board has nothing but substrate.
+    assert {c.face for c in connectors} == {"bottom"}
 
 
-def test_the_finger_strips_go_on_the_edges_with_room_for_them() -> None:
-    """Derived from the border rather than named, because the answer flips with the
-    aspect ratio -- and a strip down the cramped side has nowhere to put the legend."""
+def test_the_finger_strips_go_across_the_short_edges() -> None:
+    """A strip of contacts belongs across the narrow end of a board, not down its length.
+
+    This used to be derived from which BORDER was wider, which happens to give the same
+    answer on the green boards and the wrong one on the phenolic: its two borders are
+    2.14 mm and 1.98 mm, so a tenth of a millimetre decided which way the strips ran. A
+    physical fact about a board should not turn on a rounding difference.
+    """
     for preset in STANDARD_PRESETS:
-        if preset.single_sided:
-            continue
         board = board_from_preset(preset, DEFAULT_BOARD)
-        edges = preset_strip_edges(board)
-        wider_axis = "vertical" if board.border_y_mm > board.border_x_mm else "horizontal"
-        assert all(edge_axis(edge) == wider_axis for edge in edges)
+        width, height = board_size_mm(board)
+        expected = ("top", "bottom") if width <= height else ("left", "right")
+        assert preset_strip_edges(board) == expected, preset.name
 
 
 def test_the_corner_holes_of_every_green_preset_destroy_no_pads() -> None:
@@ -444,3 +456,35 @@ def test_a_preset_still_refuses_to_strand_a_part() -> None:
     assert not result.ok
     assert result.code == "would-strand-component"
     assert bus.document.board.cols == board.cols, "and nothing moved"
+
+
+def test_a_connector_finger_has_no_hole_through_it() -> None:
+    """A finger is a solid contact, soldered to from the surface. There is nothing to put
+    a lead through, and that is the whole difference between a finger and a pad.
+
+    Both renderers were drilling straight through them, because the grid drills every
+    position it has and 2D then punched the bore back through the finger on top — so the
+    strip came out looking like an ordinary row of pads that happened to be long.
+    """
+    preset = next(p for p in STANDARD_PRESETS if p.single_sided)
+    board = board_from_preset(preset, DEFAULT_BOARD)
+    connectors = preset_edge_connectors(preset, board)
+    doc = _doc(board, edge_connectors=connectors)
+
+    undrilled = undrilled_holes(doc)
+    expected = {
+        hole_key(hole)
+        for connector in connectors
+        for hole in edge_connector_holes(connector, board)
+    }
+    assert undrilled == expected
+    assert undrilled, "this board is meant to have fingers"
+
+    # Not face-sensitive, unlike the pad question: a hole either goes through the board
+    # or it does not, whichever side the copper is on. These fingers are solder-side only.
+    assert {c.face for c in connectors} == {"bottom"}
+    assert undrilled <= holes_without_grid_pad(doc, "bottom")
+
+
+def test_a_board_with_no_fingers_has_every_hole_drilled() -> None:
+    assert undrilled_holes(_doc(BOARD)) == frozenset()

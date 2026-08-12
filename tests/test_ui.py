@@ -1368,7 +1368,6 @@ def test_the_legend_on_the_underside_reads_the_right_way_round() -> None:
     import dataclasses
 
     from perfstudio.model import BoardLabels
-
     from perfstudio.ui import view3d
 
     doc = _load_dense()

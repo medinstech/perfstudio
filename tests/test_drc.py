@@ -45,7 +45,6 @@ from perfstudio.drc import (
     run_drc,
 )
 from perfstudio.footprints import footprint_lookup
-from perfstudio.occupancy import build_occupancy
 from perfstudio.model import (
     HEAT_CLEARANCE_MM,
     Board,
@@ -65,6 +64,7 @@ from perfstudio.model import (
     StripConductor,
     WireConductor,
 )
+from perfstudio.occupancy import build_occupancy
 
 # ---------------------------------------------------------------------------
 # Golden fixtures: minimal *.perf reader (board, components, conductors, nets).

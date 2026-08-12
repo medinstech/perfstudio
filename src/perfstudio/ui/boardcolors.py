@@ -38,16 +38,43 @@ class BoardScheme:
     rgb: tuple[float, float, float]
     #: Silkscreen printed on the board -- the row and column labels real boards carry.
     silk: str
+    #: THE COPPER, and it belongs to the scheme for the same reason the substrate does.
+    #: It was one global gold for every board, which is right for the plated FR-4 boards
+    #: and wrong for the cheap phenolic one, whose pads are BARE COPPER -- pink-brown,
+    #: not yellow. A pertinax board wearing FR-4's gold pads is not the board anybody has
+    #: in their hand, and the finish is one of the two things you notice first.
+    pad: str
+    #: The darker edge of a pad, and the lighter catch of light across it.
+    pad_ring: str
+    pad_sheen: str
+    #: The same copper for the 3D view.
+    pad_rgb: tuple[float, float, float]
 
+
+#: Plated copper on a masked board: the yellow of gold over nickel, which is what the
+#: green, blue and black prototyping boards are finished with.
+_GOLD = ("#c8a951", "#8a7331", "#e4cd83", (0.80, 0.66, 0.32))
+
+#: BARE copper, unmasked and unplated, which is what a phenolic board has. Pink-brown
+#: rather than yellow, and only a little lighter than the substrate it sits on -- these
+#: boards genuinely are low-contrast in the hand, and drawing them otherwise makes the
+#: screen easier to read than the object it is a picture of.
+_BARE_COPPER = ("#c87f4e", "#7a4526", "#e0a173", (0.78, 0.50, 0.30))
 
 SCHEMES: tuple[BoardScheme, ...] = (
-    BoardScheme("green", "Green (FR-4)", "#2e6b3f", "#0d1a12", (0.16, 0.36, 0.21), "#e8f0ea"),
-    BoardScheme("blue", "Blue", "#1f4e8c", "#0b1a2e", (0.10, 0.26, 0.50), "#e6edf7"),
-    BoardScheme("black", "Black", "#232529", "#0a0b0d", (0.11, 0.12, 0.14), "#d8dbe0"),
-    BoardScheme("red", "Red", "#8c2a26", "#2e0b0a", (0.50, 0.13, 0.12), "#f6e6e5"),
-    BoardScheme("purple", "Purple", "#4a2a72", "#170d24", (0.26, 0.14, 0.42), "#ece4f6"),
-    BoardScheme("white", "White", "#d8d6ce", "#a09c90", (0.84, 0.83, 0.79), "#3a3a36"),
-    BoardScheme("phenolic", "Orange (phenolic)", "#c07b32", "#3a2410", (0.75, 0.48, 0.20), "#2c2115"),
+    BoardScheme("green", "Green (FR-4)", "#2e6b3f", "#0d1a12", (0.16, 0.36, 0.21), "#e8f0ea", *_GOLD),
+    BoardScheme("blue", "Blue", "#1f4e8c", "#0b1a2e", (0.10, 0.26, 0.50), "#e6edf7", *_GOLD),
+    BoardScheme("black", "Black", "#232529", "#0a0b0d", (0.11, 0.12, 0.14), "#d8dbe0", *_GOLD),
+    BoardScheme("red", "Red", "#8c2a26", "#2e0b0a", (0.50, 0.13, 0.12), "#f6e6e5", *_GOLD),
+    BoardScheme("purple", "Purple", "#4a2a72", "#170d24", (0.26, 0.14, 0.42), "#ece4f6", *_GOLD),
+    BoardScheme("white", "White", "#d8d6ce", "#a09c90", (0.84, 0.83, 0.79), "#3a3a36", *_GOLD),
+    # Paper-phenolic: a warm mid-brown with a yellow cast, closer to thick cardboard than
+    # to the pumpkin orange this used to be. The old value read as a colour a board is
+    # PAINTED; this is the colour a board IS.
+    BoardScheme(
+        "phenolic", "Orange (phenolic)", "#b9894b", "#3a2a12", (0.72, 0.54, 0.30), "#2c2115",
+        *_BARE_COPPER,
+    ),
 )
 
 BY_KEY = {scheme.key: scheme for scheme in SCHEMES}

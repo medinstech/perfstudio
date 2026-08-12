@@ -400,6 +400,31 @@ closed without a bump.
 
 ### Fixed
 
+- **The pertinax board was still wrong in three more ways**, all corrected against the
+  board in a user's hand rather than against a guess.
+  - **Its finger strips were missing entirely.** The preset gave them only to the green
+    board. Both families have them.
+  - **They go across the SHORT edges.** The edges used to be derived from which *border*
+    was wider, which gives the right answer on the green boards and the wrong one on the
+    phenolic: its two borders are 2.14 mm and 1.98 mm, so a tenth of a millimetre decided
+    which way a strip of contacts ran. `preset_strip_edges` asks the board's proportions
+    now — a strip belongs across the narrow end, not down the length.
+  - **A finger has no hole through it** (`geometry.undrilled_holes`). It is a solid
+    contact soldered to from the surface, which is the whole difference between a finger
+    and a pad. Both renderers were drilling them: the grid drills every position it has,
+    and 2D then punched the bore back through the finger on top, on the stated reasoning
+    that "the finger is copper laid over the pad". It is not laid over the pad; it *is*
+    the pad.
+  - And they are **solder-side only** on a single-sided board. `face: "both"` had put a
+    strip of contacts on the bare phenolic face, where the board has nothing but
+    substrate.
+- **A phenolic board wore FR-4's gold pads.** `BoardScheme` described the substrate and
+  the silkscreen but not the copper, so one global gold served every board. The finish is
+  one of the two things you notice first: a plated FR-4 board is yellow, and a cheap
+  phenolic board's pads are **bare copper**, pink-brown and only a little lighter than
+  the substrate. The copper is part of the scheme now, and the phenolic substrate itself
+  went from a pumpkin orange to the warm mid-brown the board actually is — the old value
+  read as a colour a board is *painted* rather than the colour a board *is*.
 - **The orange pertinax board had no printed addresses, and it should have.** The preset
   gave a legend to the green double-sided board and withheld it from the phenolic one, on
   the reasoning that the phenolic board is the stripped-down product — no fingers, no

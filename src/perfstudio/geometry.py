@@ -362,6 +362,27 @@ def holes_without_grid_pad(doc: PerfDocument, side: BoardSide) -> frozenset[str]
     return frozenset(without)
 
 
+def undrilled_holes(doc: PerfDocument) -> frozenset[str]:
+    """Grid positions that are NOT drilled, as :func:`hole_key` strings.
+
+    An edge-connector finger is a solid contact. It has no bore: there is nothing to put
+    a lead through, which is the difference between a finger and a pad and is why a
+    finger is soldered to from the surface. The renderers were drilling straight through
+    them because the grid drills every position it has, so the strip came out looking
+    like an ordinary row of pads that happened to be long.
+
+    Not face-sensitive, unlike :func:`holes_without_grid_pad`: a hole either goes through
+    the board or it does not, whichever side the copper is on.
+    """
+    if not doc.edge_connectors:
+        return frozenset()
+    return frozenset(
+        hole_key(hole)
+        for connector in doc.edge_connectors
+        for hole in edge_connector_holes(connector, doc.board)
+    )
+
+
 def mounting_hole_centre_mm(hole_mount: MountingHole, board: Board) -> Point2:
     """Where the bore actually is, in board-space mm.
 
@@ -635,22 +656,29 @@ def board_from_preset(preset: BoardPreset, base: Board) -> Board:
 
 
 def preset_strip_edges(board: Board) -> tuple[BoardEdge, ...]:
-    """The two edges a double-sided board's oblong finger pads run along.
+    """The two edges a preset board's oblong finger pads run along.
 
-    The pair with the WIDER border, which is where the room is and, on every board of
-    this kind, where the fingers actually are. Derived rather than named: the answer
-    changes with the aspect ratio, and a preset that named the edges would put the strip
-    down the cramped side of a portrait board.
+    THE SHORT EDGES OF THE BOARD, which is where they are on the real thing: a strip of
+    contacts belongs across the narrow end, not down the length. On a 5 x 7 board that is
+    the two 5 cm edges, so a portrait board gets them top and bottom.
+
+    This used to pick the pair with the wider BORDER, on the reasoning that the border is
+    where the room is. That happens to give the same answer on the green boards and the
+    wrong one on the phenolic, whose borders are near enough equal (2.14 mm against
+    1.98 mm) that a tenth of a millimetre decided which way the strips ran. A physical
+    fact about the board should not turn on a rounding difference.
     """
-    if board.border_y_mm > board.border_x_mm:
-        return ("top", "bottom")
-    return ("left", "right")
+    width, height = board_size_mm(board)
+    return ("top", "bottom") if width <= height else ("left", "right")
 
 
 def preset_edge_connectors(preset: BoardPreset, board: Board) -> tuple[EdgeConnector, ...]:
-    """The finger strips a preset's board is sold with. None on a phenolic board."""
-    if preset.single_sided:
-        return ()
+    """The finger strips a preset's board is sold with.
+
+    BOTH families have them, on their two short edges. The phenolic board was given none
+    at all at first, on the reasoning that it is the stripped-down product -- and it is,
+    but not of these.
+    """
     return tuple(
         EdgeConnector(
             id=f"ec-{edge}",
@@ -659,6 +687,10 @@ def preset_edge_connectors(preset: BoardPreset, board: Board) -> tuple[EdgeConne
             count=board.rows if edge in ("left", "right") else board.cols,
             finger_width=round(min(2.0, board.pitch * 0.8), 3),
             inset_mm=FINGER_INSET_MM,
+            # A single-sided board has copper on ONE face, and its fingers are no
+            # exception: "both" put a strip of contacts on the bare phenolic side, where
+            # the board has nothing but substrate.
+            face="bottom" if board.single_sided else "both",
         )
         for edge in preset_strip_edges(board)
     )
