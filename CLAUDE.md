@@ -12,9 +12,8 @@ pytest tests/test_router.py       # one file
 pytest tests/test_drc.py::test_name -x       # one test, stop on first failure
 pytest -k "proximity"             # by name fragment
 
-mypy --strict src tests           # the engine must stay strict-clean
-ruff check src tests
-ruff format src tests
+mypy --strict src                 # `src` ONLY — see below
+ruff check src tests --statistics # reports; NOT a gate — see below
 
 perfstudio                        # launch on a blank board
 perfstudio some/board.perf        # ...or open a document
@@ -22,9 +21,30 @@ python -m perfstudio.ui.main --headless tools/diffcheck/golden/dense.perf
 python -m perfstudio.mcp          # the MCP server (docs/MCP.md)
 ```
 
-`--headless` renders 2D/3D/PDF to files, runs DRC + LVS and prints timings with no
-display. It is how the visual output is exercised in CI, and the fastest way to check
-that a rendering change did not crash.
+The suite is ~1175 tests in about 35 seconds, so run all of it; there is no reason to
+narrow to one file except while iterating.
+
+**`mypy --strict src`, never `src tests`.** The engine is strict-clean and must stay
+that way. The tests are not and never have been — `--strict` over `tests` reports ~267
+errors, nearly all `no-untyped-def` on UI test helpers. CI gates on `src` alone, and
+deliberately: gating on something already broken teaches everyone to ignore the red tick.
+
+**Ruff is not a gate, and `ruff format` must not be run casually.** `ruff check src
+tests` reports a few hundred findings — overwhelmingly `E501` on message strings and
+`RUF001` on the Turkish catalogue's dotless ı — and `ruff format` would rewrite 40 of the
+57 files, pointing every line of blame in the repository at a reformat. The CI `lint` job
+is `continue-on-error: true` for exactly this reason. Settling it is worth doing;
+settling it as a side effect of an unrelated change is not.
+
+`--headless` renders 2D/3D/PDF into `headless_out/`, runs DRC + LVS and prints timings
+with no display. It is how the visual output is exercised in CI — the only step that
+exercises 2D, 3D and the PDF export against a real board rather than against assertions
+about them — and the fastest way to check that a rendering change did not crash. It
+inspects a document and never edits one.
+
+CI runs Linux on every push and the full three-OS matrix only on `main`, on tags, and on
+manual dispatch (runner minutes are metered; Windows bills 2×, macOS 10×). A
+platform-specific rendering fault therefore surfaces at merge, not on a branch push.
 
 UI tests run under `QT_QPA_PLATFORM=offscreen` (set in `tests/test_ui.py` before PySide6
 is imported). Qt's offscreen plugin ships no font database on Windows, so tests that
@@ -111,6 +131,33 @@ is physically in the way") are separate modules over the same conductors.
 gap. `geometry.validate_orthogonal_chain` is the only adjacency check in the codebase;
 a hand-edited file that violates it loads with a *warning* and is reported by DRC, rather
 than locking the user out of their own project.
+
+### Footprints are generated, not shipped
+
+`footprints.py` computes all 61 footprints from a handful of numeric parameters — zero
+assets, no mesh library, no share-alike licence to inherit (PLAN.md D6). The same
+`BodySpec` that a footprint carries is what `ui/bodies.py` extrudes in 3D, so the 2D
+footprint and the 3D body cannot disagree.
+
+Three conventions here are load-bearing:
+
+- **The anchor is pin 1, at grid offset `(0, 0)`** — for two-lead, inline (TO-92,
+  TO-220, headers) and DIP packages alike. It is a real physical pin in every case, never
+  a geometric centre. This is the convention the heat-proximity rule above works around.
+- **`body_outline` is the COURTYARD, not the body.** It is padded by
+  `COURTYARD_MARGIN_MM` (half a grid step) so its bounding box contains every pin plus
+  clearance, which is what overlap DRC needs. For `r-axial-3` it spans 10.16 mm while the
+  resistor body is 5 mm long. Drawing the outline as the part draws a box half again too
+  big — the specific mistake that made both renderers look wrong. The real body comes
+  from `BodySpec.dims` via `bodies.placement_for`.
+- **Pin offsets are integer steps on `STANDARD_PITCH_MM`** regardless of the board's own
+  pitch; `body_outline` and `body_height` are always millimetres.
+
+The file is a line-for-line port whose acceptance criterion is bit-for-bit reproduction
+of `tools/diffcheck/golden/footprints.expected.json`, down to the last IEEE-754 double.
+Preserve the original's arithmetic and generation order, not merely its intent.
+`BodySpec.dims` keys stay camelCase (`"rowSpacing"`, `"tabHeight"`) because `dims` is a
+free-form dict, not a model field — there is nothing there for `persist.py` to rename.
 
 ### Hole addressing
 
@@ -204,6 +251,42 @@ they are easy to get wrong the same way again:
 renderers still draw the holes on the bare face — a face with neither holes nor pads is a
 blank slab.
 
+### The guide's order is physical, and its checks are derived
+
+`guide.py` has nine phases (`PHASE_TITLES`, 0–8) and the order is not editorial: parts go
+in **shortest first**, because a tall part fitted early stops the board lying flat on the
+bench while the short ones are soldered. `PHASE_BY_ARCHETYPE` is that height ordering
+written down; `PHASE_BY_CONDUCTOR` puts the solder side in phase 6 and long insulated
+wire in 7. ICs go last (phase 8) — heat and ESD.
+
+Two derivations must not be replaced with conventions:
+
+- **Polarity comes from the registry's pin NAMES** (`'+'`, `'K'`, `'A'`), never from a
+  convention about pin 1 — an electrolytic's pin 1 is its positive lead, an LED's is its
+  anode, a diode's is its cathode. A rule keyed on pin 1 produces a dead board.
+- **Checkpoints come from the same lists that predicted the risk.** Continuity is read
+  off the schematic's nets; isolation probes are generated from DRC's `R5'`
+  (`solder-trace-proximity`) hits. The risk the tool predicted and the measurement the
+  user performs are one list, which is the whole point.
+
+### The MCP server is behaviour in one file, protocol in the other
+
+`mcp/session.py` holds every tool's actual behaviour; `mcp/server.py` only binds names,
+docstrings and transport. So the tools are tested by calling them — no client, no stdio,
+no event loop. Put logic in `session.py`; a test that needs a live session is testing the
+transport, and the interesting failures are never there.
+
+**The stdout trap (PLAN.md §9.1): on stdio, stdout IS the protocol.** One stray `print`
+corrupts the stream and the client reports something baffling and unrelated. Nothing
+under `perfstudio.mcp` may print; logging is configured to stderr before anything else,
+and the render tools import Qt and VTK *lazily inside the tool* rather than at module
+scope — those imports are the real risk, since the engine itself has no prints.
+
+Every result crossing this boundary is plain JSON-able data, and every hole is given as
+its **address** (`"C7"`), the same language DRC and the guide speak. A refused command
+returns `{"ok": false, "code": ..., "message": ...}` rather than raising, matching
+`CommandBus.dispatch`'s contract — an agent must be able to try something and be told no.
+
 ### Layering
 
 ```
@@ -225,6 +308,23 @@ as the board zooms — physical silkscreen scales with the board, annotations do
 
 `ui/view3d.populate_renderer` refreshes actors in an existing renderer and deliberately
 leaves the camera alone; only `apply_default_camera` may move the viewpoint.
+
+**Appearance is a view setting, not a document field.** Solder-mask colour changes
+nothing about the circuit, and adding it to `Board` would reopen the byte-for-byte `.perf`
+format for a cosmetic preference — so `ui/boardcolors.py` owns it, it is chosen from the
+View menu, and it is not saved. Each scheme carries the 2D and 3D colours *together*, so
+a board cannot be green in the editor and blue in the 3D view. Reach for this test on any
+new visual option before adding a model field.
+
+Three colour tables exist and answer different questions: `ui/theme.py` colours the
+**application** (deliberately dim, so the eye lands on the board), `view2d`'s theme block
+colours the **physical object** (FR4 green, tinned copper, solder grey), and
+`ui/bodies.py` colours **parts** — in one table, so a resistor is the same beige in the
+editor, the 3D view and the guide's step images.
+
+`parsers/` is pure string-to-data: `sexpr.py` knows no KiCad semantics (just text to
+tree), `kicad.py` maps a KiCad 6+ export netlist onto `Net` / `NetNode`. Reading the file
+from disk is the caller's job, as everywhere else in the engine.
 
 ### i18n
 
