@@ -77,17 +77,18 @@ duran ısıya duyarlı bir parça.
 
 ## Rehberin bir sırası var, ve onu izleyebilirsiniz
 
-![NE555 kartı adım adım kendini kuruyor](./docs/images/assembly.gif)
+![NE555 kartı kendini kuruyor: önce parçalar, sonra kart çevriliyor ve bakır işleniyor](./docs/images/assembly.gif)
 
 Parçalar **en kısadan başlayarak** takılır — erken takılan yüksek bir parça, kısa olanlar
-lehimlenirken kartın tezgâha düz yatmasını engeller. Sonra lehim yüzeyi, sonra uzun
-yalıtımlı teller, ve en sonda ısı ile ESD nedeniyle entegreler. Bir parçanın gövdesi
-altında sıkışıp kalacak bir jumper **ilk** faza alınır, çünkü o parça yerine
-lehimlendiğinde artık çok geçtir.
+lehimlenirken kartın tezgâha düz yatmasını engeller. Sonra kart ters çevrilir ve bakır
+işlenir; entegreler ısı ile ESD nedeniyle en sona kalır. Bir parçanın gövdesi altında
+sıkışıp kalacak bir jumper **ilk** faza alınır, çünkü o parça yerine lehimlendiğinde artık
+çok geçtir.
 
-Rehberin dayattığı montaj sırası budur; yukarıdaki animasyon da 3D panelindeki montaj
-kaydırıcısının çağırdığı fonksiyonun aynısı oynatılarak üretiliyor — yani rehberin
-gerçekten vermediği bir sırayı gösteremez.
+Animasyon kartı ortada ters çeviriyor, çünkü siz de öyle yaparsınız: perfboard saydam
+değildir ve bu montajın yirmi iki adımının on dördü yukarıdan göremediğiniz yüzde
+gerçekleşir. Animasyon, 3D panelindeki montaj kaydırıcısının çağırdığı fonksiyonun aynısı
+oynatılarak üretiliyor — yani rehberin gerçekten vermediği bir sırayı gösteremez.
 
 ## Çalıştırmak
 
