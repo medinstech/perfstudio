@@ -1842,6 +1842,10 @@ class MainWindow(QMainWindow):
         self.library_tree = QTreeWidget()
         self.library_tree.setHeaderLabels(["Part", "Pins"])
         self.library_tree.setRootIsDecorated(True)
+        self.library_tree.setIconSize(QSize(icons.PART_SIZE, icons.PART_SIZE))
+        # Tighter than Qt's default, to pay for the icons: a picture and an indent both
+        # come out of the same column, and the name is what gets elided when they win.
+        self.library_tree.setIndentation(12)
         header = self.library_tree.header()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
@@ -1874,10 +1878,16 @@ class MainWindow(QMainWindow):
         for archetype in sorted(by_archetype):
             group = QTreeWidgetItem([archetype.replace("-", " "), ""])
             group.setFlags(group.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+            # The group takes the picture of its first member, which is the archetype's
+            # picture: every part under it is that shape in that colour.
+            group.setIcon(0, icons.part_icon(by_archetype[archetype][0]))
             tree.addTopLevelItem(group)
             for footprint in by_archetype[archetype]:
                 leaf = QTreeWidgetItem([footprint.name, str(len(footprint.pins))])
                 leaf.setData(0, ROLE_FOOTPRINT_ID, footprint.id)
+                # In the colours the board draws it in, so finding the part you picked is
+                # recognition rather than reading -- see the note in icons.py.
+                leaf.setIcon(0, icons.part_icon(footprint))
                 # The NAME first, because the column it sits in is the one that gets
                 # elided: "Film capa…" in a 300 px dock is the string a tooltip has to
                 # finish, and the id alone was no help at all with that.

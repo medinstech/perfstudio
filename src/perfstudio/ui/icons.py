@@ -21,6 +21,7 @@ the icons are built around rather than four unrelated pictures.
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Any
 
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap
@@ -355,4 +356,254 @@ def icon(name: str) -> QIcon:
 
     built = QIcon(pixmap)
     _cache[name] = built
+    return built
+
+
+# ---------------------------------------------------------------------------
+# Part pictures
+# ---------------------------------------------------------------------------
+#
+# The library listed sixty-one parts as sixty-one lines of grey text, which is a poor way
+# to answer the question people actually bring to it: "which of these is the fat blue one
+# with a stripe". So each row now carries a small picture of the part.
+#
+# THE COLOURS ARE NOT DECORATION AND THEY ARE NOT CHOSEN HERE. Every one comes from
+# ``bodies.style_for`` -- the same fill, edge and accent the 2D board and the 3D view draw
+# that part with. An electrolytic is the same dark blue in the library, on the board and in
+# the render, so picking one from the list and finding it on the board is recognition
+# rather than reading. A second palette would drift the first time either was touched.
+#
+# The VIEW is per archetype, and deliberately not the board's top-down one: a resistor is
+# recognised side-on by its bands, a DIP from above by its notch. These are pictures of
+# parts as they sit in a drawer, because that is the question this list answers -- the
+# board next to it is what shows the footprint.
+
+
+#: Icon size for a tree row. Smaller than the toolbar's, which is a button.
+PART_SIZE = 20
+
+#: Tinned component lead. Matches ``view2d.LEAD``, kept local so the icons do not drag in
+#: the whole 2D scene module to draw a wire.
+LEAD = "#c2c8d0"
+
+_part_cache: dict[str, QIcon] = {}
+
+
+def _fill(p: QPainter, style: Any, colour: str | None = None) -> None:
+    p.setBrush(QColor(colour or style.fill))
+    p.setPen(_pen(style.edge, 5))
+
+
+def _leads(p: QPainter, xs: tuple[float, ...], top: float, bottom: float) -> None:
+    p.setPen(_pen(LEAD, 6))
+    for x in xs:
+        p.drawLine(QPointF(x, top), QPointF(x, bottom))
+
+
+def _axial(p: QPainter, style: Any, polarized: bool) -> None:
+    """A resistor side-on -- or, polarized, a diode: same archetype, different object."""
+    p.setPen(_pen(LEAD, 6))
+    p.drawLine(QPointF(4, 50), QPointF(26, 50))
+    p.drawLine(QPointF(74, 50), QPointF(96, 50))
+    _fill(p, style)
+    p.drawRoundedRect(QRectF(24, 32, 52, 36), 14, 14)
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QColor(style.accent))
+    if polarized:
+        p.drawRect(QRectF(64, 33, 8, 34))  # the cathode band, at one end only
+    else:
+        for x in (36, 46, 56):
+            p.drawRect(QRectF(x, 33, 6, 34))
+
+
+def _electrolytic(p: QPainter, style: Any) -> None:
+    _leads(p, (42, 60), 70, 96)
+    _fill(p, style)
+    p.drawRoundedRect(QRectF(26, 12, 50, 62), 10, 10)
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QColor(style.accent))
+    p.drawRect(QRectF(30, 18, 12, 50))  # the polarity stripe down one side
+    p.setBrush(QColor(style.edge))
+    p.drawEllipse(QRectF(30, 24, 12, 12))
+
+
+def _disc(p: QPainter, style: Any) -> None:
+    _leads(p, (40, 60), 66, 96)
+    _fill(p, style)
+    p.drawEllipse(QPointF(50, 42), 30, 30)
+
+
+def _box_film(p: QPainter, style: Any) -> None:
+    _leads(p, (38, 62), 70, 96)
+    _fill(p, style)
+    p.drawRoundedRect(QRectF(20, 16, 60, 56), 6, 6)
+    p.setPen(_pen(style.accent, 5))
+    p.drawLine(QPointF(30, 34), QPointF(70, 34))
+
+
+def _dip(p: QPainter, style: Any) -> None:
+    """From above, because the notch is how a DIP is recognised and which way up it goes."""
+    p.setPen(_pen(LEAD, 7))
+    for y in (30, 50, 70):
+        p.drawLine(QPointF(8, y), QPointF(24, y))
+        p.drawLine(QPointF(76, y), QPointF(92, y))
+    _fill(p, style)
+    p.drawRoundedRect(QRectF(22, 14, 56, 72), 4, 4)
+    p.setPen(_pen(style.accent, 5))
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    p.drawArc(QRectF(38, 6, 24, 20), 180 * 16, 180 * 16)  # the pin-1 notch
+
+
+def _to92(p: QPainter, style: Any) -> None:
+    _leads(p, (36, 50, 64), 68, 96)
+    _fill(p, style)
+    path = QPainterPath()
+    path.moveTo(QPointF(24, 56))
+    path.arcTo(QRectF(20, 10, 60, 60), 190, -200)
+    path.closeSubpath()
+    p.drawPath(path)
+
+
+def _to220(p: QPainter, style: Any) -> None:
+    _leads(p, (36, 50, 64), 74, 96)
+    # The tab first: it is metal, it is the part that bolts down, and it is why this
+    # archetype is the one the heat rules care about.
+    p.setBrush(QColor("#a8b0ba"))
+    p.setPen(_pen("#5a626c", 5))
+    p.drawRoundedRect(QRectF(28, 8, 44, 26), 4, 4)
+    p.setBrush(QColor("#2b3038"))
+    p.drawEllipse(QPointF(50, 18), 7, 7)
+    _fill(p, style)
+    p.drawRoundedRect(QRectF(26, 30, 48, 46), 4, 4)
+
+
+def _led(p: QPainter, style: Any) -> None:
+    # One lead longer than the other, which is the only thing on an LED that says which
+    # way round it goes once it is out of the packet.
+    p.setPen(_pen(LEAD, 6))
+    p.drawLine(QPointF(40, 66), QPointF(40, 96))
+    p.drawLine(QPointF(60, 66), QPointF(60, 84))
+    _fill(p, style)
+    path = QPainterPath()
+    path.moveTo(QPointF(24, 70))
+    path.lineTo(QPointF(24, 44))
+    path.arcTo(QRectF(24, 14, 52, 60), 180, -180)
+    path.lineTo(QPointF(76, 70))
+    path.closeSubpath()
+    p.drawPath(path)
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QColor(style.accent))
+    p.drawEllipse(QRectF(34, 26, 12, 20))  # the highlight on the lens
+
+
+def _pin_header(p: QPainter, style: Any) -> None:
+    p.setPen(_pen(style.accent, 7))
+    for x in (26, 42, 58, 74):
+        p.drawLine(QPointF(x, 14), QPointF(x, 44))
+        p.drawLine(QPointF(x, 66), QPointF(x, 92))
+    _fill(p, style)
+    p.drawRect(QRectF(16, 40, 68, 28))
+
+
+def _screw_terminal(p: QPainter, style: Any) -> None:
+    _leads(p, (34, 66), 76, 96)
+    _fill(p, style)
+    p.drawRoundedRect(QRectF(16, 20, 68, 58), 5, 5)
+    p.setBrush(QColor(style.accent))
+    p.setPen(_pen(style.edge, 4))
+    for x in (34, 66):
+        p.drawEllipse(QPointF(x, 40), 12, 12)
+        p.drawLine(QPointF(x - 7, 40), QPointF(x + 7, 40))
+
+
+def _potentiometer(p: QPainter, style: Any) -> None:
+    _leads(p, (30, 50, 70), 78, 96)
+    _fill(p, style)
+    p.drawRoundedRect(QRectF(18, 34, 64, 46), 5, 5)
+    p.setBrush(QColor(style.accent))
+    p.drawEllipse(QPointF(50, 30), 18, 18)
+    p.setPen(_pen(style.edge, 6))
+    p.drawLine(QPointF(50, 18), QPointF(50, 30))
+
+
+def _tactile(p: QPainter, style: Any) -> None:
+    p.setPen(_pen(LEAD, 6))
+    for x, y in ((22, 26), (22, 74), (78, 26), (78, 74)):
+        p.drawLine(QPointF(x, y), QPointF(x + (10 if x > 50 else -10), y))
+    _fill(p, style)
+    p.drawRoundedRect(QRectF(22, 16, 56, 68), 5, 5)
+    p.setBrush(QColor(style.accent))
+    p.drawEllipse(QPointF(50, 50), 16, 16)
+
+
+def _crystal(p: QPainter, style: Any) -> None:
+    _leads(p, (38, 62), 72, 96)
+    _fill(p, style)
+    p.drawRoundedRect(QRectF(22, 14, 56, 60), 24, 24)
+    p.setPen(_pen(style.accent, 5))
+    p.drawLine(QPointF(32, 28), QPointF(32, 60))  # the highlight down a metal can
+
+
+def _relay(p: QPainter, style: Any) -> None:
+    _leads(p, (28, 50, 72), 78, 96)
+    _fill(p, style)
+    p.drawRoundedRect(QRectF(14, 16, 72, 62), 6, 6)
+    p.setPen(_pen(style.accent, 5))
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    p.drawRect(QRectF(26, 28, 48, 22))
+
+
+def _generic(p: QPainter, style: Any) -> None:
+    _leads(p, (36, 64), 72, 96)
+    _fill(p, style)
+    p.drawRoundedRect(QRectF(20, 20, 60, 52), 5, 5)
+
+
+#: Archetype -> drawing. One per member of ``model.BodyArchetype``; a test fails if the
+#: model gains one and this does not, because a part with no picture in a list of pictures
+#: reads as a broken row rather than a missing icon.
+PART_DRAWINGS: dict[str, Callable[[QPainter, Any], None]] = {
+    "radial-electrolytic": _electrolytic,
+    "disc-ceramic": _disc,
+    "box-film": _box_film,
+    "dip": _dip,
+    "to92": _to92,
+    "to220": _to220,
+    "led-round": _led,
+    "pin-header": _pin_header,
+    "screw-terminal": _screw_terminal,
+    "potentiometer": _potentiometer,
+    "tactile-switch": _tactile,
+    "crystal-hc49": _crystal,
+    "relay-box": _relay,
+    "generic-box": _generic,
+}
+
+
+def part_icon(footprint: Any) -> QIcon:
+    """A small colour picture of this part, in the colours the board draws it in."""
+    from .bodies import style_for
+
+    archetype = footprint.body.archetype
+    style = style_for(footprint)
+    key = f"{archetype}:{footprint.polarized}:{style.fill}"
+    cached = _part_cache.get(key)
+    if cached is not None:
+        return cached
+
+    scale = 2
+    pixmap = QPixmap(PART_SIZE * scale, PART_SIZE * scale)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.scale(PART_SIZE * scale / BOX, PART_SIZE * scale / BOX)
+    if archetype == "axial-cylinder":
+        _axial(painter, style, bool(footprint.polarized))
+    else:
+        PART_DRAWINGS.get(archetype, _generic)(painter, style)
+    painter.end()
+    pixmap.setDevicePixelRatio(float(scale))
+
+    built = QIcon(pixmap)
+    _part_cache[key] = built
     return built

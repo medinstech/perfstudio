@@ -37,6 +37,21 @@ closed without a bump.
     refused pair clears the half-made connection — otherwise the next click joins something
     the user has stopped thinking about.
 
+- **The parts library has pictures of the parts.** Sixty-one footprints were sixty-one
+  lines of grey text, which is a poor way to answer the question people bring to that
+  panel: *which of these is the fat blue one with a stripe*. Every row now carries a small
+  colour drawing — a beige resistor with bands, a dark blue electrolytic with its polarity
+  stripe, a black DIP with its pin-1 notch, a red LED with one lead longer than the other.
+  - **The colours are not chosen here.** Every one comes from `bodies.style_for`, the same
+    fill, edge and accent the 2D board and the 3D view draw that part with, so picking a
+    part from the list and finding it on the board is recognition rather than reading. A
+    second palette would have drifted from the first the moment either was touched.
+  - The view is per archetype and deliberately not the board's top-down one: a resistor is
+    recognised side-on by its bands and a DIP from above by its notch. This list is about
+    the part in the drawer; the board beside it is what shows the footprint.
+  - A test fails if the model gains an archetype this cannot draw, because a blank row in
+    a list of pictures reads as breakage rather than as a missing icon.
+
 - **A toolbar with pictures on it.** Every tool is now on the bar — connect, new net, all
   five conductor kinds, auto-place, autoroute, rotate, mirror, delete, flip, ratsnest, 3D,
   fit — each with an icon and a short label under it. The old bar was eleven identical grey

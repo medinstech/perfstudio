@@ -2780,3 +2780,83 @@ def test_every_icon_in_the_set_draws() -> None:
     for name in DRAWINGS:
         assert not icon(name).isNull(), name
         assert not icon(name).pixmap(22, 22).isNull(), name
+
+
+# ---------------------------------------------------------------------------
+# Pictures of the parts
+# ---------------------------------------------------------------------------
+
+
+def test_every_archetype_the_model_has_can_be_drawn() -> None:
+    """A part with no picture in a list of pictures reads as a broken row, so the model
+    gaining an archetype has to fail here rather than ship a blank."""
+    import typing
+
+    from perfstudio.model import BodyArchetype
+    from perfstudio.ui.icons import PART_DRAWINGS
+
+    declared = set(typing.get_args(BodyArchetype))
+    # axial-cylinder is drawn by the polarity-aware path rather than the plain table,
+    # because a resistor and a DO-41 diode share the archetype and look nothing alike.
+    assert declared - set(PART_DRAWINGS) == {"axial-cylinder"}
+
+
+def test_every_footprint_in_the_library_gets_a_picture() -> None:
+    from perfstudio.footprints import standard_footprints
+    from perfstudio.ui.icons import PART_SIZE, part_icon
+
+    for footprint in standard_footprints().values():
+        drawn = part_icon(footprint)
+        assert not drawn.isNull(), footprint.id
+        assert not drawn.pixmap(PART_SIZE, PART_SIZE).isNull(), footprint.id
+
+
+def test_a_part_is_drawn_in_the_colour_the_board_draws_it() -> None:
+    """The whole point of the pictures: picking an electrolytic from the list and finding
+    it on the board is recognition rather than reading. A second palette here would drift
+    from the first the moment either was touched."""
+    from perfstudio.footprints import standard_footprints
+    from perfstudio.ui.bodies import style_for
+    from perfstudio.ui.icons import part_icon
+
+    electrolytic = next(
+        f for f in standard_footprints().values() if f.body.archetype == "radial-electrolytic"
+    )
+    image = part_icon(electrolytic).pixmap(40, 40).toImage()
+    fill = QColor(style_for(electrolytic).fill)
+
+    hits = sum(
+        1
+        for x in range(image.width())
+        for y in range(image.height())
+        if QColor(image.pixel(x, y)) == fill
+    )
+    assert hits > 40, "the body colour is not what is being drawn"
+
+
+def test_the_same_part_is_only_drawn_once() -> None:
+    """Sixty-one footprints across fifteen archetypes; the list is rebuilt on every
+    keystroke in the filter box."""
+    from perfstudio.footprints import standard_footprints
+    from perfstudio.ui.icons import part_icon
+
+    resistors = [
+        f for f in standard_footprints().values() if f.body.archetype == "axial-cylinder"
+    ][:2]
+
+    assert part_icon(resistors[0]) is part_icon(resistors[0])
+    if len(resistors) > 1 and resistors[0].polarized == resistors[1].polarized:
+        assert part_icon(resistors[0]) is part_icon(resistors[1])
+
+
+def test_the_parts_panel_shows_a_picture_on_every_row() -> None:
+    window = _window_on(_load_dense())
+    tree = window.library_tree
+
+    groups = [tree.topLevelItem(i) for i in range(tree.topLevelItemCount())]
+    assert groups
+    for group in groups:
+        assert not group.icon(0).isNull(), group.text(0)
+        for index in range(group.childCount()):
+            assert not group.child(index).icon(0).isNull(), group.child(index).text(0)
+    _close(window)
