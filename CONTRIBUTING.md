@@ -17,7 +17,7 @@ git clone https://github.com/medinstech/perfstudio.git
 cd perfstudio
 pip install -e ".[dev,mcp]"
 
-pytest                 # the whole suite, ~1231 tests in about 40 seconds
+pytest                 # the whole suite, ~1260 tests in about 40 seconds
 perfstudio             # launch the app on a blank board
 ```
 

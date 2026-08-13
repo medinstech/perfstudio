@@ -1,0 +1,378 @@
+name: release
+
+# Tag-driven, and the tag is checked against the version in the source rather than
+# trusted. A `v0.4.0` tag on a tree that still says 0.4.0.dev0 would otherwise publish an
+# installer that disagrees with its own file properties, and nothing downstream would
+# notice. docs/RELEASING.md is the other half of this.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build the installers but do not publish a release"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    name: Windows installer
+    runs-on: windows-latest
+    # Qt and VTK together are a few hundred megabytes and LZMA over that is most of the
+    # wall clock here.
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev,mcp]"
+
+      # Both directions, and before anything expensive: a tag that does not match the
+      # source, or a version with no changelog section, is a release that should not
+      # exist. Half an hour of packing is a bad time to find that out.
+      - name: Check the tag against the source
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          source_version=$(python -c "import sys; sys.path.insert(0,'src'); from perfstudio.version import __version__; print(__version__)")
+          tag_version="${GITHUB_REF_NAME#v}"
+          echo "tag $tag_version, source $source_version"
+          if [ "$source_version" != "$tag_version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match perfstudio.version.__version__ ($source_version)"
+            exit 1
+          fi
+          case "$source_version" in
+            *.dev*)
+              echo "::error::$source_version is a development version; close the changelog and drop the .devN suffix first (docs/RELEASING.md)"
+              exit 1 ;;
+          esac
+          grep -q "^## \[$source_version\]" CHANGELOG.md \
+            || { echo "::error::CHANGELOG.md has no section for $source_version"; exit 1; }
+
+      - name: Test
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          mypy --strict src
+          pytest -q
+
+      - name: Build the bundle
+        run: python -m PyInstaller perfstudio.spec --noconfirm
+
+      # Not just "did a file appear": the executable is asked what version it thinks it
+      # is, which is the one thing that catches packaging a stale dist\ from an earlier
+      # run. Only the console build can be asked anything -- see the spec on why there
+      # are two.
+      - name: Check the bundle
+        shell: bash
+        run: |
+          test -f ./dist/perfstudio/perfstudio.exe
+          ./dist/perfstudio/perfstudio-cli.exe --version
+          ./dist/perfstudio/perfstudio-cli.exe --headless examples/ne555-astable.perf
+          test -f ./headless_out/out_2d.png
+
+      - name: Install NSIS
+        shell: pwsh
+        # Chocolatey's community feed answers 503 often enough to be worth retrying
+        # rather than reporting: nothing about that failure is ours, and by this point
+        # the bundle has already been built.
+        run: |
+          foreach ($attempt in 1..4) {
+            choco install nsis --no-progress -y
+            if ($LASTEXITCODE -eq 0) { exit 0 }
+            Write-Host "chocolatey exited $LASTEXITCODE on attempt $attempt"
+            Start-Sleep -Seconds (20 * $attempt)
+          }
+          throw "NSIS would not install in four attempts"
+
+      # In pwsh, and not in bash, because NSIS takes `/FLAG` options and MSYS rewrites
+      # anything shaped like a Unix path: `/INPUTCHARSET` arrives as
+      # `C:/Program Files/Git/INPUTCHARSET` and makensis reads it as the script to
+      # compile.
+      - name: Build the installer
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force releases | Out-Null
+          & "${env:ProgramFiles(x86)}\NSIS\makensis.exe" /INPUTCHARSET UTF8 packaging\perfstudio.nsi
+          # A native command that fails does not stop a pwsh step by itself.
+          if ($LASTEXITCODE -ne 0) { throw "makensis failed" }
+          Get-ChildItem releases | Format-Table Name, Length
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: perfstudio-windows-installer
+          path: releases/*.exe
+          retention-days: 14
+
+      # The release notes are the changelog section for this version, so the two cannot
+      # say different things about what shipped.
+      - name: Publish the release
+        if: startsWith(github.ref, 'refs/tags/') && !inputs.dry_run
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Written from Python rather than redirected from its stdout. The changelog is
+          # UTF-8 and carries characters like the menu arrow; stdout on a Windows runner
+          # is the locale encoding, so a redirect takes the publish step down with a
+          # UnicodeEncodeError -- after the installer has already been built.
+          python - <<'PY'
+          import pathlib, re, sys
+          sys.path.insert(0, "src")
+          from perfstudio.version import __version__
+          text = pathlib.Path("CHANGELOG.md").read_text(encoding="utf-8")
+          section = re.split(rf"^## \[{re.escape(__version__)}\].*$",
+                             text, maxsplit=1, flags=re.MULTILINE)[1]
+          notes = re.split(r"^## ", section, maxsplit=1, flags=re.MULTILINE)[0].strip()
+          pathlib.Path("notes.md").write_text(notes + chr(10), encoding="utf-8")
+          PY
+          cat >> notes.md <<'EOF'
+
+          ---
+          **Windows** - `PerfStudio_..._Setup.exe`. It is unsigned, so SmartScreen will
+          warn on first run: **More info -> Run anyway**. A signed build is planned.
+
+          **Linux** - `perfstudio-...-x86_64.AppImage`. `chmod +x` and run it; it needs
+          glibc 2.35 or newer. If it will not start, the machine has no FUSE 2: install
+          `libfuse2`, or run the file with `--appimage-extract-and-run`, which unpacks it
+          instead of mounting it.
+
+          **macOS** - `perfstudio-...-arm64.dmg`, Apple silicon. Drag it to Applications,
+          then run this **before opening it**:
+
+          ```
+          xattr -dr com.apple.quarantine /Applications/PerfStudio.app
+          ```
+
+          It is signed ad-hoc but not notarized, so Gatekeeper blocks the first launch.
+          On macOS 15 and later the dialog it raises defaults to **Move to Trash**, which
+          deletes the install. Clearing the flag first avoids the dialog entirely. On an
+          Intel Mac, install from source.
+
+          **Anywhere with Python 3.12+**: `pip install -e .` from a clone, then
+          `perfstudio`.
+
+          This is pre-alpha software. Nobody has yet built a real board by following a
+          generated guide - check every measurement against the part in your hand.
+          EOF
+          gh release create "$GITHUB_REF_NAME" releases/*.exe \
+            --title "PerfStudio $GITHUB_REF_NAME" --notes-file notes.md
+
+  linux:
+    name: Linux AppImage
+    runs-on: ubuntu-22.04
+    # 22.04 deliberately, not `ubuntu-latest`. A PyInstaller bundle carries Python and Qt
+    # but links against the host's glibc, and glibc is forward compatible only: built on
+    # 24.04 it needs 2.39, which rules out Debian 12, Ubuntu 22.04 LTS and every
+    # enterprise distribution in service. Built here it needs 2.35 and runs on all of
+    # them.
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      # Same list as ci.yml, for the same reason: PySide6 and VTK link against these even
+      # when they never open a window, and without them PySide6 refuses to import at all.
+      - name: System libraries for Qt and VTK
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libegl1 libgl1 libglx-mesa0 libglu1-mesa \
+            libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-image0 \
+            libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 \
+            libxcb-xinerama0 libdbus-1-3 xvfb
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev,mcp]"
+
+      - name: Check the tag against the source
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          source_version=$(python -c "import sys; sys.path.insert(0,'src'); from perfstudio.version import __version__; print(__version__)")
+          tag_version="${GITHUB_REF_NAME#v}"
+          if [ "$source_version" != "$tag_version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match perfstudio.version.__version__ ($source_version)"
+            exit 1
+          fi
+
+      - name: Build the bundle
+        run: python -m PyInstaller perfstudio.spec --noconfirm
+
+      # One executable here, not two: `console` is a Windows subsystem flag and has no
+      # meaning on Linux, so the spec builds a single binary.
+      - name: Check the bundle
+        run: |
+          test -x ./dist/perfstudio/perfstudio
+          test ! -e ./dist/perfstudio/perfstudio-cli
+          ./dist/perfstudio/perfstudio --version
+
+      # Through `bash` rather than as `packaging/appimage.sh`. The executable bit is in
+      # the index, but this repository is developed on Windows, where git's core.filemode
+      # is off by default -- so a future edit that recreates the file loses the bit
+      # silently, and the failure is a release that dies here with "permission denied".
+      - name: Build the AppImage
+        run: bash packaging/appimage.sh
+
+      # The one check worth having: the artefact that is about to be published is
+      # unpacked and run. A bundle that builds and cannot start is the whole failure mode
+      # here, and it is invisible until somebody downloads it.
+      #
+      # Extracted once rather than run under APPIMAGE_EXTRACT_AND_RUN: the runner has no
+      # FUSE to mount the image with, and that variable unpacks the whole bundle again on
+      # every invocation.
+      - name: Run the AppImage
+        run: |
+          image=$(ls releases/*.AppImage)
+          chmod +x "$image"
+          "$image" --appimage-extract > /dev/null
+          reported=$(./squashfs-root/AppRun --version | head -1)
+          echo "$reported"
+          version=$(python -c "import sys; sys.path.insert(0,'src'); from perfstudio.version import __version__; print(__version__)")
+          case "$reported" in
+            "PerfStudio $version"*) ;;
+            *) echo "::error::AppImage reports '$reported', expected PerfStudio $version"; exit 1 ;;
+          esac
+          xvfb-run -a ./squashfs-root/AppRun --headless examples/ne555-astable.perf
+          test -f ./headless_out/out_2d.png
+          rm -rf squashfs-root
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: perfstudio-linux-appimage
+          path: releases/*.AppImage
+          retention-days: 14
+
+  macos:
+    name: macOS disk image
+    runs-on: macos-15
+    # Apple silicon, and only Apple silicon. Every x86-64 macOS label GitHub offers is a
+    # *larger runner* -- `macos-15-intel`, `macos-15-large` -- which is a paid tier, and
+    # the free Intel image was retired. An Intel Mac installs from source.
+    #
+    # Pinned to 15 rather than `macos-latest` for the reason the Linux job is pinned to
+    # 22.04: `-latest` moves under you, and an SDK is a compatibility floor you do not
+    # want raised by somebody else's release schedule.
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev,mcp]"
+
+      - name: Check the tag against the source
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          source_version=$(python -c "import sys; sys.path.insert(0,'src'); from perfstudio.version import __version__; print(__version__)")
+          tag_version="${GITHUB_REF_NAME#v}"
+          if [ "$source_version" != "$tag_version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match perfstudio.version.__version__ ($source_version)"
+            exit 1
+          fi
+
+      - name: Build the bundle
+        run: python -m PyInstaller perfstudio.spec --noconfirm
+
+      # A .app is a folder, so "did it build" is not the question -- "does the binary
+      # inside it run" is. Unlike Windows, a windowed macOS build still has stdio when it
+      # is started from a shell, so it can simply be asked.
+      - name: Check the bundle
+        run: |
+          test -d ./dist/PerfStudio.app
+          test -f ./dist/PerfStudio.app/Contents/Info.plist
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" \
+            ./dist/PerfStudio.app/Contents/Info.plist
+          ./dist/PerfStudio.app/Contents/MacOS/perfstudio --version
+
+      - name: Build the disk image
+        run: bash packaging/macos.sh
+
+      # Mounted and run out of the mounted volume, which is the last state anything is in
+      # before a user sees it.
+      - name: Mount it and run what is inside
+        run: |
+          image=$(ls releases/*.dmg)
+          hdiutil attach "$image" -mountpoint /Volumes/PerfStudio -nobrowse -quiet
+
+          # The signature of the *copy*, which is the only place it can have been lost.
+          # `packaging/macos.sh` verifies the bundle it was handed; this verifies the one
+          # that came out the other end of `ditto` and `hdiutil`. Running the binary
+          # would not catch it -- on arm64 the kernel checks the signature embedded in
+          # the Mach-O, and the signatures a copy actually drops are the ones stored in
+          # extended attributes for everything that is not one.
+          codesign --verify --verbose=1 /Volumes/PerfStudio/PerfStudio.app
+
+          app=/Volumes/PerfStudio/PerfStudio.app/Contents/MacOS/perfstudio
+          reported=$("$app" --version | head -1)
+          echo "$reported"
+          version=$(python -c "import sys; sys.path.insert(0,'src'); from perfstudio.version import __version__; print(__version__)")
+          case "$reported" in
+            "PerfStudio $version"*) ;;
+            *) echo "::error::bundle reports '$reported', expected PerfStudio $version"; exit 1 ;;
+          esac
+          test -L /Volumes/PerfStudio/Applications
+          hdiutil detach /Volumes/PerfStudio -quiet
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: perfstudio-macos-dmg
+          path: releases/*.dmg
+          retention-days: 14
+
+  # The AppImage and the disk image go onto the release the Windows job creates, so this
+  # waits for all three -- two jobs racing to `gh release create` is how a release ends up
+  # with half its assets and the wrong notes. It is a job of its own rather than a step on
+  # the end of each build so that the three bundles still build side by side.
+  attach-bundles:
+    name: Attach the other bundles
+    needs: [windows, linux, macos]
+    if: startsWith(github.ref, 'refs/tags/') && !inputs.dry_run
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # Named one at a time rather than by pattern: `perfstudio-*` would also pull down
+      # the Windows installer, which is already on the release.
+      - uses: actions/download-artifact@v4
+        with:
+          name: perfstudio-linux-appimage
+          path: releases
+      - uses: actions/download-artifact@v4
+        with:
+          name: perfstudio-macos-dmg
+          path: releases
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -l releases/
+          gh release upload "$GITHUB_REF_NAME" \
+            releases/*.AppImage releases/*.dmg --clobber \
+            --repo "$GITHUB_REPOSITORY"

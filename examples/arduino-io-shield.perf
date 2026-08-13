@@ -1,0 +1,595 @@
+{
+  "formatVersion": 1,
+  "meta": {
+    "name": "Arduino I/O Shield",
+    "created": "2026-01-01T00:00:00Z",
+    "modified": "2026-01-01T00:00:00Z"
+  },
+  "board": {
+    "type": "pad-per-hole",
+    "cols": 28,
+    "rows": 20,
+    "pitch": 2.54,
+    "thickness": 1.6,
+    "material": "FR4",
+    "padDiameter": 1.9,
+    "drillDiameter": 0.8
+  },
+  "components": [
+    {
+      "id": "c-c1",
+      "ref": "C1",
+      "value": "100nF",
+      "footprintId": "c-disc-p2",
+      "anchor": {
+        "col": 17,
+        "row": 16
+      },
+      "rotation": 180,
+      "mirrored": false,
+      "locked": false
+    },
+    {
+      "id": "c-j1",
+      "ref": "J1",
+      "value": "Conn_01x08",
+      "footprintId": "hdr-1x8",
+      "anchor": {
+        "col": 12,
+        "row": 14
+      },
+      "rotation": 270,
+      "mirrored": false,
+      "locked": false
+    },
+    {
+      "id": "c-j2",
+      "ref": "J2",
+      "value": "Conn_01x06",
+      "footprintId": "hdr-1x6",
+      "anchor": {
+        "col": 20,
+        "row": 18
+      },
+      "rotation": 180,
+      "mirrored": false,
+      "locked": false
+    },
+    {
+      "id": "c-led1",
+      "ref": "LED1",
+      "value": "LED",
+      "footprintId": "led-5mm",
+      "anchor": {
+        "col": 14,
+        "row": 13
+      },
+      "rotation": 0,
+      "mirrored": false,
+      "locked": false
+    },
+    {
+      "id": "c-led2",
+      "ref": "LED2",
+      "value": "LED",
+      "footprintId": "led-5mm",
+      "anchor": {
+        "col": 10,
+        "row": 6
+      },
+      "rotation": 270,
+      "mirrored": false,
+      "locked": false
+    },
+    {
+      "id": "c-led3",
+      "ref": "LED3",
+      "value": "LED",
+      "footprintId": "led-5mm",
+      "anchor": {
+        "col": 7,
+        "row": 2
+      },
+      "rotation": 90,
+      "mirrored": false,
+      "locked": false
+    },
+    {
+      "id": "c-r1",
+      "ref": "R1",
+      "value": "330",
+      "footprintId": "r-axial-3",
+      "anchor": {
+        "col": 11,
+        "row": 16
+      },
+      "rotation": 0,
+      "mirrored": false,
+      "locked": false
+    },
+    {
+      "id": "c-r2",
+      "ref": "R2",
+      "value": "330",
+      "footprintId": "r-axial-3",
+      "anchor": {
+        "col": 10,
+        "row": 11
+      },
+      "rotation": 270,
+      "mirrored": false,
+      "locked": false
+    },
+    {
+      "id": "c-r3",
+      "ref": "R3",
+      "value": "330",
+      "footprintId": "r-axial-3",
+      "anchor": {
+        "col": 12,
+        "row": 2
+      },
+      "rotation": 180,
+      "mirrored": false,
+      "locked": false
+    },
+    {
+      "id": "c-r4",
+      "ref": "R4",
+      "value": "10k",
+      "footprintId": "r-axial-3",
+      "anchor": {
+        "col": 17,
+        "row": 12
+      },
+      "rotation": 270,
+      "mirrored": false,
+      "locked": false
+    },
+    {
+      "id": "c-sw1",
+      "ref": "SW1",
+      "value": "SW_Push",
+      "footprintId": "sw-tactile",
+      "anchor": {
+        "col": 16,
+        "row": 5
+      },
+      "rotation": 90,
+      "mirrored": false,
+      "locked": false
+    }
+  ],
+  "conductors": [
+    {
+      "id": "cond-1",
+      "kind": "bare-wire",
+      "path": [
+        {
+          "col": 15,
+          "row": 16
+        },
+        {
+          "col": 15,
+          "row": 18
+        }
+      ],
+      "side": "bottom",
+      "netId": "net-1",
+      "layerZ": 0
+    },
+    {
+      "id": "cond-10",
+      "kind": "insulated-wire",
+      "path": [
+        {
+          "col": 12,
+          "row": 12
+        },
+        {
+          "col": 11,
+          "row": 16
+        }
+      ],
+      "side": "bottom",
+      "netId": "net-3",
+      "layerZ": 1
+    },
+    {
+      "id": "cond-11",
+      "kind": "bare-wire",
+      "path": [
+        {
+          "col": 12,
+          "row": 11
+        },
+        {
+          "col": 10,
+          "row": 11
+        }
+      ],
+      "side": "bottom",
+      "netId": "net-4",
+      "layerZ": 0
+    },
+    {
+      "id": "cond-12",
+      "kind": "insulated-wire",
+      "path": [
+        {
+          "col": 12,
+          "row": 10
+        },
+        {
+          "col": 12,
+          "row": 2
+        }
+      ],
+      "side": "bottom",
+      "netId": "net-5",
+      "layerZ": 1
+    },
+    {
+      "id": "cond-13",
+      "kind": "bare-wire",
+      "path": [
+        {
+          "col": 14,
+          "row": 13
+        },
+        {
+          "col": 14,
+          "row": 16
+        }
+      ],
+      "side": "bottom",
+      "netId": "net-7",
+      "layerZ": 0
+    },
+    {
+      "id": "cond-14",
+      "kind": "bare-wire",
+      "path": [
+        {
+          "col": 10,
+          "row": 6
+        },
+        {
+          "col": 10,
+          "row": 8
+        }
+      ],
+      "side": "bottom",
+      "netId": "net-8",
+      "layerZ": 0
+    },
+    {
+      "id": "cond-15",
+      "kind": "bare-wire",
+      "path": [
+        {
+          "col": 7,
+          "row": 2
+        },
+        {
+          "col": 9,
+          "row": 2
+        }
+      ],
+      "side": "bottom",
+      "netId": "net-9",
+      "layerZ": 0
+    },
+    {
+      "id": "cond-2",
+      "kind": "bare-wire",
+      "path": [
+        {
+          "col": 15,
+          "row": 16
+        },
+        {
+          "col": 15,
+          "row": 13
+        }
+      ],
+      "side": "bottom",
+      "netId": "net-1",
+      "layerZ": 0
+    },
+    {
+      "id": "cond-3",
+      "kind": "bare-wire",
+      "path": [
+        {
+          "col": 10,
+          "row": 5
+        },
+        {
+          "col": 7,
+          "row": 3
+        }
+      ],
+      "side": "bottom",
+      "netId": "net-1",
+      "layerZ": 0
+    },
+    {
+      "id": "cond-4",
+      "kind": "bare-wire",
+      "path": [
+        {
+          "col": 15,
+          "row": 5
+        },
+        {
+          "col": 10,
+          "row": 5
+        }
+      ],
+      "side": "bottom",
+      "netId": "net-1",
+      "layerZ": 0
+    },
+    {
+      "id": "cond-5",
+      "kind": "insulated-wire",
+      "path": [
+        {
+          "col": 15,
+          "row": 13
+        },
+        {
+          "col": 15,
+          "row": 5
+        }
+      ],
+      "side": "bottom",
+      "netId": "net-1",
+      "layerZ": 1
+    },
+    {
+      "id": "cond-6",
+      "kind": "bare-wire",
+      "path": [
+        {
+          "col": 17,
+          "row": 16
+        },
+        {
+          "col": 17,
+          "row": 18
+        }
+      ],
+      "side": "bottom",
+      "netId": "net-2",
+      "layerZ": 0
+    },
+    {
+      "id": "cond-7",
+      "kind": "solder-trace",
+      "path": [
+        {
+          "col": 17,
+          "row": 16
+        },
+        {
+          "col": 17,
+          "row": 15
+        },
+        {
+          "col": 17,
+          "row": 14
+        },
+        {
+          "col": 17,
+          "row": 13
+        },
+        {
+          "col": 17,
+          "row": 12
+        }
+      ],
+      "side": "bottom",
+      "netId": "net-2",
+      "layerZ": 0,
+      "buildup": "normal"
+    },
+    {
+      "id": "cond-8",
+      "kind": "insulated-wire",
+      "path": [
+        {
+          "col": 17,
+          "row": 9
+        },
+        {
+          "col": 16,
+          "row": 5
+        }
+      ],
+      "side": "bottom",
+      "netId": "net-6",
+      "layerZ": 1
+    },
+    {
+      "id": "cond-9",
+      "kind": "bare-wire",
+      "path": [
+        {
+          "col": 12,
+          "row": 9
+        },
+        {
+          "col": 17,
+          "row": 9
+        }
+      ],
+      "side": "bottom",
+      "netId": "net-6",
+      "layerZ": 0
+    }
+  ],
+  "cuts": [],
+  "nets": [
+    {
+      "id": "net-1",
+      "name": "GND",
+      "nodes": [
+        {
+          "componentRef": "J2",
+          "pin": "6"
+        },
+        {
+          "componentRef": "LED1",
+          "pin": "2"
+        },
+        {
+          "componentRef": "LED2",
+          "pin": "2"
+        },
+        {
+          "componentRef": "LED3",
+          "pin": "2"
+        },
+        {
+          "componentRef": "SW1",
+          "pin": "2"
+        },
+        {
+          "componentRef": "C1",
+          "pin": "2"
+        }
+      ],
+      "class": "ground"
+    },
+    {
+      "id": "net-2",
+      "name": "+5V",
+      "nodes": [
+        {
+          "componentRef": "J2",
+          "pin": "4"
+        },
+        {
+          "componentRef": "R4",
+          "pin": "1"
+        },
+        {
+          "componentRef": "C1",
+          "pin": "1"
+        }
+      ],
+      "class": "power"
+    },
+    {
+      "id": "net-3",
+      "name": "D2",
+      "nodes": [
+        {
+          "componentRef": "J1",
+          "pin": "3"
+        },
+        {
+          "componentRef": "R1",
+          "pin": "1"
+        }
+      ],
+      "class": "signal"
+    },
+    {
+      "id": "net-4",
+      "name": "D3",
+      "nodes": [
+        {
+          "componentRef": "J1",
+          "pin": "4"
+        },
+        {
+          "componentRef": "R2",
+          "pin": "1"
+        }
+      ],
+      "class": "signal"
+    },
+    {
+      "id": "net-5",
+      "name": "D4",
+      "nodes": [
+        {
+          "componentRef": "J1",
+          "pin": "5"
+        },
+        {
+          "componentRef": "R3",
+          "pin": "1"
+        }
+      ],
+      "class": "signal"
+    },
+    {
+      "id": "net-6",
+      "name": "D5_BTN",
+      "nodes": [
+        {
+          "componentRef": "J1",
+          "pin": "6"
+        },
+        {
+          "componentRef": "R4",
+          "pin": "2"
+        },
+        {
+          "componentRef": "SW1",
+          "pin": "1"
+        }
+      ],
+      "class": "signal"
+    },
+    {
+      "id": "net-7",
+      "name": "LED1_A",
+      "nodes": [
+        {
+          "componentRef": "R1",
+          "pin": "2"
+        },
+        {
+          "componentRef": "LED1",
+          "pin": "1"
+        }
+      ],
+      "class": "signal"
+    },
+    {
+      "id": "net-8",
+      "name": "LED2_A",
+      "nodes": [
+        {
+          "componentRef": "R2",
+          "pin": "2"
+        },
+        {
+          "componentRef": "LED2",
+          "pin": "1"
+        }
+      ],
+      "class": "signal"
+    },
+    {
+      "id": "net-9",
+      "name": "LED3_A",
+      "nodes": [
+        {
+          "componentRef": "R3",
+          "pin": "2"
+        },
+        {
+          "componentRef": "LED3",
+          "pin": "1"
+        }
+      ],
+      "class": "signal"
+    }
+  ]
+}

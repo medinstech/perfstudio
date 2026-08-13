@@ -28,3 +28,8 @@ prototypes/qt/out_*.png
 prototypes/qt/*.pdf
 
 headless_out/
+
+# Packaging output. `build/` and `dist/` are above; this is where the installer, the
+# AppImage and the disk image land, and they are hundreds of megabytes each.
+releases/
+*.spec.bak

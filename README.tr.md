@@ -16,7 +16,7 @@ ve gerçekten uygulayabileceğiniz bir lehimleme rehberi alın.
 > montaj rehberi, birebir (1:1) PDF çıktısı ve bir MCP sunucusu. Eksik olan tek şey
 > dogfood testi — henüz kimse üretilen bir rehberi takip ederek gerçek bir kart
 > lehimlemedi ve [PLAN.md](./PLAN.md) §11'e göre bu olmadan M5 kapanmıyor. Henüz
-> kurulum paketi de yok; kaynaktan çalıştırılıyor.
+> etiketlenmiş bir sürüm de yok; kaynaktan çalıştırılıyor.
 
 ---
 
@@ -75,10 +75,23 @@ duran ısıya duyarlı bir parça.
 
 ![Aynı kart 3D'de](./docs/images/board-3d.png)
 
+## Rehberin bir sırası var, ve onu izleyebilirsiniz
+
+![NE555 kartı adım adım kendini kuruyor](./docs/images/assembly.gif)
+
+Parçalar **en kısadan başlayarak** takılır — erken takılan yüksek bir parça, kısa olanlar
+lehimlenirken kartın tezgâha düz yatmasını engeller. Sonra lehim yüzeyi, sonra uzun
+yalıtımlı teller, ve en sonda ısı ile ESD nedeniyle entegreler. Bir parçanın gövdesi
+altında sıkışıp kalacak bir jumper **ilk** faza alınır, çünkü o parça yerine
+lehimlendiğinde artık çok geçtir.
+
+Rehberin dayattığı montaj sırası budur; yukarıdaki animasyon da 3D panelindeki montaj
+kaydırıcısının çağırdığı fonksiyonun aynısı oynatılarak üretiliyor — yani rehberin
+gerçekten vermediği bir sırayı gösteremez.
+
 ## Çalıştırmak
 
 **Python 3.12+** gerekir. Masaüstü uygulaması PySide6 (Qt 6) ve VTK viewport kullanır.
-Henüz kurulum paketi yok — bu kaynaktan çalışan bir pre-alpha.
 
 ```sh
 git clone https://github.com/medinstech/perfstudio.git
@@ -90,6 +103,11 @@ perfstudio bir/kart.perf     # ...ya da bir doküman aç
 perfstudio --version
 ```
 
+Şu an tek yol kaynaktan kurmak, çünkü **henüz hiçbir sürüm etiketlenmedi**. Paketleme
+düzeneği hazır — bir `v*` etiketi push etmek Windows kurulum paketini, Linux AppImage'ını
+ve macOS disk imajını üretip release'e ekliyor — ama henüz yayınlanmış bir sürüm yok ve
+yayınlandığında da hiçbiri kod imzalı olmayacak. Bkz. [docs/RELEASING.md](./docs/RELEASING.md).
+
 Arayüz **İngilizce ve Türkçe** konuşur (`--lang tr`, ya da sistem diline göre otomatik).
 
 ### Sıfırdan bir kart
@@ -100,6 +118,24 @@ ardından **File → Export Build Guide** (`Ctrl+B`). Yukarıdaki ekran görünt
 bu sıradan çıkıyor — bkz. [`tools/screenshots.py`](./tools/screenshots.py).
 
 KiCad şart değil: netler uygulama içinde elle ya da MCP üzerinden de kurulabilir.
+
+### Ya da hazır bir kart açın
+
+[Dört örnek](./examples/README.md) hem netlist hem de bitmiş kart olarak geliyor:
+
+```sh
+perfstudio examples/lm317-supply.perf
+```
+
+| | neyi göstermek için var |
+|---|---|
+| `ne555-astable` | başlangıç noktası — LED yakıp söndüren bir 555 |
+| `lm317-supply` | TO-220 regülatör, yani ısı kuralının ölçecek bir şeyi var |
+| `lpb1-booster` | **FR-2** üzerine kurulu — pad'leri kalkan pertinaks kart |
+| `arduino-io-shield` | iki header; bir shield zaten büyük ölçüde budur |
+
+Dördü de eksiksiz route ediliyor, LVS'te şemalarıyla örtüşüyor ve hiçbir DRC hatası
+taşımıyor — `tests/test_examples.py` bunu her commit'te doğruluyor.
 
 ### Bir ajandan
 
@@ -146,7 +182,7 @@ src/perfstudio/parsers/    KiCad netlist içe aktarıcı
 src/perfstudio/ui/         Qt uygulaması: 2D editör, VTK 3D görünüm, 1:1 PDF çıktısı
 src/perfstudio/mcp/        MCP sunucusu (docs/MCP.md)
 examples/                  içe aktarılacak bir netlist
-tests/                     1231 test; motor mypy --strict temiz
+tests/                     1260 test; motor mypy --strict temiz
 packages/                  Python portunun karşısında kanıtlandığı referans olarak
                            saklanan orijinal TypeScript motoru
 ```
@@ -160,15 +196,20 @@ gelmez — mesh kütüphanesi yok, devralınacak share-alike lisansı yok. Bir p
 
 Biten: editör, kütüphane, bağlantısallık ve LVS, DRC, router ve yerleştirme
 optimizasyonu, render edilmiş adım görselleri ve montaj oynatması ile montaj rehberi,
-1:1 PDF çıktısı, MCP sunucusu ve TR/EN yerelleştirme.
+1:1 PDF çıktısı, MCP sunucusu, TR/EN yerelleştirme, ve bir `v*` etiketiyle çalışan
+üç platformluk paketleme.
 
 Sırada, [PLAN.md](./PLAN.md) §11'in koyduğu sırayla:
 
 - **Dogfood montajı (M5).** Birinin, üretilmiş bir rehberi takip ederek gerçek bir kart
   lehimlemesi gerekiyor. Bu olana kadar bu sayfadaki her iddia, çalışan bir devre
-  hakkında değil, yazılım hakkında bir iddiadır.
-- **Paketleme (M7).** Windows, macOS ve Linux için imzalı kurulum paketleri.
-- Tek bir NE555'ten fazla örnek proje.
+  hakkında değil, yazılım hakkında bir iddiadır. Bu liste içinde bir yabancının proje
+  için yapabileceği tek şey de bu — [bunun için bir issue şablonu var](./.github/ISSUE_TEMPLATE/board_i_could_not_build.yml).
+- **İlk etiketli sürüm.** Workflow üç paketi de üretip duman testinden geçiriyor; eksik
+  olan, bir sürümün yayınlanmaya değer olduğuna karar vermek.
+- **Kod imzalama.** Windows EV sertifikası ~$300/yıl, Apple notarization $99/yıl; o zamana
+  kadar kurulum paketleri ilk açılışta uyarı verecek ve release notları bunun nasıl
+  aşılacağını yazacak.
 
 ## Katkı
 
