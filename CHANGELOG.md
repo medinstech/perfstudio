@@ -525,6 +525,18 @@ closed without a bump.
 
 ### Fixed
 
+- **Escape did not cancel placing a part.** Reported. It was bound to the Draw menu's stop
+  entry, which cancelled drawing, pin-picking and connecting — and not placement. Worse,
+  being a *window* shortcut it fires before the board scene sees the key at all, so the
+  scene's own Escape handling for placement was unreachable in the running application:
+  a part armed from the parts list could not be cancelled from the keyboard by any route,
+  while the hint under that very list said "Esc cancels" the whole time. Leaving a mode is
+  now one method on the scene that disarms all four, called by both the shortcut and the
+  key handler, so the two cannot cancel different sets of things. The menu entry says what
+  it now does — "Stop the Current Tool" rather than "Stop Drawing". Four regression tests
+  press a real Escape from the focus a user actually has, because a test that called the
+  handler directly would have passed against the broken build.
+
 - **The menus could be destroyed out from under the menu bar.** `QMenuBar.addMenu` hands
   PySide a `QMenu` that Python believes it owns, and every menu in this window was held
   only by a local variable inside the builder — so a garbage collection was free to delete

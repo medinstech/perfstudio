@@ -74,7 +74,7 @@ TURKISH: Mapping[str, str] = {
     "&Bare Wire": "&Çıplak Tel",
     "&Insulated Wire": "İ&zoleli Tel",
     "Top &Jumper": "Üst Yüz &Jumper",
-    "&Stop Drawing": "Çizimi &Bitir",
+    "&Stop the Current Tool": "Aracı &Bırak",
     # -- nets ----------------------------------------------------------------
     # "&Net" becomes the plural "Netler": a menu named with the same word in both
     # languages would be an untranslated entry, which the catalogue tests refuse.

@@ -2199,6 +2199,35 @@ class BoardScene(QGraphicsScene):
     # two legs and saying THOSE go together. This is that, and it produces exactly the
     # same documents the long way round does -- one command per pair, on the same bus.
 
+    # -- leaving whatever mode you are in ------------------------------------
+
+    @property
+    def in_a_mode(self) -> bool:
+        """Whether a click on the board currently means something other than 'select'."""
+        return (
+            self._armed_footprint is not None
+            or self._draw_kind is not None
+            or self._net_pin_target is not None
+            or self._connect_armed
+        )
+
+    def leave_mode(self) -> None:
+        """Disarm every board mode. This is what Escape means, wherever it is pressed.
+
+        ONE method rather than a branch per mode at each call site, and that is the fix
+        for a real bug rather than tidiness. Escape is a window shortcut, so it fires
+        wherever the focus is -- and it fires BEFORE this scene sees the key at all, which
+        made the placement branch that used to live in ``keyPressEvent`` unreachable in the
+        running application: a part armed from the library could not be cancelled from the
+        keyboard at all, and the hint under the list said "Esc cancels" the whole time.
+        The window's shortcut and this handler now call the same method, so they cannot
+        cancel different sets of things.
+        """
+        self.arm_placement(None)
+        self.arm_drawing(None)
+        self.arm_net_pins(None)
+        self.arm_connect(False)
+
     def arm_connect(self, on: bool) -> None:
         """Arm (or disarm) joining pins by clicking two of them."""
         if on:
@@ -2487,12 +2516,8 @@ class BoardScene(QGraphicsScene):
             Qt.Key.Key_Up: (0, -1),
             Qt.Key.Key_Down: (0, 1),
         }
-        if self._connect_armed and event.key() == Qt.Key.Key_Escape:
-            self._disarm_connect()
-            event.accept()
-            return
-        if self._net_pin_target is not None and event.key() == Qt.Key.Key_Escape:
-            self._disarm_net_pins()
+        if event.key() == Qt.Key.Key_Escape and self.in_a_mode:
+            self.leave_mode()
             event.accept()
             return
         if self._net_pin_target is not None and event.key() in (
@@ -2502,19 +2527,11 @@ class BoardScene(QGraphicsScene):
             self.commit_net_pins()
             event.accept()
             return
-        if self._draw_kind is not None and event.key() == Qt.Key.Key_Escape:
-            self.arm_drawing(None)
-            event.accept()
-            return
         if self._draw_kind is not None and event.key() in (
             Qt.Key.Key_Return,
             Qt.Key.Key_Enter,
         ):
             self.commit_drawing()
-            event.accept()
-            return
-        if event.key() == Qt.Key.Key_Escape and self._armed_footprint is not None:
-            self.arm_placement(None)
             event.accept()
             return
         delta = deltas.get(Qt.Key(event.key()))

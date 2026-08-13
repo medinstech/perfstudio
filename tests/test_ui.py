@@ -2222,18 +2222,6 @@ def test_deleting_a_net_keeps_its_copper_and_releases_the_claim(monkeypatch) -> 
     _close(window)
 
 
-def test_escape_ends_a_pin_session_even_though_it_is_the_drawing_shortcut() -> None:
-    """Escape is a window shortcut on the Draw menu's stop entry, so it fires before the
-    scene sees the key at all -- which means that handler has to end whichever mode is
-    running, not only a drawing one."""
-    window = _window_on(_load_dense())
-    net_id = window.bus.document.nets[0].id
-    window.scene.arm_net_pins(net_id)
-
-    window.on_draw_mode("", False)
-
-    assert window.scene.armed_net_id is None
-    _close(window)
 
 
 # ---------------------------------------------------------------------------
@@ -2859,4 +2847,120 @@ def test_the_parts_panel_shows_a_picture_on_every_row() -> None:
         assert not group.icon(0).isNull(), group.text(0)
         for index in range(group.childCount()):
             assert not group.child(index).icon(0).isNull(), group.child(index).text(0)
+    _close(window)
+
+
+# ---------------------------------------------------------------------------
+# Escape leaves the mode. From anywhere. Every mode.
+#
+# Reported: placing a part could not be cancelled with Escape. It was bound to the Draw
+# menu's stop entry, which cancelled drawing, pin-picking and connecting -- and not
+# placement. Being a WINDOW shortcut it also fires before the scene sees the key, so the
+# scene's own Escape handling for placement was unreachable in the running application
+# while the hint under the parts list said "Esc cancels" the whole time.
+# ---------------------------------------------------------------------------
+
+
+def _press_escape(window, focus_on) -> None:
+    """A real Escape, through the shortcut machinery, from a real focus.
+
+    Not window.on_stop_tool(): the bug was entirely about which of them the key reaches,
+    so a test that called the handler directly would have passed against the broken build.
+    """
+    from PySide6.QtCore import Qt as QtCore_Qt
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QApplication
+
+    window.show()
+    focus_on.setFocus()
+    QApplication.processEvents()
+    QTest.keyClick(focus_on, QtCore_Qt.Key.Key_Escape)
+    QApplication.processEvents()
+
+
+def test_escape_cancels_placing_a_part_from_the_parts_list() -> None:
+    """The reported bug, at the focus a user actually has: they picked the part from the
+    list, so the list is what has the keyboard."""
+    window = _window_on(_load_dense())
+    window.scene.arm_placement("r-axial-5")
+    assert window.scene.armed_footprint_id == "r-axial-5"
+
+    _press_escape(window, window.library_tree)
+
+    assert window.scene.armed_footprint_id is None
+    _close(window)
+
+
+def test_escape_cancels_drawing_from_a_filter_box() -> None:
+    window = _window_on(_load_dense())
+    window.scene.arm_drawing("bare-wire")
+
+    _press_escape(window, window.library_filter)
+
+    assert window.scene.armed_draw_kind is None
+    _close(window)
+
+
+def test_escape_cancels_connecting() -> None:
+    window = _window_on(_load_dense())
+    window.scene.arm_connect(True)
+
+    _press_escape(window, window.view)
+
+    assert window.scene.connect_armed is False
+    _close(window)
+
+
+def test_escape_cancels_a_pin_session_without_committing_it() -> None:
+    from perfstudio.commands import AddNetPayload
+
+    window = _window_on(_load_dense())
+    window.bus.dispatch("net.add", AddNetPayload(name="HAND"))
+    net = next(n for n in window.bus.document.nets if n.name == "HAND")
+    window.scene.arm_net_pins(net.id)
+    window.scene.net_pin_click(_hole_of(window, *_free_pins(window)[0]))
+    before = window.bus.document
+
+    _press_escape(window, window.view)
+
+    assert window.scene.armed_net_id is None
+    assert window.bus.document is before, "Escape must abandon the session, not commit it"
+    _close(window)
+
+
+def test_leaving_a_mode_is_one_method_rather_than_four_call_sites() -> None:
+    """The window's shortcut and the scene's key handler both call this, so they cannot
+    end up cancelling different sets of things -- which is how placement got left out."""
+    window = _window_on(_load_dense())
+    window.scene.arm_placement("r-axial-5")
+    assert window.scene.in_a_mode
+
+    window.scene.leave_mode()
+
+    assert not window.scene.in_a_mode
+    assert window.scene.armed_footprint_id is None
+    assert window.scene.armed_draw_kind is None
+    assert window.scene.armed_net_id is None
+    assert window.scene.connect_armed is False
+    _close(window)
+
+
+def test_the_board_reports_being_in_a_mode_for_each_of_the_four() -> None:
+    from perfstudio.commands import AddNetPayload
+
+    window = _window_on(_load_dense())
+    window.bus.dispatch("net.add", AddNetPayload(name="HAND"))
+    net = next(n for n in window.bus.document.nets if n.name == "HAND")
+    assert not window.scene.in_a_mode
+
+    for arm in (
+        lambda: window.scene.arm_placement("r-axial-5"),
+        lambda: window.scene.arm_drawing("bare-wire"),
+        lambda: window.scene.arm_net_pins(net.id),
+        lambda: window.scene.arm_connect(True),
+    ):
+        arm()
+        assert window.scene.in_a_mode
+        window.scene.leave_mode()
+        assert not window.scene.in_a_mode
     _close(window)

@@ -1497,9 +1497,14 @@ class MainWindow(QMainWindow):
             action.triggered.connect(lambda checked, k=kind: self.on_draw_mode(k, checked))
             self.act_draw[kind] = action
         draw_menu.addSeparator()
-        act_stop_draw = draw_menu.addAction(t("&Stop Drawing"))
+        # Not "stop drawing" any more, because Escape has to leave whichever mode you are
+        # in -- and placing a part is the one it silently did not. See on_stop_tool.
+        act_stop_draw = draw_menu.addAction(t("&Stop the Current Tool"))
         act_stop_draw.setShortcut(QKeySequence("Escape"))
-        act_stop_draw.triggered.connect(lambda: self.on_draw_mode("", False))
+        act_stop_draw.setToolTip(
+            "Leave any board mode: placing a part, drawing a conductor, connecting pins."
+        )
+        act_stop_draw.triggered.connect(self.on_stop_tool)
 
         place_menu = menu.addMenu(t("&Place"))
         self.act_autoplace = place_menu.addAction(t("&Auto-place Board"))
@@ -2954,20 +2959,31 @@ class MainWindow(QMainWindow):
         ]
         self._report_refusals(results, f"Mirrored {len(results)} part(s)")
 
+    def on_stop_tool(self) -> None:
+        """Leave whatever mode the board is in. What Escape does, from anywhere.
+
+        Escape is a WINDOW shortcut, so it fires wherever the focus happens to be -- the
+        parts list, a filter box -- and it fires before the scene sees the key at all.
+        That is why this exists rather than the scene's key handler being enough: the
+        handler was unreachable, so a part armed from the library could not be cancelled
+        from the keyboard while the hint under the list said "Esc cancels".
+
+        No unchecking here. Each mode reports itself through its own signal, and the menu
+        and toolbar are already kept in step by those -- doing it twice is how the two
+        drift apart.
+        """
+        self.scene.leave_mode()
+        self.statusBar().clearMessage()
+
     def on_draw_mode(self, kind: str, checked: bool) -> None:
         """Arm or disarm a drawing tool. Only one may be armed at a time.
 
-        Escape is bound to this with an empty kind, and Escape has to mean "leave the mode
-        I am in" whichever one that is -- a window shortcut fires before the scene sees the
-        key at all, so ending a pin-picking session belongs here rather than only in the
-        scene's own key handler.
+        Only drawing: arming a tool makes the scene disarm the other three board modes
+        itself, and leaving every mode at once is on_stop_tool.
         """
         wanted = kind if checked and kind else ""
         for name, action in self.act_draw.items():
             action.setChecked(name == wanted)
-        if not wanted:
-            self.scene.arm_net_pins(None)
-            self.scene.arm_connect(False)
         self.scene.arm_drawing(cast(Any, wanted) if wanted else None)
         if wanted:
             two_point = wanted in ("bare-wire", "insulated-wire", "top-jumper")
