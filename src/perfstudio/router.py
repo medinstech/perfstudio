@@ -155,6 +155,56 @@ DEFAULT_ROUTER_COSTS = RouterCosts()
 CrossingPolicy: TypeAlias = Literal["hop", "wire", "refuse"]
 
 
+#: How the board is going to be ASSEMBLED, when the builder has decided that in advance.
+#:
+#: This is a commitment, not a weighting, and the difference is the whole point. A cost
+#: table only makes the preferred primitive *cheaper*, so a single awkward pad can still
+#: flip one connection to a wire -- on a board where most holes have a neighbour, R5'
+#: proximity risk at 12 a hole outweighs an entire bare wire at 8, and the run somebody
+#: asked to be solder becomes wire exactly where they were watching. Someone who has said
+#: "I am building this with solder traces" is not asking for solder to be favoured; they
+#: are telling the tool how the board gets built.
+#:
+#: So a preference RANKS BEFORE COST: every strategy in the chosen family beats every
+#: strategy outside it, however the two are priced. Cost still decides within the family,
+#: which is what keeps the search sensible. The other family is reached only when the
+#: preferred one cannot make the connection at all -- a crossing it may not pass, a hole it
+#: cannot reach -- so "wire for the rest" means the rest that is physically impossible,
+#: rather than the rest that happened to score badly.
+#:
+#:   "solder"     Solder traces, including a run hopped over a crossing with a short
+#:                jumper. Wire only where no trace can be made.
+#:   "wire"       Wire, for someone assembling with wire.
+#:   "lead-bend"  A component's own leg first, then solder, then wire.
+StrategyPreference: TypeAlias = Literal["solder", "wire", "lead-bend"]
+
+#: Which family each strategy belongs to. A hopped trace counts as SOLDER: it is a solder
+#: run with a two-hole jumper where it had to cross something, and calling that "wire"
+#: would mean a preference for solder rejected the very mechanism that lets solder get
+#: past an obstacle -- leaving the whole connection to be a wire instead, which is more
+#: wire, not less.
+_STRATEGY_FAMILY: dict[RouteStrategy, StrategyPreference] = {
+    "solder-trace": "solder",
+    "solder-trace-wired": "solder",
+    "solder-trace-hopped": "solder",
+    "lead-bend": "lead-bend",
+    "bare-wire": "wire",
+    "insulated-wire": "wire",
+    "top-jumper": "wire",
+}
+
+
+def _preference_rank(strategy: RouteStrategy, prefer: StrategyPreference | None) -> int:
+    """0 for a strategy the builder committed to, 1 for anything else.
+
+    With no preference every strategy ranks 0, so the sort collapses to cost alone and the
+    router behaves exactly as it always has -- which is what keeps the golden routes valid.
+    """
+    if prefer is None:
+        return 0
+    return 0 if _STRATEGY_FAMILY.get(strategy) == prefer else 1
+
+
 @dataclass(frozen=True, slots=True)
 class RouterOptions:
     costs: RouterCosts = DEFAULT_ROUTER_COSTS
@@ -174,6 +224,9 @@ class RouterOptions:
     max_expanded_nodes: int = 20000
     #: See :data:`CrossingPolicy`.
     crossing_policy: CrossingPolicy = "hop"
+    #: See :data:`StrategyPreference`. ``None`` weighs every strategy purely on cost, which
+    #: is what "balanced" means and what every golden route is produced with.
+    prefer: StrategyPreference | None = None
     #: How many blocked holes one insulated hop may span. A wire crossing occupies about one
     #: hole and a trace two or three; past that the obstacle is a wall, not something to step
     #: over, and the search should go round it instead.
@@ -201,17 +254,24 @@ DEFAULT_ROUTER_OPTIONS = RouterOptions()
 #:
 #: So the weight becomes the user's choice rather than the tool's:
 #:
-#:   "balanced"    The table as it is. Every golden fixture is routed with this, so it
-#:                 must not move.
+#:   "balanced"    The table as it is, and NO commitment (``prefer`` stays None): every
+#:                 primitive weighed on its own cost. Every golden fixture is routed with
+#:                 this, so it must not move. NE555: 4 traces, 10 wires.
 #:   "solder"      Solder wherever solder reaches. R5' still steers the search and still
 #:                 becomes a measurement in the build guide, but it no longer vetoes a
 #:                 trace; wire is dear, and a long run gets a spine rather than becoming
-#:                 a wire. NE555: 14 traces, 1 wire.
+#:                 a wire. NE555: all 14 connections are traces (7 plain, 6 hopped over a
+#:                 crossing, 1 spined) and not one is a wire.
 #:   "wire"        For someone who would rather cut and dress wire than drag solder
-#:                 along a row of pads. Wire is cheap and traces are not.
+#:                 along a row of pads. Wire is cheap and traces are not. NE555: 14 wires.
 #:   "lead-bend"   Fold the component's own leg wherever it reaches, then solder, then
 #:                 wire. The cheapest primitive there is, and the only one the router
-#:                 never used to produce at all.
+#:                 never used to produce at all. NE555: 4 bends and 10 traces.
+#:
+#: THE COSTS ARE NOT WHAT MAKES THESE HOLD. Every style except "balanced" also sets
+#: ``RouterOptions.prefer``, and that is what turns each one from a tendency into a
+#: commitment -- see StrategyPreference. Pricing alone left a single awkward pad able to
+#: flip a run to wire, which is precisely the complaint these styles existed to answer.
 RoutingStyle: TypeAlias = Literal["balanced", "solder", "wire", "lead-bend"]
 
 
@@ -252,11 +312,27 @@ def options_for_style(
     if style == "solder":
         # Solder-first means a long run stays a trace instead of turning into a wire at
         # six pads. It gets a spine, which is what a long rail wants anyway (Sec 6.2).
-        return dataclasses.replace(base, costs=costs, max_pure_solder_trace_pads=20)
+        #
+        # `prefer` is what makes the menu item mean what it says. Without it this was
+        # "solder trace where it happens to be cheapest", and the costs below only tilted
+        # the odds -- so a single pad next to another net could still turn the run somebody
+        # asked to be solder into a wire. With it, a trace loses only to being impossible.
+        return dataclasses.replace(
+            base, costs=costs, max_pure_solder_trace_pads=20, prefer="solder"
+        )
     if style == "lead-bend":
         return dataclasses.replace(
-            base, costs=costs, max_pure_solder_trace_pads=20, allow_lead_bend=True
+            base,
+            costs=costs,
+            max_pure_solder_trace_pads=20,
+            allow_lead_bend=True,
+            prefer="lead-bend",
         )
+    if style == "wire":
+        return dataclasses.replace(base, costs=costs, prefer="wire")
+    # "balanced" alone leaves `prefer` unset, and that IS what balanced means: no
+    # commitment has been made, so every primitive is weighed on its own cost. It is also
+    # what every golden route is produced with, so this branch must stay a no-op.
     return dataclasses.replace(base, costs=costs)
 
 # ---------------------------------------------------------------------------
@@ -390,7 +466,11 @@ def route_connection(
             if jumper is not None:
                 candidates.append(jumper)
 
-    candidates.sort(key=lambda c: (c.cost, c.strategy))
+    # PREFERENCE RANKS BEFORE COST. With no preference this is the cost sort it has always
+    # been (every rank is 0); with one, the family the builder committed to wins outright
+    # and cost only decides within it. See StrategyPreference for why a cost table alone
+    # cannot express "I am assembling this board with solder traces".
+    candidates.sort(key=lambda c: (_preference_rank(c.strategy, options.prefer), c.cost, c.strategy))
     if not candidates:
         refused = (
             " No wire is allowed by the current crossing policy, so only a solder trace was "

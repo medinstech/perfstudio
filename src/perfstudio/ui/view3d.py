@@ -50,7 +50,15 @@ from perfstudio.model import (
 )
 
 from .boardcolors import scheme_for
-from .bodies import BodyStyle, placement_for, polarity_pin_offset, style_for
+from .bodies import (
+    BodyStyle,
+    Surface,
+    placement_for,
+    polarity_pin_offset,
+    resistor_bands,
+    style_for,
+    surface_for,
+)
 
 SUBSTRATE_RGB = {
     "FR4": (0.16, 0.36, 0.21),
@@ -571,6 +579,9 @@ class _WorldBody:
     #: World positions of every pin, and of the polarity pin if the part has one.
     pins: tuple[tuple[float, float], ...]
     polarity: tuple[float, float] | None
+    #: The printed colour code, for a resistor whose value could be decoded. Empty for
+    #: everything else -- see ``bodies.resistor_bands``, which refuses to guess.
+    bands: tuple[str, ...] = ()
 
     @property
     def along(self) -> float:
@@ -579,6 +590,12 @@ class _WorldBody:
     @property
     def across(self) -> float:
         return self.size_y if self.axis == "x" else self.size_x
+
+    @property
+    def surface(self) -> Surface:
+        """How this part's material catches light. One table, two renderers: the 2D view
+        derives its highlight from the same call."""
+        return surface_for(self.style)
 
 
 def _world_body(lookup: FootprintLookup, comp: Any, board: Board) -> _WorldBody | None:
@@ -618,6 +635,8 @@ def _world_body(lookup: FootprintLookup, comp: Any, board: Board) -> _WorldBody 
             for _pin, hole in all_pin_holes(comp, fp)
         ),
         polarity=to_world(*polarity_local) if polarity_local is not None else None,
+        # From the document's own value, so the bands cannot disagree with the netlist.
+        bands=resistor_bands(fp, comp.value) or (),
     )
 
 
@@ -671,15 +690,34 @@ def _axial_pieces(body: _WorldBody) -> list[_Piece]:
     radius = body.across / 2
     z = radius + _LIFT
     orientation = _ALONG_X if body.axis == "x" else _ALONG_Y
+    surface = body.surface
     pieces = [
         _Piece(
             source=_cylinder(radius, body.along),
             rgb=_rgb(body.style.fill),
             position=(body.x, body.y, z),
             orientation=orientation,
-            specular=0.3,
+            specular=surface.specular,
+            specular_power=surface.specular_power,
         )
     ]
+
+    # The printed colour code, as rings standing a hair proud of the body. Same layout as
+    # the 2D view draws (bodies.resistor_bands is the shared source): three bands in the
+    # near half and the tolerance band at the far end, because that asymmetry is what says
+    # which way round to read them.
+    for index, colour in enumerate(body.bands):
+        fraction = 0.16 + index * 0.15 if index < len(body.bands) - 1 else 0.80
+        pieces.append(
+            _Piece(
+                source=_cylinder(radius * 1.03, body.along * 0.11, resolution=20),
+                rgb=_rgb(colour),
+                position=_offset_along(body, (fraction - 0.5) * body.along, z),
+                orientation=orientation,
+                specular=surface.specular * 0.6,
+            )
+        )
+
     if body.polarity is not None:
         # A band at the end nearest the marked pin, standing very slightly proud so it is
         # visible against the body rather than fighting it for the same pixels.
@@ -835,21 +873,25 @@ def _led_pieces(body: _WorldBody) -> list[_Piece]:
     radius = min(body.size_x, body.size_y) / 2
     barrel_h = max(body.height - radius, radius * 0.4)
     lens = _rgb(body.style.fill)
+    # From ``style.lens`` rather than from numbers written here: the flag was documented as
+    # a shading hint for both views and read by neither, so a lens was lit like a slightly
+    # glossy plastic case. A LED that does not look lit does not look like a LED.
+    surface = body.surface
     pieces = [
         _Piece(
             source=_cylinder(radius, barrel_h, resolution=24),
             rgb=lens,
             position=(body.x, body.y, barrel_h / 2 + _LIFT),
             orientation=_ALONG_Z,
-            specular=0.8,
-            specular_power=45.0,
+            specular=surface.specular,
+            specular_power=surface.specular_power,
         ),
         _Piece(
             source=_sphere(radius),
             rgb=lens,
             position=(body.x, body.y, barrel_h + _LIFT),
-            specular=0.9,
-            specular_power=60.0,
+            specular=surface.specular,
+            specular_power=surface.specular_power,
         ),
         # The flange at the base is the flat that marks the cathode on a real LED.
         _Piece(
@@ -857,7 +899,7 @@ def _led_pieces(body: _WorldBody) -> list[_Piece]:
             rgb=lens,
             position=(body.x, body.y, radius * 0.11 + _LIFT),
             orientation=_ALONG_Z,
-            specular=0.5,
+            specular=surface.specular * 0.6,
         ),
     ]
     return pieces + _lead_pieces(body)
@@ -963,10 +1005,17 @@ def _switch_pieces(body: _WorldBody) -> list[_Piece]:
 
 
 def _crystal_pieces(body: _WorldBody) -> list[_Piece]:
-    """An HC-49 can: a flattened metal cylinder, shaded as metal."""
+    """An HC-49 can: a flattened metal cylinder, shaded as metal.
+
+    The shading comes from ``style.metallic`` via ``body.surface`` rather than from numbers
+    written here. It used to be hardcoded, which meant the one archetype in the registry
+    that is literally a metal can was ignoring its own metallic flag -- two sources of
+    truth for one fact, and the sort of drift bodies.py exists to prevent.
+    """
     radius = max(body.size_x, body.size_y) / 2
     squash = min(body.size_x, body.size_y) / max(body.size_x, body.size_y)
     scale = (1.0, squash, 1.0) if body.size_x >= body.size_y else (squash, 1.0, 1.0)
+    surface = body.surface
     return [
         _Piece(
             source=_cylinder(radius, body.height, resolution=24),
@@ -974,20 +1023,22 @@ def _crystal_pieces(body: _WorldBody) -> list[_Piece]:
             position=(body.x, body.y, body.height / 2 + _LIFT),
             orientation=_ALONG_Z,
             scale=scale,
-            specular=0.85,
-            specular_power=50.0,
+            specular=surface.specular,
+            specular_power=surface.specular_power,
         )
     ] + _lead_pieces(body)
 
 
 def _box_pieces(body: _WorldBody) -> list[_Piece]:
     """Plain case: film capacitors, relays, and anything without its own archetype."""
+    surface = body.surface
     return [
         _Piece(
             source=_box(body.size_x, body.size_y, body.height),
             rgb=_rgb(body.style.fill),
             position=(body.x, body.y, body.height / 2 + _LIFT),
-            specular=0.35 if body.style.metallic else 0.15,
+            specular=surface.specular,
+            specular_power=surface.specular_power,
         )
     ] + _lead_pieces(body)
 

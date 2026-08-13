@@ -358,8 +358,15 @@ def autoroute(nets: list[str] | None = None, style: str = "balanced") -> dict[st
       "solder"     solder trace wherever solder reaches, jumper only over crossings
       "wire"       for anyone who would rather cut wire than drag solder along a row
       "lead-bend"  fold a component's own leg where it reaches, then solder, then wire
-    On the NE555 fixture "balanced" gives 4 traces and 10 wires; "solder" gives 14 traces
-    and no wire at all.
+      "best"       route with all four, measure what each would cost to BUILD, keep the
+                   best. Costs roughly two ordinary routes. Prefer this when the user has
+                   not stated a preference -- it answers by measuring instead of guessing.
+    On the NE555 fixture "balanced" gives 4 traces and 10 wires; "solder" gives 17 traces
+    and 6 wires but 27 holes at bridging risk.
+
+    Under "best" the result carries `comparison`: every style's traces, wires, wire length,
+    risk holes and effort score, cheapest first. Report that trade rather than only the
+    winner -- fewer wires against more bridging risk is the user's call to overrule.
 
     Reports every connection it could NOT make, with the router's reason. Do not treat a
     partial result as a finished board: unroutable connections usually mean the parts

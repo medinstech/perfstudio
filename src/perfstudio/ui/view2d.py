@@ -106,7 +106,9 @@ from .bodies import (
     leads_for,
     placement_for,
     polarity_pin_offset,
+    resistor_bands,
     style_for,
+    surface_for,
 )
 from .scenetext import draw_label, draw_physical_label
 
@@ -1061,6 +1063,7 @@ class ConductorItem(QGraphicsItem):
         side: BoardSide,
         net_class: NetClass | None = None,
         signal_index: int = 0,
+        hatch_far_side: bool = True,
     ) -> None:
         super().__init__()
         self.conductor = conductor
@@ -1068,6 +1071,7 @@ class ConductorItem(QGraphicsItem):
         self.side = side
         self.net_class = net_class
         self.signal_index = signal_index
+        self.hatch_far_side = hatch_far_side
         # Selectable, so a single bad route can be deleted instead of the whole autoroute
         # being undone or the entire board re-routed -- which were the only two options.
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
@@ -1079,6 +1083,18 @@ class ConductorItem(QGraphicsItem):
 
     def _points(self) -> list[QPointF]:
         return [hole_to_screen(h, self.board, self.side) for h in self.conductor.path]
+
+    def is_far_side(self) -> bool:
+        """True when this conductor is on the face away from the one being viewed.
+
+        Perfboard is opaque, so strictly you cannot see it at all -- but the whole point of
+        the editor is to show it, and the honest way to do that is to mark it as being on
+        the other side rather than to draw it as if it were in front of you. Public because
+        the hatching is the visible consequence of this one predicate, and a test that has
+        to inspect pixels to check which side a conductor was drawn on is testing the
+        wrong thing.
+        """
+        return self.conductor.side != self.side
 
     def contact_points(self) -> list[QPointF]:
         """Where a solder joint is actually drawn: every hole for a conductor that
@@ -1130,6 +1146,48 @@ class ConductorItem(QGraphicsItem):
             return insulation_color(self.net_class, self.signal_index)
         return CONDUCTOR_STYLE.get(self.conductor.kind, (QColor("#888"), 0.6, False))[0]
 
+    def _paint_through_the_board(
+        self, painter: QPainter, path: QPainterPath, width: float, colour: QColor
+    ) -> None:
+        """A conductor on the far face: hatched, the way a part on the far face already is.
+
+        The board is opaque. Drawing a solder-side trace solid while looking at the
+        component side says "this is in front of you", which is the same misreading
+        ``_paint_body_shadow`` exists to prevent for bodies -- and the one that gets a board
+        soldered on the wrong face. Hatching is this application's established word for "on
+        the other side", so a conductor and a part now say it the same way.
+
+        Stroked into a fillable shape rather than dashed: a dash already means a top jumper
+        (``CONDUCTOR_STYLE``), and giving one mark two meanings costs more than it saves.
+        The outline keeps the run traceable end to end, which hatching alone does not at low
+        zoom.
+        """
+        stroker = QPainterPathStroker()
+        stroker.setWidth(width)
+        stroker.setCapStyle(Qt.PenCapStyle.RoundCap)
+        stroker.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        body = stroker.createStroke(path)
+
+        faded = QColor(colour)
+        faded.setAlphaF(0.75)
+        brush = QBrush(faded, Qt.BrushStyle.FDiagPattern)
+        # Hatch patterns are defined in DEVICE pixels, so without this the hatch would hold
+        # its screen size while the board zooms -- solid when zoomed in, gone when zoomed
+        # out. The same inversion _paint_body_shadow needs, for the same reason.
+        brush.setTransform(painter.transform().inverted()[0])
+        painter.setBrush(brush)
+        painter.setPen(QPen(SELECTED if self.isSelected() else faded, 0.1))
+        painter.drawPath(body)
+
+        # The joints stay solid. Where a conductor is soldered down is the one fact that
+        # does not change with the face you are looking from -- the hole goes through the
+        # board -- and it is what someone counts pads against.
+        painter.setPen(QPen(colour.darker(140), 0.08))
+        painter.setBrush(QBrush(colour))
+        radius = min(width * 0.62, self.board.pad_diameter * 0.32)
+        for point in self.contact_points():
+            painter.drawEllipse(point, radius, radius)
+
     def paint(self, painter: QPainter, option: Any, widget: Any = None) -> None:
         kind = self.conductor.kind
         _default, width, dashed = CONDUCTOR_STYLE.get(kind, (QColor("#888"), 0.6, False))
@@ -1139,6 +1197,10 @@ class ConductorItem(QGraphicsItem):
         path = QPainterPath(pts[0])
         for p in pts[1:]:
             path.lineTo(p)
+
+        if self.hatch_far_side and self.is_far_side():
+            self._paint_through_the_board(painter, path, width, colour)
+            return
 
         # Insulated wire and top jumpers get a dark casing line under the colour, so a
         # coloured sleeve reads as a sleeve rather than as a painted line, and stays
@@ -1176,23 +1238,42 @@ class ConductorItem(QGraphicsItem):
             painter.drawPath(path)
 
         contacts = self.contact_points()
-        painter.setPen(Qt.PenStyle.NoPen)
-        if contacts_every_path_hole(self.conductor):
+        every_hole = contacts_every_path_hole(self.conductor)
+        if every_hole:
             # A bead at every pad: this trace is soldered down all along its length.
             # Sized to sit INSIDE the pad rather than over it -- solder fills the pad, it
             # does not replace it, and a bead wider than the pad hides the thing being
             # soldered to.
             radius = min(width * 0.85, self.board.pad_diameter * 0.42)
-            painter.setBrush(QBrush(colour.lighter(112)))
-            for p in contacts:
-                painter.drawEllipse(p, radius, radius)
+            fill = colour.lighter(112)
         else:
             # A fillet at each end only: a wire is soldered at its two ends and merely
             # passes over everything between them.
             radius = min(width * 0.95, self.board.pad_diameter * 0.40)
-            painter.setBrush(QBrush(colour.lighter(120)))
+            fill = colour.lighter(120)
+
+        # A thin darker rim around each joint. Without it a run of beads at 2.54 mm pitch
+        # merges into one lumpy caterpillar brighter than the trace under it, and the eye
+        # reads a necklace rather than a length of copper soldered down at every pad. The
+        # rim keeps each joint individually countable -- which is what someone tracing the
+        # run against the board is actually doing -- while letting the trace itself carry
+        # the line.
+        painter.setPen(QPen(colour.darker(145), 0.08))
+        painter.setBrush(QBrush(fill))
+        for p in contacts:
+            painter.drawEllipse(p, radius, radius)
+
+        # A highlight off the top-left of each joint: solder is domed and wet-looking, and
+        # a flat disc is the one thing it never looks like. Skipped when zoomed out far
+        # enough that it would be a single stray pixel of noise per pad.
+        if painter.transform().m11() >= 6.0:
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(fill.lighter(135)))
+            spot = radius * 0.34
             for p in contacts:
-                painter.drawEllipse(p, radius, radius)
+                painter.drawEllipse(
+                    QPointF(p.x() - radius * 0.28, p.y() - radius * 0.28), spot, spot
+                )
 
 
 # --------------------------------------------------------------- component bodies
@@ -1292,6 +1373,79 @@ def _paint_body_shadow(
     painter.drawPath(path)
 
 
+def _paint_body_sheen(
+    painter: QPainter,
+    path: QPainterPath,
+    rect: QRectF,
+    placement: BodyPlacement,
+    style: BodyStyle,
+) -> None:
+    """A highlight along the top of the body, so it reads as a solid object.
+
+    A flat fill is what made every part look like a sticker printed on the board. Real
+    parts are round or moulded and catch the light along one edge, and how MUCH they catch
+    is the difference between a plastic case and a metal can -- which is a fact
+    ``bodies.surface_for`` owns, so the 3D view shades the same part the same way.
+
+    Drawn across the body's SHORT axis, because that is the direction a cylinder curves
+    in: a resistor lying on the board is lit along its length, not around its ends.
+    """
+    sheen = surface_for(style).sheen
+    if sheen <= 0.0:
+        return
+    highlight = QColor(style.fill).lighter(100 + int(sheen * 120))
+    highlight.setAlphaF(min(1.0, 0.35 + sheen * 0.5))
+    band = QRectF(rect)
+    if placement.axis == "x":
+        band.setHeight(rect.height() * 0.34)
+        band.moveTop(rect.top() + rect.height() * 0.13)
+    else:
+        band.setWidth(rect.width() * 0.34)
+        band.moveLeft(rect.left() + rect.width() * 0.13)
+    painter.save()
+    painter.setClipPath(path)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QBrush(highlight))
+    radius = min(band.width(), band.height()) * 0.5
+    painter.drawRoundedRect(band, radius, radius)
+    painter.restore()
+
+
+def _paint_resistor_bands(
+    painter: QPainter,
+    path: QPainterPath,
+    rect: QRectF,
+    placement: BodyPlacement,
+    bands: tuple[str, ...],
+) -> None:
+    """The printed colour code, across the body and clipped to it.
+
+    Laid out from one end rather than centred, and with the tolerance band pushed to the
+    far end, because that asymmetry is what tells a reader which way round to read the
+    other three -- exactly as it does on the real part.
+    """
+    along = rect.width() if placement.axis == "x" else rect.height()
+    if along <= 0:
+        return
+    width = along * 0.11
+    painter.save()
+    painter.setClipPath(path)
+    painter.setPen(Qt.PenStyle.NoPen)
+    for index, colour in enumerate(bands):
+        # The first three sit in the near half; the tolerance band goes at the far end.
+        fraction = 0.16 + index * 0.15 if index < len(bands) - 1 else 0.80
+        band = QRectF(rect)
+        if placement.axis == "x":
+            band.setWidth(width)
+            band.moveLeft(rect.left() + along * fraction)
+        else:
+            band.setHeight(width)
+            band.moveTop(rect.top() + along * fraction)
+        painter.setBrush(QBrush(QColor(colour)))
+        painter.drawRect(band)
+    painter.restore()
+
+
 def _paint_body(
     painter: QPainter,
     footprint: Footprint,
@@ -1300,6 +1454,7 @@ def _paint_body(
     keyed: tuple[float, float] | None,
     selected: bool,
     pitch: float,
+    bands: tuple[str, ...] | None = None,
 ) -> None:
     rect = _body_rect(placement)
     path = _body_path(footprint, placement, keyed)
@@ -1310,6 +1465,13 @@ def _paint_body(
 
     accent = QColor(style.accent)
     archetype = footprint.body.archetype
+
+    # Before the marks, so a cathode band or a pin-1 dot stays flat and readable on top of
+    # it rather than being washed out by a highlight painted over it.
+    _paint_body_sheen(painter, path, rect, placement, style)
+
+    if bands:
+        _paint_resistor_bands(painter, path, rect, placement, bands)
 
     if archetype == "axial-cylinder" and keyed is not None:
         # A diode's cathode band. Clipped to the body so it cannot spill past a rounded end.
@@ -1555,7 +1717,16 @@ class ComponentItem(QGraphicsItem):
             painter.save()
             self._apply_local_transform(painter)
             _paint_body(
-                painter, self.fp, placement, style, keyed, self.isSelected(), self.board.pitch
+                painter,
+                self.fp,
+                placement,
+                style,
+                keyed,
+                self.isSelected(),
+                self.board.pitch,
+                # From the document's own value, so the bands cannot disagree with the
+                # netlist. None for anything that is not a resistor with a readable value.
+                bands=resistor_bands(self.fp, self.comp.value),
             )
             painter.restore()
 
@@ -1671,11 +1842,13 @@ class BoardScene(QGraphicsScene):
         bus: CommandBus | None = None,
         show_ratsnest: bool = True,
         show_rulers: bool = True,
+        hatch_far_side: bool = True,
     ) -> None:
         super().__init__()
         self.lookup = lookup
         self.side = side
         self.bus = bus
+        self.hatch_far_side = hatch_far_side
         self.document = document
         self.violations: tuple[DrcViolation, ...] = ()
         self.component_items: dict[str, ComponentItem] = {}
@@ -1721,6 +1894,17 @@ class BoardScene(QGraphicsScene):
         if show != self.show_ratsnest:
             self.show_ratsnest = show
             self._rebuild_ratsnest()
+
+    def set_hatch_far_side(self, hatch: bool) -> None:
+        """Whether copper on the face away from the viewer is hatched or drawn solid.
+
+        A full rebuild rather than an item-by-item update: the flag is read when each
+        ConductorItem is built, and one source of truth for "what is in this scene" is worth
+        more than saving a rebuild nobody is waiting on.
+        """
+        if hatch != self.hatch_far_side:
+            self.hatch_far_side = hatch
+            self._build()
 
     def set_show_rulers(self, show: bool) -> None:
         if show != self.show_rulers:
@@ -1837,6 +2021,7 @@ class BoardScene(QGraphicsScene):
                     self.side,
                     net_class=net_class_by_id.get(conductor.net_id or ""),
                     signal_index=signal_index.get(conductor.net_id or "", 0),
+                    hatch_far_side=self.hatch_far_side,
                 )
             )
 

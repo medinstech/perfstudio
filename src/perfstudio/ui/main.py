@@ -28,7 +28,7 @@ import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, TypeAlias, cast
 
 from PySide6.QtCore import QEventLoop, QRectF, QSettings, QSize, Qt, QThread, QTimer
 from PySide6.QtGui import QAction, QColor, QImage, QKeySequence, QPainter
@@ -65,8 +65,10 @@ from perfstudio.autoroute import (
     AutorouteOptions,
     AutoroutePlan,
     UnroutedLink,
+    describe_best,
     describe_reroute,
     plan_autoroute,
+    plan_best_autoroute,
     plan_reroute,
 )
 from perfstudio.autoroute import (
@@ -151,6 +153,11 @@ from perfstudio.placer import (
 )
 from perfstudio.ratsnest import NetRatsnest, ratsnest, summarize
 from perfstudio.router import RoutingStyle, options_for_style
+
+#: What the Preferred Connection menu can be set to: one of the router's styles, or "best"
+#: to route with every style and keep whichever produces the board that is least work to
+#: build. "best" is a UI concept and stays here -- the engine is given a concrete style.
+StylePreference: TypeAlias = RoutingStyle | Literal["best"]
 from perfstudio.version import __version__
 from perfstudio.version import describe as describe_version
 
@@ -1050,8 +1057,9 @@ class MainWindow(QMainWindow):
         #: Nets whose copper was laid out for a position a part has since left. See
         #: _track_moved_nets for why this is remembered rather than detected.
         self._nets_from_old_layout: set[NetId] = set()
-        #: Which primitive the router should reach for first. See router.RoutingStyle.
-        self._routing_style: RoutingStyle = "balanced"
+        #: Which primitive the router should reach for first. See router.RoutingStyle, and
+        #: StylePreference for the extra "best" value that measures rather than assumes.
+        self._routing_style: StylePreference = "balanced"
 
         #: The document as it last hit disk. Identity comparison against the bus's
         #: current document is what "modified" means here -- see is_modified.
@@ -1601,14 +1609,21 @@ class MainWindow(QMainWindow):
         style_menu.setToolTipsVisible(True)
         self.act_style: dict[str, QAction] = {}
         for style, label, tip in (
+            ("best", t("&Try each and keep the best"),
+             "Route the board once with every style, measure what each would cost to "
+             "build -- traces, wires, wire length, bridging risk -- and keep the best. "
+             "Takes about as long as two ordinary routes; the comparison is reported."),
             ("solder", t("&Solder trace where possible"),
-             "Solder wherever solder reaches, with a short jumper only where it must cross. "
-             "On the NE555 fixture this routes all 14 connections without a single wire."),
+             "Every connection a solder trace can make, IS one -- wire only where a trace "
+             "physically cannot get there. A short jumper carries a run over anything it "
+             "must cross. On the NE555 fixture: all 14 connections, not one wire."),
             ("balanced", t("&Balanced"),
-             "Weigh each primitive on its own cost. The default, and what every golden "
-             "fixture is routed with."),
+             "No commitment: weigh each primitive on its own cost and take the cheapest "
+             "each time. The default, and what every golden fixture is routed with. On a "
+             "populated board this comes out as wire far more often than people expect."),
             ("wire", t("&Wire where possible"),
-             "For anyone who would rather cut and dress wire than drag solder along a row."),
+             "For anyone assembling with wire: every connection a wire can make is a wire, "
+             "including the rails. Solder only where a wire cannot reach."),
             ("lead-bend", t("Bend component &legs where possible"),
              "Fold a component's own leg to a nearby hole first, then solder, then wire. "
              "The cheapest connection there is -- no wire to cut, and already soldered at "
@@ -1666,6 +1681,18 @@ class MainWindow(QMainWindow):
         self.act_rulers.setCheckable(True)
         self.act_rulers.setChecked(True)
         self.act_rulers.toggled.connect(self.scene.set_show_rulers)
+        # ON by default, because the board is opaque: copper on the far face drawn solid
+        # reads as copper in front of you, and that is how a board gets soldered on the
+        # wrong side. A toggle rather than a fixed rule because someone tracing a dense
+        # solder side may simply want to see it plainly.
+        self.act_hatch = view_menu.addAction(t("&Hatch Copper on the Far Side"))
+        self.act_hatch.setCheckable(True)
+        self.act_hatch.setChecked(True)
+        self.act_hatch.setToolTip(
+            "Draw conductors on the face you are NOT looking at as hatched, the way a part "
+            "on the far side already is. Turn it off to see them solid."
+        )
+        self.act_hatch.toggled.connect(self.scene.set_hatch_far_side)
         view_menu.addSeparator()
 
         self.act_3d = self.dock_3d.toggleViewAction()
@@ -2673,7 +2700,7 @@ class MainWindow(QMainWindow):
         the moment a menu item is ticked would discard work the user has not asked to
         lose -- and Route > Re-route Everything is right there for when they do.
         """
-        self._routing_style = cast(RoutingStyle, style)
+        self._routing_style = cast("StylePreference", style)
         for name, action in self.act_style.items():
             action.setChecked(name == style)
         self.statusBar().showMessage(
@@ -2683,6 +2710,13 @@ class MainWindow(QMainWindow):
         )
 
     def _autoroute_options(self) -> AutorouteOptions:
+        """Options for a single planned route.
+
+        Under "best" the sweep applies each style itself, so this hands it the UNSTYLED
+        defaults -- picking one here would prime every variant with another's cost table.
+        """
+        if self._routing_style == "best":
+            return AutorouteOptions()
         return AutorouteOptions(router=options_for_style(self._routing_style))
 
     def on_reroute_selection(self) -> None:
@@ -2831,23 +2865,51 @@ class MainWindow(QMainWindow):
         cleared = self._clear_strays(quiet=True)
 
         document = self.bus.document
+        options = self._autoroute_options()
+        sweep = self._routing_style == "best"
         t0 = time.perf_counter()
-        plan = self._run_planner(
-            "Routing…",
-            lambda _should_stop: plan_autoroute(
-                document, self.lookup, self._autoroute_options(), only_net_ids=only_net_ids
-            ),
-        )
+        if sweep:
+            best = self._run_planner(
+                "Routing every style…",
+                lambda _should_stop: plan_best_autoroute(
+                    document, self.lookup, options, only_net_ids=only_net_ids
+                ),
+            )
+            plan = best.plan if best is not None else None
+        else:
+            best = None
+            plan = self._run_planner(
+                "Routing…",
+                lambda _should_stop: plan_autoroute(
+                    document, self.lookup, options, only_net_ids=only_net_ids
+                ),
+            )
         elapsed = (time.perf_counter() - t0) * 1000
         if plan is None:
             return
         cleared_note = f"  ·  {cleared} stale conductor(s) removed first" if cleared else ""
+        # Which style won, and how many it beat. Said in the status line rather than only in
+        # the log, because a user who asked the tool to choose is owed the choice it made --
+        # otherwise "best" is indistinguishable from the router having a good day.
+        style_note = (
+            f"  ·  {best.style} beat {best.considered - 1} other style"
+            f"{'' if best.considered == 2 else 's'}"
+            if best is not None
+            else ""
+        )
 
         if plan.is_empty:
             self.statusBar().showMessage(
                 f"Nothing to route: {describe_plan(plan)}{cleared_note} ({elapsed:.0f} ms)", 8000
             )
             return
+
+        # The full table goes on the status bar's tooltip: one hover away, and it stays
+        # there. The winner was chosen on a judgement about build effort the user is
+        # entitled to disagree with, and they cannot disagree with numbers they were never
+        # shown -- but a modal dialog after every route would be nagging, and the four
+        # styles remain pickable by hand for when they do disagree.
+        self.statusBar().setToolTip(describe_best(best) if best is not None else "")
 
         result = self.bus.dispatch("conductor.addMany", plan.payload())
         if not result.ok:
@@ -2860,7 +2922,9 @@ class MainWindow(QMainWindow):
         # Said after the commit, and said in full: the failures are the part a user must not
         # miss (PLAN.md Sec 13), so they go in the status line and, if there are any, into a
         # dialog that names each one.
-        self.statusBar().showMessage(f"{describe_plan(plan)}{cleared_note}  ({elapsed:.0f} ms)", 0)
+        self.statusBar().showMessage(
+            f"{describe_plan(plan)}{cleared_note}{style_note}  ({elapsed:.0f} ms)", 0
+        )
         self._report_unrouted(plan)
 
     def _report_unrouted(self, plan: AutoroutePlan) -> None:
@@ -3911,6 +3975,16 @@ def headless(argv: list[str]) -> int:
             f"             would leave LVS at {after.matched_nets}/{after.schematic_nets} matched, "
             f"{after.opens} open, {after.shorts} short"
         )
+
+        # Every style, measured. This is the number CI should watch alongside the placer's:
+        # it says whether a style still earns its place, and a change to any cost table
+        # shows up here as a different winner rather than as a silently different board.
+        t0 = time.perf_counter()
+        best = plan_best_autoroute(doc, lookup)
+        t_sweep = (time.perf_counter() - t0) * 1000
+        print(f"\nstyle sweep  {t_sweep:6.1f} ms   (dry run, nothing committed)")
+        for line in describe_best(best).splitlines():
+            print(f"             {line}")
 
     # --- Placement, also a dry run. The number CI should watch is the routing cost
     # before and after: it is the one that says whether the placer is still earning its

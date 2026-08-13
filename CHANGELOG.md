@@ -22,6 +22,130 @@ closed without a bump.
 
 ### Added
 
+- **Copper on the face you are not looking at is hatched.** `View ▸ Hatch Copper on the Far
+  Side`, on by default. The board is opaque: a solder-side trace drawn solid while you are
+  looking at the component side says *this is in front of you*, which is exactly the
+  misreading `_paint_body_shadow` already exists to prevent for part bodies — and the one
+  that gets a board soldered on the wrong face. A conductor and a part now say "I am on the
+  other side" the same way, in the one visual word this application already had for it.
+  - **Stroked into a fillable shape rather than dashed.** A dash already means a top jumper
+    in `CONDUCTOR_STYLE`, and giving one mark two meanings costs more than it saves. The
+    outline around the hatch is what keeps a run traceable end to end at low zoom, where a
+    0.9 mm trace is a few pixels wide and hatching alone cannot read.
+  - **The joints stay solid.** Where a conductor is soldered down does not change with the
+    face you look from — the hole goes through the board — and it is what someone counts
+    pads against while tracing a run. A test pins that a hatched trace still marks every
+    hole it contacts.
+  - The hatch brush carries the inverse of the painter transform, so it holds its spacing on
+    screen while the board zooms instead of turning solid zoomed in and vanishing zoomed out
+    — the same correction the body shadow needs, for the same reason.
+  - Off is a real option, not a concession: someone tracing a dense solder side may simply
+    want to see it plainly. On is the default because the default has to be the reading that
+    cannot mislead.
+
+### Changed
+
+- **A routing style is now a commitment, not a weighting.** Picking `Solder trace where
+  possible` used to mean "solder where solder happens to be cheapest", and the difference
+  showed: on the NE555 fixture the default table turned a clean five-pad trace into a
+  10 mm bare wire because *one* pad sat next to another net. `RouterOptions.prefer` makes
+  the menu item mean what it says — every strategy in the family the builder committed to
+  outranks every strategy outside it, whatever the two cost, and cost only decides within
+  the family. Wire is reached when a trace physically cannot make the connection, not when
+  it scores badly.
+  - **Two numbers in the default cost table are why this was needed**, and they are worth
+    writing down because they are not obvious: `proximity_risk` is 12 a hole while
+    `bare_wire_fixed` is 8, so a single risky pad costs more than an entire wire; and
+    `bare_wire_per_mm` at 0.15 works out to 0.38 per pad against `solder_trace_step`'s
+    1.0, so wire is 2.6× cheaper per unit distance and wins every long run outright. The
+    table is unchanged — the commitment sits above it — so all the golden routes stand.
+  - NE555 with `solder`: all 14 connections are traces (7 plain, 6 hopped over a crossing,
+    1 spined) and not one is a wire. Nothing is left unrouted, and LVS and DRC still pass
+    for every style.
+  - **A hopped trace counts as solder.** It is a solder run with a two-hole jumper where it
+    had to cross something; classing it as wire would make a preference for solder reject
+    the one mechanism that gets solder past an obstacle, leaving the whole connection to be
+    a wire — more wire, not less.
+  - **A rail is a solder concept**, so committing to wire no longer comes back with solder
+    rails in it. This is the one place a commitment has to be honoured outside
+    `route_connection`'s candidate sort, because `_rail_net` reaches past `result.best` to
+    pick a strategy that contacts every pad it passes.
+  - `balanced` alone makes no commitment, and that is what balanced means. It is also what
+    every golden route is produced with, so that branch stays a no-op.
+
+### Added
+
+- **The router can try every style and keep the best.** `Route ▸ Preferred Connection ▸
+  Try each and keep the best`, `style: "best"` over MCP. Picking a routing style meant
+  guessing — before seeing a single route — whether this particular board comes out better
+  with solder or with wire. Planning is pure and a plan is cheap, so the tool can stop
+  guessing and measure: it routes the board once per style and keeps the one that is least
+  work to build. Costs about two ordinary routes (607 ms against 273 ms on the NE555
+  fixture), because `balanced`'s own rip-up passes are the slow ones.
+  - **It does not compare costs, and that is the whole trick.** Each style's plan carries a
+    `total_cost` quoted in that style's own currency: the `wire` table prices a solder step
+    at 4 and an insulated wire at 6, so its plans are cheap *by its own definition of
+    cheap*, and `min(total_cost)` would pick wire on every board ever. The comparison is on
+    physical facts instead — traces, wires, millimetres of wire, holes at R5' bridging
+    risk — which mean the same thing whichever table produced them. A test asserts
+    `score_plan` never mentions `total_cost`.
+  - **An unrouted connection is a gate, not a term.** A plan that leaves one can never win
+    on being tidier elsewhere, however large the gap: PLAN.md §13 names "it routed most of
+    it and left four connections" as the trap every previous perfboard autorouter fell into.
+  - **A wire costs more to build than a trace**, and by a fixed amount before a single
+    millimetre exists — measure, cut, strip, tin, dress, solder twice. The first version of
+    this scoring priced them the same, which undercharges the one primitive with real
+    preparation behind it and makes every comparison meaningless.
+  - **Every loser is kept and reported**, with its measurements, in the status bar's tooltip
+    and in `comparison` over MCP. The winner is chosen on an exchange rate between wires and
+    bridging risk that the user is entitled to disagree with, and they cannot disagree with
+    numbers they were never shown — so all four styles stay pickable by hand.
+  - Ties fall to the earlier style tried, so `balanced` keeps its place and the sweep
+    reduces to today's behaviour when nothing beats it. On both the NE555 and dense
+    fixtures, nothing does.
+  - Headless prints the whole table, so a change to any cost table shows up in CI as a
+    different winner rather than as a silently different board.
+
+- **Resistors wear their colour code, in both views.** A resistor is the commonest part on
+  almost any board and every one of them was an anonymous beige blob — so *"is the 10k in
+  the right place"* could not be answered by looking, which is the one job the 3D view has.
+  The bands are decoded from `ComponentInstance.value`, which is already in the document,
+  so nothing new is stored and the bands cannot disagree with the netlist.
+  - **It never guesses.** A wrong band is worse than no band: somebody would read it and
+    fit the wrong part. The parser understands the way schematics actually write a
+    resistance — `470`, `470R`, `4R7`, `10k`, `4k7`, `2.2k`, `2M2`, `1kΩ`, where the unit
+    letter stands in for the decimal point — and returns nothing at all for anything else.
+    `100nF`, `10uH`, `2A`, `NE555` and dense.perf's placeholder `v12` all decode to no
+    bands rather than to a plausible resistance, and that is the load-bearing test.
+  - **A diode is not a resistor**, though they share the `axial-cylinder` archetype. A
+    polarized axial body keeps its cathode stripe and is never banded, the same split
+    `style_for` already makes.
+  - Both views read `bodies.resistor_bands`, so the editor and the 3D view cannot print
+    different parts. The library icons still draw three generic bands, and correctly: that
+    list shows footprints, which have no value to decode — it is a picture of *a resistor*,
+    where the board is a picture of *a 10k*.
+
+- **Parts are lit like the material they are made of.** `BodyStyle.metallic` and
+  `BodyStyle.lens` were documented as shading hints for both renderers and read by almost
+  neither — the HC-49 crystal, the one part in the registry that is literally a metal can,
+  hardcoded its own metal shading while carrying the flag that says so, and no LED was ever
+  lit as a lens. Two sources of truth for one fact, in the module that exists to prevent
+  exactly that. `bodies.surface_for` is now the single answer, and both views ask it.
+  - The 2D view gained a highlight swept across the short axis of a body, because that is
+    the direction a cylinder curves in. A flat fill is what made every part read as a
+    sticker printed on the board rather than an object standing on it.
+  - A LED now looks lit, a crystal can looks like metal, and a DIP still looks like matte
+    plastic — which is most of what makes a rendered board look like a board.
+
+- **A solder run reads as copper again.** Each joint gained a thin darker rim and, close
+  in, a small highlight off its top-left. At 2.54 mm pitch a run of beads brighter than the
+  trace beneath them merged into one lumpy caterpillar, so the eye read a necklace rather
+  than a length of copper soldered down at every pad. Each joint is individually countable
+  now — which is what somebody tracing the run against the real board is doing — while the
+  trace itself carries the line. The bead-per-pad distinction is untouched: it still comes
+  from `model.contacts_every_path_hole`, and a wire still gets a fillet at its two ends and
+  nothing in between.
+
 - **Two clicks join two pins.** `Net ▸ Connect Two Pins` (C, and the first button on the
   toolbar) is the netlist reduced to what a person is actually doing: pointing at two legs
   and saying *those* go together. Click one pin, click another, and they end up on the

@@ -139,6 +139,12 @@ def test_no_two_entries_in_a_menu_claim_the_same_accelerator() -> None:
                  "&Insulated Wire", "Top &Jumper", "&Stop the Current Tool"],
         "net": ["&Connect Two Pins", "&New Net…", "&Add Pins to Net", "&Finish Adding Pins",
                 "&Edit Net…", "&Disconnect Selected Pins", "De&lete Net"],
+        # Route ▸ Preferred Connection. Five items in one submenu, and the one place in the
+        # application where a user picks between whole routing strategies -- so an
+        # unreachable item here costs them a strategy, not a shortcut.
+        "routing style": ["&Try each and keep the best", "&Solder trace where possible",
+                          "&Balanced", "&Wire where possible",
+                          "Bend component &legs where possible"],
     }
     for name, keys in groups.items():
         for code, catalogue in CATALOGUES.items():

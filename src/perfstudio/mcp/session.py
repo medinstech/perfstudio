@@ -30,7 +30,13 @@ from pathlib import Path
 from typing import Any, cast, get_args
 
 from perfstudio import persist
-from perfstudio.autoroute import AutorouteOptions, describe_reroute, plan_autoroute, plan_reroute
+from perfstudio.autoroute import (
+    AutorouteOptions,
+    describe_reroute,
+    plan_autoroute,
+    plan_best_autoroute,
+    plan_reroute,
+)
 from perfstudio.autoroute import describe as describe_route
 from perfstudio.command import CommandBus, CommandContext
 from perfstudio.commands import (
@@ -746,9 +752,34 @@ class BoardSession:
         if cleared:
             self.remove_stale_conductors()
 
-        plan = plan_autoroute(
-            self.document, self.lookup, _route_options(style), only_net_ids=only
-        )
+        options = _route_options(style)
+        # Every variant's measurements travel with the result, not just the winner's. An
+        # agent that is told only "solder won" cannot judge whether to accept it, and the
+        # trade it was decided on -- wires against bridging risk -- is exactly the kind a
+        # caller may reasonably want to make differently.
+        comparison: list[dict[str, Any]] = []
+        chosen_style = style
+        if style == BEST_STYLE:
+            best = plan_best_autoroute(self.document, self.lookup, options, only_net_ids=only)
+            plan = best.plan
+            chosen_style = best.style
+            comparison = [
+                {
+                    "style": variant.style,
+                    "chosen": variant.style == best.style,
+                    "routed": variant.plan.summary.links_routed,
+                    "unrouted": variant.score.unrouted,
+                    "traces": variant.score.traces,
+                    "wires": variant.score.wires,
+                    "wire_mm": round(variant.score.wire_mm, 1),
+                    "risk_holes": variant.score.risk_holes,
+                    "effort": round(variant.score.effort, 1),
+                }
+                for variant in sorted(best.variants, key=lambda v: v.score.key())
+            ]
+        else:
+            plan = plan_autoroute(self.document, self.lookup, options, only_net_ids=only)
+
         if plan.is_empty:
             return _ok(
                 committed=False,
@@ -756,6 +787,8 @@ class BoardSession:
                 routed=0,
                 unrouted=0,
                 stale_removed=len(cleared),
+                style=chosen_style,
+                comparison=comparison,
             )
 
         result = self._dispatch("conductor.addMany", plan.payload())
@@ -765,6 +798,8 @@ class BoardSession:
             committed=True,
             summary=describe_route(plan),
             stale_removed=len(cleared),
+            style=chosen_style,
+            comparison=comparison,
             routed=plan.summary.links_routed,
             unrouted=plan.summary.links_unrouted,
             # Never summarised away: PLAN.md Sec 13 names "it routed most of it and left
@@ -1142,17 +1177,29 @@ class BoardSession:
         raise SessionError(f"No net called {name!r}. Known nets: {known}.")
 
 
+#: Accepted by ``autoroute``'s ``style`` alongside the router's own names: route once with
+#: every style and keep whichever produces the board that is least work to build.
+BEST_STYLE = "best"
+
+
+def _route_styles() -> str:
+    return ", ".join((*get_args(RoutingStyle), BEST_STYLE))
+
+
 def _route_options(style: str) -> AutorouteOptions:
     """Turn a style name into router options, or say what the names are.
 
     The style is a judgement about the builder rather than about the board -- which
     primitive they would rather use -- so it is per call, not a session setting: an agent
     may reasonably want the power rails as solder rails and the signals as wire.
+
+    ``"best"`` returns the UNSTYLED defaults: the sweep applies each style itself, and
+    priming it with one style's cost table would bias every variant.
     """
+    if style == BEST_STYLE:
+        return AutorouteOptions()
     if style not in get_args(RoutingStyle):
-        raise SessionError(
-            f"{style!r} is not a routing style. Use one of: {', '.join(get_args(RoutingStyle))}."
-        )
+        raise SessionError(f"{style!r} is not a routing style. Use one of: {_route_styles()}.")
     return AutorouteOptions(router=options_for_style(cast(RoutingStyle, style)))
 
 

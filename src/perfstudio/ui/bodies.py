@@ -29,6 +29,8 @@ Everything here is derived from numbers already in the registry.
 
 from __future__ import annotations
 
+import math
+import re
 from dataclasses import dataclass
 from typing import Literal, TypeAlias
 
@@ -83,6 +85,47 @@ BODY_STYLES: dict[BodyArchetype, BodyStyle] = {
 _DIODE_STYLE = BodyStyle(fill="#1d1f24", edge=_PLASTIC_EDGE, accent="#e8ecf2")
 
 _FALLBACK_STYLE = BODY_STYLES["generic-box"]
+
+
+@dataclass(frozen=True, slots=True)
+class Surface:
+    """How a material catches light, for both views at once.
+
+    ``BodyStyle`` already records WHAT a part is made of (``metallic``, ``lens``); this
+    turns that into the numbers each renderer needs. It exists because the two facts had
+    drifted apart: the 3D view read ``metallic`` in exactly one builder (``_box_pieces``)
+    and every other archetype hardcoded a specular value -- including the HC-49 crystal,
+    the one part in the registry that is literally a metal can and whose own flag was
+    therefore being ignored by the code that draws it. The 2D view read neither flag at
+    all, so a metal can and a plastic case differed only in hue.
+
+    One table, two renderers (see the module docstring): a material that is changed here
+    changes in the editor, in the 3D view and in the guide's step images together.
+    """
+
+    #: VTK specular reflectance and its exponent.
+    specular: float
+    specular_power: float
+    #: 0..1, how strong a highlight the 2D view sweeps across the top of the body. Flat
+    #: fill is what made every 2D part read as a sticker rather than an object.
+    sheen: float
+
+
+_PLASTIC_SURFACE = Surface(specular=0.18, specular_power=12.0, sheen=0.14)
+_METAL_SURFACE = Surface(specular=0.85, specular_power=50.0, sheen=0.40)
+#: A lens is brighter than metal and tighter than plastic: it is transmitting, not
+#: reflecting, and the highlight is the thing that says "this is glass, not paint".
+_LENS_SURFACE = Surface(specular=0.9, specular_power=70.0, sheen=0.55)
+
+
+def surface_for(style: BodyStyle) -> Surface:
+    """The shading a style implies. ``lens`` wins over ``metallic``: a part is one or the
+    other, and no archetype sets both."""
+    if style.lens:
+        return _LENS_SURFACE
+    if style.metallic:
+        return _METAL_SURFACE
+    return _PLASTIC_SURFACE
 
 
 def style_for(footprint: Footprint) -> BodyStyle:
@@ -366,14 +409,122 @@ def polarity_pin_offset(footprint: Footprint, pitch: float) -> tuple[float, floa
     return None
 
 
+# ---------------------------------------------------------------------------
+# The resistor colour code
+# ---------------------------------------------------------------------------
+#
+# A resistor is the commonest part on almost any board, and until this existed every one
+# of them was an anonymous beige blob in both views -- so "is the 10k in the right place"
+# could not be answered by looking, which is the one job the 3D view has (PLAN.md Sec 8.4).
+# The bands come from ``ComponentInstance.value``, which is already in the document, so
+# nothing new is stored and nothing can disagree with the netlist.
+#
+# NEVER GUESS. A wrong band is worse than no band: someone would read it and fit the wrong
+# part. So the parser is strict and returns None on anything it does not fully understand
+# -- which is also what keeps a 100nF capacitor, a 2A fuse and an NE555 from being decoded
+# as resistances by accident.
+
+#: Digit colours, indexed by the digit. The multiplier band uses the same table.
+_BAND_COLOURS: tuple[str, ...] = (
+    "#141519",  # 0 black
+    "#6b4423",  # 1 brown
+    "#c62f2a",  # 2 red
+    "#e2701f",  # 3 orange
+    "#efc430",  # 4 yellow
+    "#3c8f45",  # 5 green
+    "#2062c4",  # 6 blue
+    "#7a3fa3",  # 7 violet
+    "#8f959d",  # 8 grey
+    "#f2f4f8",  # 9 white
+)
+_BAND_GOLD = "#c9a227"
+_BAND_SILVER = "#c6cad1"
+
+#: `470`, `470R`, `4R7`, `10k`, `4k7`, `2.2k`, `1M`. The unit letter may stand in for the
+#: decimal point, which is the whole reason this is not a float() call. Anything with a
+#: letter outside this set -- `100nF`, `10uH`, `2A` -- fails to match and gets no bands.
+_RESISTANCE_RE = re.compile(r"^(\d+)(?:[.,](\d+))?\s*([RKMG])?\s*(\d*)$", re.IGNORECASE)
+
+_DECADE: dict[str, float] = {"R": 1.0, "K": 1e3, "M": 1e6, "G": 1e9}
+
+
+def parse_resistance(value: str) -> float | None:
+    """Ohms from a schematic value string, or None if it is not unambiguously a resistance.
+
+    Lowercase ``m`` is read as MEGA rather than milli. That is the EDA convention every
+    netlist this tool imports follows (`4m7` beside `4M7`), and a milliohm resistor is not
+    a thing anyone fits to perfboard -- but it is the one deliberate ambiguity here, so it
+    is written down rather than left to be discovered.
+    """
+    text = value.strip().rstrip("ΩΩ")  # Greek capital omega, and the ohm sign.
+    for suffix in ("ohms", "ohm"):
+        if text.lower().endswith(suffix):
+            text = text[: -len(suffix)].strip()
+    match = _RESISTANCE_RE.match(text)
+    if match is None:
+        return None
+    whole, decimal, unit, trailing = match.groups()
+    if decimal and trailing:
+        return None  # `4.7k7` means nothing.
+    if trailing and not unit:
+        return None  # A bare `4 7` is not a value.
+    mantissa = float(f"{whole}.{decimal or trailing or '0'}")
+    ohms = mantissa * _DECADE[unit.upper()] if unit else mantissa
+    return ohms if ohms > 0 else None
+
+
+def resistance_bands(ohms: float) -> tuple[str, ...] | None:
+    """The four printed bands for a resistance: two digits, a multiplier and a tolerance.
+
+    Four rather than three because a real part has four and the fourth is the one at the
+    end that tells you which way to read the other three. Gold, for the 5% that E24
+    describes -- the series this is decoding.
+    """
+    if ohms <= 0 or not math.isfinite(ohms):
+        return None
+    exponent = int(math.floor(math.log10(ohms))) - 1
+    mantissa = int(round(ohms / (10.0**exponent)))
+    if mantissa >= 100:  # 99.6 rounds to 100: carry it rather than emit a third digit.
+        mantissa //= 10
+        exponent += 1
+    if exponent == -1:
+        multiplier = _BAND_GOLD
+    elif exponent == -2:
+        multiplier = _BAND_SILVER
+    elif 0 <= exponent < len(_BAND_COLOURS):
+        multiplier = _BAND_COLOURS[exponent]
+    else:
+        return None  # Beyond what the code can print; no band beats a wrong band.
+    tens, units = divmod(mantissa, 10)
+    return (_BAND_COLOURS[tens], _BAND_COLOURS[units], multiplier, _BAND_GOLD)
+
+
+def resistor_bands(footprint: Footprint, value: str) -> tuple[str, ...] | None:
+    """The colour bands for a part, or None if it is not a resistor with a readable value.
+
+    Gated on the footprint as well as the value: an axial body that IS polarized is a
+    diode, which carries a cathode stripe instead and must never be given bands on top of
+    it. ``style_for`` splits the same archetype the same way, for the same reason.
+    """
+    if footprint.body.archetype != "axial-cylinder" or footprint.polarized:
+        return None
+    ohms = parse_resistance(value)
+    return None if ohms is None else resistance_bands(ohms)
+
+
 __all__ = [
     "BODY_STYLES",
     "BodyPlacement",
     "BodyStyle",
     "Lead",
     "Silhouette",
+    "Surface",
     "leads_for",
+    "parse_resistance",
     "placement_for",
     "polarity_pin_offset",
+    "resistance_bands",
+    "resistor_bands",
     "style_for",
+    "surface_for",
 ]

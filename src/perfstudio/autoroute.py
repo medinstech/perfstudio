@@ -66,6 +66,8 @@ from .router import (
     RouteRequest,
     RouterOptions,
     RouteStrategy,
+    RoutingStyle,
+    options_for_style,
     route_connection,
 )
 
@@ -256,6 +258,208 @@ def plan_route_net(
     return plan_autoroute(doc, lookup, options, only_net_ids=(net_id,))
 
 
+# ---------------------------------------------------------------------------
+# Trying every style and keeping the best
+# ---------------------------------------------------------------------------
+#
+# A routing style is an OPINION about the builder, expressed as a cost table (see
+# router.RoutingStyle). Until now the user had to pick one up front and live with it,
+# which means guessing -- before seeing a single route -- whether this particular board
+# routes better with solder or with wire. That is a question the tool can simply answer by
+# trying, because planning is pure and a plan is cheap.
+#
+# THE TRAP THIS AVOIDS. Each style's plan carries a `total_cost` and comparing those is
+# meaningless: they are quoted in different currencies. The `wire` table prices a solder
+# step at 4 and an insulated wire at 6, so its plans look cheap BY ITS OWN DEFINITION of
+# cheap, and a naive `min(total_cost)` would pick the wire style on every board. Cost is
+# what makes each search good at finding a plan; it cannot be what compares two of them.
+#
+# So the comparison is on PHYSICAL FACTS, measured off the finished plan and identical in
+# meaning whichever table produced it.
+
+#: Every style, in the order they are tried. Fixed rather than derived from the Literal so
+#: the order -- and therefore the tie-break -- is deterministic and reviewable.
+ALL_ROUTING_STYLES: tuple[RoutingStyle, ...] = ("balanced", "solder", "wire", "lead-bend")
+
+#: Weights for the build-effort score below. Each is a claim about what the person holding
+#: the iron actually has to do, and each is stated here rather than buried at its use site.
+#:
+#:   A TRACE is cheap. Drag solder along a row of pads the parts are already sitting in:
+#:   position it, solder it, look at it. This is the preferred primitive and the premise
+#:   the whole project rests on (PLAN.md Sec 6.1), so it is charged least.
+#:
+#:   A WIRE is dear, and dear by a FIXED amount before a single millimetre of it exists:
+#:   measure, cut, strip both ends, tin them, dress it flat, solder twice, inspect. Pricing
+#:   a wire and a trace the same -- which the first version of this did -- undercharges the
+#:   one primitive that has real preparation behind it, and no board comparison built on
+#:   that is worth reading.
+#:
+#:   PER MILLIMETRE is the part of a wire that does scale: a 60 mm run across the board is
+#:   more to dress and more to go wrong than a 10 mm hop. Trace length is deliberately NOT
+#:   charged at all -- length is exactly what a trace is good at.
+#:
+#:   RISK is DRC rule R5', a trace running 0.6 mm from a pad of another net and the
+#:   commonest way a hand-built board fails. Charged well below the 12 the balanced search
+#:   uses, because by comparison time the route already succeeded and every risky hole has
+#:   become a measurement step in the guide: it is a managed cost, not a veto. Set against
+#:   the wire weight, this says one risky gap is worth about a third of a wire -- which is
+#:   the exchange rate this whole comparison turns on, so it is the number to argue with.
+TRACE_CONDUCTOR_EFFORT = 3.0
+WIRE_CONDUCTOR_EFFORT = 10.0
+WIRE_MM_EFFORT = 0.08
+RISK_HOLE_EFFORT = 3.0
+
+_WIRE_KINDS = frozenset({"bare-wire", "insulated-wire", "top-jumper"})
+
+
+@dataclass(frozen=True, slots=True)
+class VariantScore:
+    """One plan measured in facts, not in the money that produced it."""
+
+    #: Connections the router could not make. Categorical: see :meth:`key`.
+    unrouted: int
+    risk_holes: int
+    #: Split, because a wire and a trace are not the same amount of work -- see the
+    #: weights above. A lead bend counts as a trace: there is nothing to cut or strip.
+    traces: int
+    wires: int
+    wire_mm: float
+
+    @property
+    def conductors(self) -> int:
+        return self.traces + self.wires
+
+    @property
+    def effort(self) -> float:
+        """What this board costs a person to build, once it is known to be routable."""
+        return (
+            self.traces * TRACE_CONDUCTOR_EFFORT
+            + self.wires * WIRE_CONDUCTOR_EFFORT
+            + self.wire_mm * WIRE_MM_EFFORT
+            + self.risk_holes * RISK_HOLE_EFFORT
+        )
+
+    def key(self) -> tuple[int, float]:
+        """Comparison key. Unrouted connections come FIRST and alone, as a gate rather than
+        a term in the sum: a connection the user has to finish by hand is not something to
+        be traded against a tidier board elsewhere, and PLAN.md Sec 13 names routing most
+        of a board and leaving four impossible connections as the trap every previous
+        perfboard autorouter fell into. Below that gate, effort decides.
+        """
+        return (self.unrouted, self.effort)
+
+
+@dataclass(frozen=True, slots=True)
+class AutorouteVariant:
+    """One style's attempt, kept whether it won or lost.
+
+    Losers are returned rather than discarded because the user's own preference is a
+    legitimate reason to overrule this comparison, and they cannot exercise it against a
+    number they were never shown.
+    """
+
+    style: RoutingStyle
+    plan: AutoroutePlan
+    score: VariantScore
+
+
+@dataclass(frozen=True, slots=True)
+class BestAutoroute:
+    """The winning plan, and every variant that was measured to find it."""
+
+    style: RoutingStyle
+    plan: AutoroutePlan
+    variants: tuple[AutorouteVariant, ...]
+
+    @property
+    def considered(self) -> int:
+        return len(self.variants)
+
+
+def score_plan(plan: AutoroutePlan, doc: PerfDocument) -> VariantScore:
+    """Measure a plan in style-independent terms.
+
+    ``doc`` supplies the board, since a length in millimetres depends on its pitch.
+    """
+    wires = [c for c in plan.conductors if c.kind in _WIRE_KINDS]
+    return VariantScore(
+        unrouted=plan.summary.links_unrouted,
+        risk_holes=plan.summary.risk_holes,
+        traces=len(plan.conductors) - len(wires),
+        wires=len(wires),
+        wire_mm=sum(path_length_mm(c.path, doc.board) for c in wires),
+    )
+
+
+def plan_best_autoroute(
+    doc: PerfDocument,
+    lookup: FootprintLookup,
+    options: AutorouteOptions = DEFAULT_AUTOROUTE_OPTIONS,
+    only_net_ids: tuple[NetId, ...] | None = None,
+    styles: tuple[RoutingStyle, ...] = ALL_ROUTING_STYLES,
+) -> BestAutoroute:
+    """Route the board once per style and keep the plan that is best to build.
+
+    Every style starts from the SAME original document, so the variants are genuine
+    alternatives rather than a sequence of edits, and each runs the ordinary planner --
+    criticality order, rip-up and retry, chain against rail -- so a variant is exactly what
+    the user would have got by choosing that style by hand.
+
+    ``options.router`` supplies the flags a style does not set (search ceiling, crossing
+    policy, top jumpers); the style replaces the cost table and the flags it implies. That
+    keeps a user's "never use a top jumper" honoured across all four variants instead of
+    being silently reset by the sweep.
+
+    Deterministic: fixed style order, and ties fall to the earlier style in that order --
+    so ``balanced`` wins a dead heat and this reduces to today's behaviour when nothing
+    beats it.
+    """
+    variants: list[AutorouteVariant] = []
+    for style in styles or ALL_ROUTING_STYLES:
+        router = options_for_style(style, options.router)
+        plan = plan_autoroute(
+            doc, lookup, dataclasses.replace(options, router=router), only_net_ids
+        )
+        variants.append(
+            AutorouteVariant(style=style, plan=plan, score=score_plan(plan, doc))
+        )
+
+    # min() is stable, so an exact tie keeps the earliest style tried.
+    winner = min(variants, key=lambda variant: variant.score.key())
+    return BestAutoroute(
+        style=winner.style, plan=winner.plan, variants=tuple(variants)
+    )
+
+
+def describe_best(best: BestAutoroute) -> str:
+    """One line per style tried, cheapest first, saying what each would cost to build.
+
+    Printed rather than summarised because the winner is chosen on a judgement the user is
+    entitled to disagree with -- and a tool that says only "I picked solder" gives them
+    nothing to disagree with.
+    """
+    lines = [
+        f"{best.style} wins on {best.considered} variant"
+        f"{'' if best.considered == 1 else 's'} tried"
+    ]
+    for variant in sorted(best.variants, key=lambda v: v.score.key()):
+        score = variant.score
+        mark = "*" if variant.style == best.style else " "
+        unrouted = f"{score.unrouted} UNROUTED, " if score.unrouted else ""
+        lines.append(
+            f"  {mark} {variant.style:<10} {unrouted}"
+            f"{variant.plan.summary.links_routed} routed, "
+            f"{score.traces} trace{'' if score.traces == 1 else 's'}, "
+            f"{score.wires} wire{'' if score.wires == 1 else 's'} ({score.wire_mm:.0f} mm), "
+            # ASCII only: this line goes to the headless CLI, and a console on a Windows
+            # code page raises UnicodeEncodeError on a character it cannot map rather than
+            # dropping it -- which turns a report into a crash.
+            f"{score.risk_holes} risk hole{'' if score.risk_holes == 1 else 's'}"
+            f"  -> effort {score.effort:.0f}"
+        )
+    return "\n".join(lines)
+
+
 @dataclass(frozen=True, slots=True)
 class ReroutePlan:
     """Rip up a net's existing copper and route it again from nothing.
@@ -388,9 +592,16 @@ def _route_in_order(
         # start from the same document AND from the same id counter, so the strategy that
         # loses leaves no trace -- see _fresh_ctx for why that matters to the caller.
         candidates = [_chain_net(working, lookup, net_id, options, _fresh_ctx(working))]
-        rail = _rail_net(working, lookup, net_id, entry, options, _fresh_ctx(working))
-        if rail is not None:
-            candidates.append(rail)
+        # A RAIL IS A SOLDER CONCEPT, so a builder who has committed to wire does not get
+        # one. It is a trace along a row that every pin on the way past is soldered into --
+        # a wire cannot do that, it touches only its two ends. This is the one place a
+        # preference has to be honoured OUTSIDE route_connection's candidate sort, because
+        # _rail_net reaches past `result.best` to pick a contacting strategy itself; without
+        # this, "route everything with wire" still came back with solder rails in it.
+        if options.router.prefer != "wire":
+            rail = _rail_net(working, lookup, net_id, entry, options, _fresh_ctx(working))
+            if rail is not None:
+                candidates.append(rail)
         chosen = min(candidates, key=lambda plan: (plan.failures, plan.score(options)))
 
         working = chosen.document

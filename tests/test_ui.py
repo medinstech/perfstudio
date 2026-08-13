@@ -36,7 +36,14 @@ from perfstudio.command import CommandBus, CommandContext, create_id_generator
 from perfstudio.commands import MoveComponentPayload, create_standard_registry
 from perfstudio.footprints import footprint_lookup
 from perfstudio.geometry import column_label
-from perfstudio.model import Board, HoleCoord, PerfDocument, SolderTraceConductor, WireConductor
+from perfstudio.model import (
+    Board,
+    HoleCoord,
+    PerfDocument,
+    SolderTraceConductor,
+    WireConductor,
+    contacts_every_path_hole,
+)
 from perfstudio.ui import scenetext, view2d
 from perfstudio.ui.export_pdf import verify_scale
 from perfstudio.ui.main import (
@@ -912,6 +919,74 @@ def test_the_solder_side_body_shadow_ignores_the_polarity_key() -> None:
 
     source = inspect.getsource(view2d._paint_body_shadow)
     assert "_body_path(footprint, placement, None)" in source
+
+
+# ---------------------------------------------------------------------------
+# The resistor colour code, in both views
+# ---------------------------------------------------------------------------
+
+
+def _ne555_document() -> PerfDocument:
+    """The fixture with real part values on it. dense.perf's are synthetic ("v12"), which
+    is useful for the opposite check and useless for this one."""
+    text = (GOLDEN.parent / "ne555.perf").read_text(encoding="utf-8")
+    result = persist.deserialize_document(text)
+    assert result.ok, f"golden fixture failed to load: {result}"
+    return result.document
+
+
+def test_a_resistors_bands_reach_actual_pixels_in_the_2d_view() -> None:
+    """End to end rather than by inspection: the value is in the document, the scene is
+    built from it, and the band colours have to come out the other side. A silently broken
+    hand-off here would leave every resistor beige again with nothing failing."""
+    doc = _ne555_document()
+    scene = BoardScene(doc, footprint_lookup(), side="top")
+
+    image = QImage(1400, 1000, QImage.Format.Format_ARGB32)
+    image.fill(QColor("#101014"))
+    painter = QPainter(image)
+    scene.render(painter)
+    painter.end()
+
+    present = {image.pixelColor(x, y).name() for x in range(1400) for y in range(1000)}
+    # R1 is 10k: brown, black, orange. The orange multiplier band is the one that says
+    # which decade it is, and is the difference between 10k and 100 R.
+    assert "#6b4423" in present, "no brown band"
+    assert "#e2701f" in present, "no orange band"
+    assert "#c9a227" in present, "no gold tolerance band"
+
+
+def test_a_part_whose_value_is_not_a_resistance_is_left_unmarked() -> None:
+    """dense.perf's values are placeholders ("v12", "v5") on real axial footprints. Bands
+    decoded from those would be pure invention printed on a part someone then fits."""
+    doc = _load_dense()
+    lookup = footprint_lookup()
+
+    for comp in doc.components:
+        footprint = lookup(comp.footprint_id)
+        if footprint is None:
+            continue
+        assert view2d.resistor_bands(footprint, comp.value) is None, comp.ref
+
+
+def test_both_views_band_a_resistor_from_the_same_source() -> None:
+    """One table, two renderers. If these ever disagreed, a board would read as one part
+    in the editor and another in the 3D view -- and the 3D view exists to be checked
+    against the editor."""
+    from perfstudio.ui import view3d
+    from perfstudio.ui.bodies import resistor_bands
+
+    doc = _ne555_document()
+    lookup = footprint_lookup()
+    resistor = next(c for c in doc.components if c.ref == "R1")
+    footprint = lookup(resistor.footprint_id)
+    assert footprint is not None
+
+    body = view3d._world_body(lookup, resistor, doc.board)
+
+    assert body is not None
+    assert body.bands == resistor_bands(footprint, resistor.value)
+    assert body.bands  # ...and it is not merely two empty tuples agreeing with each other.
 
 
 # ---------------------------------------------------------------------------
@@ -2964,3 +3039,64 @@ def test_the_board_reports_being_in_a_mode_for_each_of_the_four() -> None:
         window.scene.leave_mode()
         assert not window.scene.in_a_mode
     _close(window)
+
+
+# ---------------------------------------------------------------------------
+# Copper on the face you are not looking at
+# ---------------------------------------------------------------------------
+
+
+def test_a_conductor_knows_which_face_it_is_on_relative_to_the_view() -> None:
+    """The board is opaque. Copper on the far face drawn solid says "this is in front of
+    you", which is the same misreading the hatched body shadow exists to prevent -- and the
+    one that gets a board soldered on the wrong side."""
+    doc = _load_dense()
+    top = BoardScene(doc, footprint_lookup(), side="top")
+    bottom = BoardScene(doc, footprint_lookup(), side="bottom")
+
+    def far(scene: BoardScene) -> set[str]:
+        return {
+            item.conductor_id
+            for item in scene.items()
+            if isinstance(item, ConductorItem) and item.is_far_side()
+        }
+
+    solder_side = {c.id for c in doc.conductors if c.side == "bottom"}
+    assert solder_side, "the fixture has no solder-side copper, so this proves nothing"
+    # Seen from the component side every solder-side run is on the far face, and turning
+    # the board over swaps exactly that: nothing is on the far side of both views at once.
+    assert far(top) == solder_side
+    assert far(top) & far(bottom) == set()
+
+
+def test_hatching_the_far_side_can_be_turned_off() -> None:
+    """A fixed rule would be wrong: someone tracing a dense solder side may want to see it
+    plainly. On by default because the default has to be the reading that cannot mislead."""
+    doc = _load_dense()
+    scene = BoardScene(doc, footprint_lookup(), side="top")
+    assert scene.hatch_far_side is True
+
+    scene.set_hatch_far_side(False)
+
+    items = [item for item in scene.items() if isinstance(item, ConductorItem)]
+    assert items
+    assert all(item.hatch_far_side is False for item in items)
+
+
+def test_a_hatched_conductor_still_marks_every_joint() -> None:
+    """Where copper is soldered down does not change with the face you look from -- the hole
+    goes through the board -- and it is what someone counts pads against. The beads must
+    survive the far-side treatment, or the heart of the model goes with them."""
+    doc = _load_dense()
+    scene = BoardScene(doc, footprint_lookup(), side="top")
+
+    traces = [
+        item
+        for item in scene.items()
+        if isinstance(item, ConductorItem)
+        and item.is_far_side()
+        and contacts_every_path_hole(item.conductor)
+    ]
+    assert traces, "no far-side solder trace in the fixture"
+    for item in traces:
+        assert len(item.contact_points()) == len(item.conductor.path)

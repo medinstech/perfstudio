@@ -32,15 +32,20 @@ import pytest
 
 from perfstudio import persist
 from perfstudio.autoroute import (
+    ALL_ROUTING_STYLES,
     DEFAULT_AUTOROUTE_OPTIONS,
     AutorouteOptions,
+    VariantScore,
     _criticality_order,
     describe,
+    describe_best,
     describe_reroute,
     plan_autoroute,
+    plan_best_autoroute,
     plan_reroute,
     plan_route_net,
     risk_holes,
+    score_plan,
     unrouted_links,
 )
 from perfstudio.command import CommandBus, CommandContext
@@ -933,3 +938,257 @@ def test_a_lead_bend_names_whose_leg_it_folds() -> None:
     assert bends, "a two-hole gap is exactly what a bent leg is for"
     assert bends[0].component_id in {c.id for c in components}
     assert bends[0].pin_number
+
+
+# ---------------------------------------------------------------------------
+# Trying every style and keeping the best
+# ---------------------------------------------------------------------------
+
+
+def test_an_unrouted_connection_is_a_gate_not_a_term() -> None:
+    """PLAN.md Sec 13 names "it routed most of it and left four connections" as the trap
+    every previous perfboard autorouter fell into. A plan that leaves one must never win
+    on being tidier elsewhere, however large the effort gap."""
+    incomplete = VariantScore(unrouted=1, risk_holes=0, traces=0, wires=0, wire_mm=0.0)
+    complete_but_ugly = VariantScore(
+        unrouted=0, risk_holes=500, traces=500, wires=500, wire_mm=10_000.0
+    )
+
+    assert complete_but_ugly.key() < incomplete.key()
+
+
+def test_a_wire_costs_more_to_build_than_a_trace() -> None:
+    """The mistake the first version of this scoring made. A wire is measured, cut,
+    stripped, tinned, dressed and soldered twice; a trace is solder dragged along pads the
+    parts already sit in. Pricing them the same makes every comparison meaningless."""
+    one_trace = VariantScore(unrouted=0, risk_holes=0, traces=1, wires=0, wire_mm=0.0)
+    one_wire = VariantScore(unrouted=0, risk_holes=0, traces=0, wires=1, wire_mm=0.0)
+
+    assert one_wire.effort > one_trace.effort
+
+
+def test_the_comparison_does_not_use_the_cost_that_produced_it() -> None:
+    """THE trap this sweep has to avoid. Each style prices its own favourite primitive
+    cheaply, so `wire` plans are cheap BY THE WIRE TABLE'S OWN DEFINITION of cheap and a
+    naive min(total_cost) would pick wire on every board. The score must be built from
+    physical facts, never from AutorouteSummary.total_cost."""
+    import inspect
+
+    from perfstudio import autoroute
+
+    source = inspect.getsource(autoroute.score_plan)
+
+    assert "total_cost" not in source
+
+
+def test_every_style_is_tried_and_the_losers_are_kept() -> None:
+    """A user who disagrees with the verdict needs the numbers it was reached on, and the
+    style they would rather have is one menu click away -- but only if it was measured."""
+    doc = dataclasses.replace(_load_golden_document("ne555"), conductors=())
+
+    best = plan_best_autoroute(doc, LOOKUP_STD)
+
+    assert best.considered == len(ALL_ROUTING_STYLES)
+    assert {variant.style for variant in best.variants} == set(ALL_ROUTING_STYLES)
+    assert best.style in ALL_ROUTING_STYLES
+    # The winner really is the minimum of what was measured, not merely the first tried.
+    assert min(v.score.key() for v in best.variants) == next(
+        v.score.key() for v in best.variants if v.style == best.style
+    )
+
+
+def test_the_winning_plan_is_the_one_that_style_would_have_produced_alone() -> None:
+    """A variant has to be exactly what choosing that style by hand gives, or the sweep is
+    recommending a board the user cannot then reproduce."""
+    doc = dataclasses.replace(_load_golden_document("ne555"), conductors=())
+
+    best = plan_best_autoroute(doc, LOOKUP_STD)
+    alone = plan_autoroute(
+        doc, LOOKUP_STD, AutorouteOptions(router=options_for_style(best.style))
+    )
+
+    assert [c.path for c in best.plan.conductors] == [c.path for c in alone.conductors]
+    assert [c.kind for c in best.plan.conductors] == [c.kind for c in alone.conductors]
+
+
+def test_the_sweep_is_deterministic() -> None:
+    """Same board, same answer. The engine has no clock and no RNG, and a router that
+    recommended a different style on a second run would be untrustworthy on both."""
+    doc = dataclasses.replace(_load_golden_document("ne555"), conductors=())
+
+    first = plan_best_autoroute(doc, LOOKUP_STD)
+    second = plan_best_autoroute(doc, LOOKUP_STD)
+
+    assert first.style == second.style
+    assert [v.score for v in first.variants] == [v.score for v in second.variants]
+
+
+def test_a_tie_falls_to_the_earlier_style_so_balanced_keeps_its_place() -> None:
+    """Ties are common -- on dense.perf `balanced` and `wire` route identically. Falling to
+    the first style tried makes the sweep reduce to today's behaviour when nothing beats
+    it, rather than picking an arbitrary equal."""
+    doc = dataclasses.replace(_load_golden_document("dense"), conductors=())
+
+    best = plan_best_autoroute(doc, LOOKUP_STD)
+    winning_key = next(v.score.key() for v in best.variants if v.style == best.style)
+    tied = [v.style for v in best.variants if v.score.key() == winning_key]
+
+    assert best.style == tied[0]
+    assert ALL_ROUTING_STYLES.index(best.style) == min(
+        ALL_ROUTING_STYLES.index(style) for style in tied
+    )
+
+
+def test_a_style_the_caller_pinned_is_still_honoured_across_the_sweep() -> None:
+    """A user who has said "never a top jumper" means it for all four variants. The style
+    replaces the cost table; it must not reset the flags around it."""
+    doc = dataclasses.replace(_load_golden_document("ne555"), conductors=())
+    options = AutorouteOptions(
+        router=dataclasses.replace(DEFAULT_ROUTER_OPTIONS, max_expanded_nodes=1234)
+    )
+
+    best = plan_best_autoroute(doc, LOOKUP_STD, options)
+
+    assert best.considered == len(ALL_ROUTING_STYLES)
+    assert not any(c.kind == "top-jumper" for c in best.plan.conductors)
+
+
+def test_the_report_names_every_style_and_marks_the_winner() -> None:
+    """The verdict is a judgement about build effort the user may disagree with, and they
+    cannot disagree with numbers they were never shown."""
+    doc = dataclasses.replace(_load_golden_document("ne555"), conductors=())
+
+    text = describe_best(plan_best_autoroute(doc, LOOKUP_STD))
+
+    for style in ALL_ROUTING_STYLES:
+        assert style in text
+    assert "effort" in text
+    assert text.isascii(), "this line reaches a Windows console, which raises on what it cannot map"
+
+
+def test_a_score_counts_wire_length_but_not_trace_length() -> None:
+    """Length is exactly what a trace is good at, and charging it would push the sweep
+    towards wire on every long run -- the opposite of the project's premise."""
+    doc = dataclasses.replace(_load_golden_document("ne555"), conductors=())
+
+    from perfstudio.geometry import path_length_mm
+
+    solder = plan_autoroute(doc, LOOKUP_STD, AutorouteOptions(router=options_for_style("solder")))
+    score = score_plan(solder, doc)
+    trace_holes = sum(
+        len(c.path) for c in solder.conductors if c.kind.startswith("solder-trace")
+    )
+
+    assert trace_holes > 0
+    assert score.traces > 0
+    # Every millimetre counted belongs to a wire, so a board of pure trace scores zero mm.
+    assert score.wire_mm == pytest.approx(
+        sum(
+            path_length_mm(c.path, doc.board)
+            for c in solder.conductors
+            if c.kind in ("bare-wire", "insulated-wire", "top-jumper")
+        )
+    )
+
+
+# ---------------------------------------------------------------------------
+# A style is a commitment, not a weighting
+# ---------------------------------------------------------------------------
+
+
+def test_balanced_makes_no_commitment_so_the_golden_routes_stand() -> None:
+    """"Balanced" means exactly that no decision has been made about how the board gets
+    built, so every primitive is weighed on cost alone. It is also what every golden route
+    is produced with, which is why this branch must stay a no-op."""
+    assert options_for_style("balanced").prefer is None
+    assert options_for_style("balanced") == DEFAULT_ROUTER_OPTIONS
+
+
+def test_a_commitment_outranks_cost_without_touching_the_cost_table() -> None:
+    """THE point of the preference. The default table prices a bare wire at 8 fixed and R5'
+    proximity risk at 12 a hole, so one pad next to another net makes a short trace dearer
+    than a whole wire -- and the run somebody asked to be solder came back as wire. A
+    commitment is not a discount: it ranks first, and cost only decides within the family."""
+    doc = dataclasses.replace(_load_golden_document("ne555"), conductors=())
+    unchanged_costs = dataclasses.replace(DEFAULT_ROUTER_OPTIONS, prefer="solder")
+    assert unchanged_costs.costs == DEFAULT_ROUTER_COSTS, "the cost table must not move"
+
+    plan = plan_autoroute(doc, LOOKUP_STD, AutorouteOptions(router=unchanged_costs))
+
+    strategies = {link.strategy for outcome in plan.nets for link in outcome.routed}
+    assert strategies, "nothing was routed, so this proves nothing"
+    assert all(s.startswith("solder-trace") for s in strategies), strategies
+    assert plan.summary.links_unrouted == 0
+
+
+def test_a_hopped_trace_counts_as_solder() -> None:
+    """A solder run with a two-hole jumper where it had to cross something is still the
+    solder answer. Classing it as wire would make a preference for solder reject the very
+    mechanism that gets solder past an obstacle -- leaving the whole connection to be a
+    wire, which is MORE wire, not less."""
+    doc = dataclasses.replace(_load_golden_document("ne555"), conductors=())
+
+    from collections import Counter
+
+    plan = plan_autoroute(
+        doc, LOOKUP_STD, AutorouteOptions(router=options_for_style("solder"))
+    )
+
+    strategies = Counter(link.strategy for outcome in plan.nets for link in outcome.routed)
+    assert strategies["solder-trace-hopped"] > 0, "the fixture no longer exercises a crossing"
+    assert not any(s in ("bare-wire", "insulated-wire", "top-jumper") for s in strategies)
+
+
+def test_wire_is_used_for_what_solder_physically_cannot_reach() -> None:
+    """"All possible connections with solder, wire for the rest" -- and the rest means the
+    physically impossible ones, not the ones that happened to score badly. Four abutting
+    bare wires are wider than one insulated hop may span, so no trace and no hopped trace
+    can get across; an insulated wire crosses freely and is the only thing left."""
+    components = (component("R1", "fp1", hole(3, 8)), component("R2", "fp1", hole(18, 8)))
+    nets = (net("n1", "SIG", "signal", (("R1", "1"), ("R2", "1"))),)
+    wall = tuple(
+        WireConductor(
+            id=f"w{col}",
+            kind="bare-wire",
+            path=(hole(col, 0), hole(col, 15)),
+            side="bottom",
+        )
+        for col in (9, 10, 11, 12)
+    )
+    doc = make_doc(components=components, conductors=wall, nets=nets)
+
+    plan = plan_autoroute(
+        doc, LOOKUP, AutorouteOptions(router=options_for_style("solder"))
+    )
+
+    assert plan.summary.links_unrouted == 0, "committing to solder must not refuse the board"
+    strategies = [link.strategy for outcome in plan.nets for link in outcome.routed]
+    assert strategies == ["insulated-wire"], strategies
+
+
+def test_committing_to_wire_does_not_come_back_with_a_solder_rail() -> None:
+    """A rail is a solder concept -- a trace along a row that every pin on the way past is
+    soldered into, which a wire touching only its two ends cannot be. It is also chosen
+    outside route_connection's candidate sort, so it is the one place a commitment has to
+    be honoured separately."""
+    doc = dataclasses.replace(_load_golden_document("ne555"), conductors=())
+
+    plan = plan_autoroute(
+        doc, LOOKUP_STD, AutorouteOptions(router=dataclasses.replace(DEFAULT_ROUTER_OPTIONS,
+                                                                     prefer="wire"))
+    )
+
+    strategies = {link.strategy for outcome in plan.nets for link in outcome.routed}
+    assert not any(s.startswith("solder-trace") for s in strategies), strategies
+
+
+@pytest.mark.parametrize("style", ["solder", "wire", "lead-bend"])
+def test_every_committed_style_still_routes_the_whole_board(style: str) -> None:
+    """A commitment changes how the board is built. It may not cost the user a connection --
+    that would trade PLAN.md Sec 13's trap for a preference."""
+    doc = dataclasses.replace(_load_golden_document("ne555"), conductors=())
+
+    plan = plan_autoroute(doc, LOOKUP_STD, AutorouteOptions(router=options_for_style(style)))
+
+    assert plan.summary.links_unrouted == 0
+    assert run_lvs(plan.document, LOOKUP_STD).summary.opens == 0
