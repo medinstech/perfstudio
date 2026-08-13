@@ -1,0 +1,39 @@
+name: Feature request
+description: Something PerfStudio should be able to do and cannot
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before writing: [PLAN.md](https://github.com/medinstech/perfstudio/blob/main/PLAN.md)
+        §11 lists what is already planned and in what order, and §12 lists the questions
+        still open. If your idea is already there, a comment on why it matters to you is
+        more useful than a new issue.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do
+      description: >
+        The problem rather than the solution, if you can. "I cannot tell which side a
+        wire is on" leads somewhere better than "add a layer dropdown".
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you have in mind
+    validations:
+      required: false
+
+  - type: input
+    id: prior-art
+    attributes:
+      label: Does another tool do this well?
+      description: >
+        Naming one is helpful. Please link to documentation, screenshots or user
+        discussion rather than to source code — this project is clean-room with respect
+        to the GPL-licensed tools in this space (see docs/prior-art.md).
+    validations:
+      required: false

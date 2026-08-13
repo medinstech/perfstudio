@@ -52,6 +52,16 @@ jobs:
         # whenever anybody asks for it from the Actions tab. A platform-specific fault
         # cannot reach a release without being seen, which is the property worth paying
         # for; catching it one branch push earlier is not.
+        #
+        # WHEN THIS REPOSITORY GOES PUBLIC, DELETE THE CONDITION. Standard runners are
+        # free on public repositories, so the entire trade-off above stops applying and
+        # the reason to restrict the matrix goes with it. Replace the fromJSON expression
+        # with the plain list:
+        #
+        #     os: ["ubuntu-latest", "windows-latest", "macos-latest"]
+        #
+        # This is left in place rather than done in advance because it is the private
+        # allowance that would pay for the difference in the meantime.
         os: ${{ fromJSON(
           (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
            || github.event_name == 'workflow_dispatch')

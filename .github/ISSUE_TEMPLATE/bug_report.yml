@@ -1,0 +1,60 @@
+name: Bug report
+description: Something behaved differently from how it should have
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. If this is a **security** issue, please close this and use
+        [a private security advisory](https://github.com/medinstech/perfstudio/security/advisories/new)
+        instead.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you do, what did you expect, and what did you get instead?
+      placeholder: |
+        I routed a net with Ctrl+R and ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: version
+    attributes:
+      label: Version
+      description: The output of `perfstudio --version`. It names the Python, the Qt and the document format as well, which is usually the part that matters.
+      render: text
+      placeholder: PerfStudio 0.4.0.dev0 (document format 1) [Python 3.12.4 on win32, PySide6 6.10.0]
+    validations:
+      required: true
+
+  - type: textarea
+    id: document
+    attributes:
+      label: The board
+      description: >
+        If a document is involved, attach the `.perf` file — or the smallest one that
+        still shows the problem. It is plain JSON and it is worth more than any
+        description. Drag the file into this box, or paste it if it is small.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part
+      options:
+        - "2D editor"
+        - "3D view"
+        - "Router / autoroute"
+        - "Placement"
+        - "DRC or LVS"
+        - "Build guide"
+        - "Import (KiCad netlist)"
+        - "Export (PDF / HTML / CSV)"
+        - "MCP server"
+        - "Saving or loading a document"
+        - "Something else / not sure"
+    validations:
+      required: false

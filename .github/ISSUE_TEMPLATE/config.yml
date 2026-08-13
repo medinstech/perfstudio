@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/medinstech/perfstudio/security/advisories/new
+    about: Report privately. Please do not open a public issue for these.
+  - name: How the thing is built
+    url: https://github.com/medinstech/perfstudio/blob/main/CLAUDE.md
+    about: The architecture tour — why the document is immutable, what the golden fixtures prove, and which conventions are load-bearing.

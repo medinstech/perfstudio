@@ -1,43 +1,50 @@
 # PerfStudio
 
 [![CI](https://github.com/medinstech/perfstudio/actions/workflows/ci.yml/badge.svg)](https://github.com/medinstech/perfstudio/actions/workflows/ci.yml)
+[![Licence: Apache-2.0](https://img.shields.io/badge/licence-Apache--2.0-blue.svg)](./LICENSE)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
+
+**English** · [Türkçe](./README.tr.md)
 
 Design circuits on perfboard the way you would on a PCB — then get a soldering guide
 you can actually build from.
 
-> **Status: pre-alpha, and now end to end.** A netlist can go in and a soldering guide
-> can come out: 2D editor, 3D view, placement optimiser, autorouter, DRC, LVS, the build
-> guide, an exact 1:1 PDF export and an MCP server. What is missing is the dogfood test
-> — nobody has yet built a real board by following a generated guide, and PLAN.md §11
-> says M5 does not close until somebody has. See [PLAN.md](./PLAN.md) and
-> [CHANGELOG.md](./CHANGELOG.md).
+![The 2D editor with an NE555 astable placed and routed](./docs/images/editor-component-side.png)
+
+> **Status: pre-alpha, and end to end.** A netlist goes in and a soldering guide comes
+> out: 2D editor, 3D view, placement optimiser, autorouter, DRC, LVS, the build guide,
+> an exact 1:1 PDF export and an MCP server. What is missing is the dogfood test —
+> nobody has yet built a real board by following a generated guide, and
+> [PLAN.md](./PLAN.md) §11 says M5 does not close until somebody has. There are no
+> installers yet either; you run it from source.
 
 ---
 
 ## What it does
 
 Take a schematic netlist, lay it out on pad-per-hole perfboard, let the router work out
-the connections, prove the result matches the schematic, and export a step-by-step
-build guide with measurement checkpoints.
+the connections, prove the result matches the schematic, and export a step-by-step build
+guide with measurement checkpoints.
 
 **Three things make it different from the tools that already exist:**
 
 1. **A soldering guide with verification steps.** Not just "solder R1 here", but
    *"block 2 complete → U1 pin 4 to C3(−) must show continuity"* and
-   *"before power-on: GND to V+ must read above 10 kΩ"*. Derived from the netlist,
-   so it is exact rather than generic advice.
-2. **Perfboard LVS.** The board's real connectivity is extracted and compared against
-   the schematic. Opens, shorts and floating conductors are reported before you pick
-   up the iron.
-3. **Agent-native.** An MCP server, a headless CLI and a git-diffable project file,
-   all driving the same command bus as the GUI.
+   *"before power-on: GND to V+ must read above 10 kΩ"*. Derived from the netlist, so it
+   is exact rather than generic advice.
+2. **Perfboard LVS.** The board's real connectivity is extracted and compared against the
+   schematic. Opens, shorts and floating conductors are reported before you pick up the
+   iron.
+3. **Agent-native.** An MCP server, a headless CLI and a git-diffable project file, all
+   driving the same command bus as the GUI — so undo works across a session where a human
+   and a model both edit the board.
 
 ## Connections are not all the same thing
 
 Most tools model a perfboard connection as "a wire". Perfboard has six physically
-distinct ways to join two points, each with its own cost, limits and failure modes —
-and modelling that difference is what lets the router produce a layout that is
-pleasant to actually solder:
+distinct ways to join two points, each with its own cost, limits and failure modes — and
+modelling that difference is what lets the router produce a layout that is pleasant to
+actually solder:
 
 | | what it is | notes |
 |---|---|---|
@@ -49,43 +56,83 @@ pleasant to actually solder:
 | top jumper | insulated jumper over the component side | visible, occupies body space |
 
 The 0.6 mm gap to the neighbouring pad is why solder traces are both so useful and so
-easy to get wrong. PerfStudio scores that risk into the router's cost function, and
-turns every flagged spot into a measurement step in the build guide.
+easy to get wrong. PerfStudio scores that risk into the router's cost function, and turns
+every flagged spot into a measurement step in the build guide.
+
+## Both faces, and the third dimension
+
+The solder side is where the copper is, so it is a first-class view rather than a mirror
+mode — and copper on the face you are *not* looking at is hatched, because a board is
+opaque and a trace drawn solid says *this is in front of you*.
+
+![The solder side, with far-side copper hatched](./docs/images/editor-solder-side.png)
+
+The 3D view is a checking tool, not a picture. Three rules exist that a top-down view
+cannot see at all: a part too tall for the case, a jumper trapped under a body that will
+be soldered down on top of it, and a heat-sensitive part sitting too close to a hot one.
+
+![The same board in 3D](./docs/images/board-3d.png)
 
 ## Running it
 
-Requires Python 3.12+. The desktop app is PySide6 (Qt 6) with a VTK viewport.
+Requires **Python 3.12+**. The desktop app is PySide6 (Qt 6) with a VTK viewport. There
+are no installers yet — this is a from-source pre-alpha.
 
 ```sh
-pip install -e ".[dev,mcp]"
-pytest                       # the test suite
-perfstudio                   # launch the app on a blank board
+git clone https://github.com/medinstech/perfstudio.git
+cd perfstudio
+pip install -e .
+
+perfstudio                   # launch on a blank board
 perfstudio some/board.perf   # ...or open a document
 perfstudio --version
 ```
 
-A board from nothing, in the app: **File → Import KiCad Netlist** on
-`examples/ne555-astable.net`, accept the offered placement, **Place → Auto-place Board**
-(Ctrl+Shift+A), **Ctrl+R** to route, then **File → Export Build Guide** (Ctrl+B).
+The interface speaks **English and Turkish** (`--lang tr`, or follow the system locale).
 
-The same thing from an agent — the MCP server drives the identical command bus, so undo
-works across both:
+### A board from nothing
+
+In the app: **File → Import KiCad Netlist** on `examples/ne555-astable.net`, accept the
+offered placement, **Place → Auto-place Board** (`Ctrl+Shift+A`), **`Ctrl+R`** to route,
+then **File → Export Build Guide** (`Ctrl+B`). That is the exact sequence the screenshots
+above come out of — see [`tools/screenshots.py`](./tools/screenshots.py).
+
+You do not need KiCad: nets can be built by hand in the app or over MCP.
+
+### From an agent
+
+The MCP server drives the identical command bus, so undo works across both:
 
 ```sh
 pip install -e ".[mcp]"
 claude mcp add perfstudio -- python -m perfstudio.mcp
 ```
 
-See [docs/MCP.md](./docs/MCP.md) for the tool list and the rest of the setup.
+Thirty-nine tools, every hole addressed the way people talk about perfboard (`A1`, `C7`,
+`AC12`) and never as raw coordinates. See [docs/MCP.md](./docs/MCP.md) for the tool list,
+the JSON config other clients want, and the rest of the setup.
 
-There is also a headless mode, which renders 2D/3D/PDF to files, runs DRC and LVS and
-prints timings — it is how the visual output is exercised in CI, with no display:
+### Headless
+
+Renders 2D/3D/PDF to files, runs DRC and LVS and prints timings, with no display. It is
+how the visual output is exercised in CI, and the fastest way to check that a rendering
+change did not crash:
 
 ```sh
 python -m perfstudio.ui.main --headless tools/diffcheck/golden/dense.perf
 ```
 
-## Repository layout
+## How it is built
+
+The document is **immutable** and every mutation is a command dispatched through one
+bus — which is what makes undo work across a mixed human/agent session. The engine is
+**pure**: no clock, no RNG, no filesystem, no Qt or VTK below `ui/`. The placer's
+annealing is seeded, so the same document and the same seed give the same board.
+
+That purity is load-bearing rather than decorative. This Python engine is a port of the
+TypeScript one still in `packages/`, and its acceptance criterion was never "the tests
+pass" but "it produces byte-identical results to the implementation it replaces" —
+golden fixtures in `tools/diffcheck/`, down to the last IEEE-754 double.
 
 ```
 src/perfstudio/            the engine: document model, command bus, connectivity,
@@ -95,18 +142,37 @@ src/perfstudio/parsers/    KiCad netlist importer
 src/perfstudio/ui/         Qt application: 2D editor, VTK 3D view, 1:1 PDF export
 src/perfstudio/mcp/        the MCP server (docs/MCP.md)
 examples/                  a netlist to import
-tests/                     850+ tests; the engine is mypy --strict clean
+tests/                     1231 tests; the engine is mypy --strict clean
 packages/                  the original TypeScript engine, kept as the reference the
-                           Python port is proved against (golden fixtures in tools/)
+                           Python port is proved against
 ```
 
-Still to come, in the order PLAN.md puts them: assembly animation and per-step rendered
-images for the guide (§7.2, M4), i18n and packaging (M7), and the dogfood build that
-closes M5.
+The 61 THT footprints are **generated from numeric parameters**, not shipped as assets —
+no mesh library, no share-alike licence to inherit. The same spec that draws a part in 2D
+extrudes its body in 3D, so the two cannot disagree.
+
+## Where it is going
+
+Done: the editor, the library, connectivity and LVS, DRC, the router and the placement
+optimiser, the build guide with rendered step images and assembly playback, the 1:1 PDF
+export, the MCP server, and TR/EN localisation.
+
+Next, in the order [PLAN.md](./PLAN.md) §11 puts them:
+
+- **The dogfood build (M5).** Somebody has to solder a real board from a generated guide.
+  Until that has happened, every claim on this page is a claim about software rather than
+  about a working circuit.
+- **Packaging (M7).** Signed installers for Windows, macOS and Linux.
+- More example projects than the one NE555.
+
+## Contributing
+
+Issues and pull requests are welcome. Please read [CONTRIBUTING.md](./CONTRIBUTING.md)
+first — it covers how to run the suite, which checks are gates and which are not, and one
+licence boundary that matters more here than in most projects: **do not read or port code
+from the GPL-licensed tools in this space.** PerfStudio is clean-room with respect to
+them, and that has to stay true. The record is in [docs/prior-art.md](./docs/prior-art.md).
 
 ## Licence
 
 Apache-2.0. See [LICENSE](./LICENSE) and [NOTICE](./NOTICE).
-
-PerfStudio is written clean-room with respect to the existing GPL-licensed tools in
-this space; see the NOTICE file.

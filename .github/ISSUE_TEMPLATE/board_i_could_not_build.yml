@@ -1,0 +1,48 @@
+name: A board I could not design or build
+description: The tool did not refuse anything — it just could not do what you needed
+labels: ["dogfood"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This is the most useful issue you can open right now.
+
+        PerfStudio is pre-alpha and its open question is not "does it crash" but "can
+        somebody actually build a working circuit with it". A layout the router made a
+        mess of, a guide step that did not match the part in your hand, a rule that fired
+        when it should not have, or a board you gave up on — all of it counts, and none
+        of it needs a stack trace.
+
+  - type: textarea
+    id: circuit
+    attributes:
+      label: What were you building
+      description: The circuit, roughly. A schematic, a netlist or a sentence are all fine.
+    validations:
+      required: true
+
+  - type: textarea
+    id: wall
+    attributes:
+      label: Where it stopped being useful
+      description: >
+        What did you want to happen, and what did the tool do instead? If you went back
+        to doing it on paper, say at which point.
+    validations:
+      required: true
+
+  - type: textarea
+    id: document
+    attributes:
+      label: The board, if you still have it
+      description: Attach the `.perf` file, and the exported build guide if one got that far.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: soldered
+    attributes:
+      label: Did you actually solder it?
+      options:
+        - label: I built the board from a generated guide
+        - label: The circuit worked
