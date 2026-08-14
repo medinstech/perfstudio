@@ -14,7 +14,14 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-cov", "mypy>=1.13", "ruff>=0.8", "pyinstaller>=6.10"]
-mcp = ["mcp>=1.0"]
+# Capped below 2.0, and the cap is load-bearing rather than cautious. `mcp` 2.0.0 removed
+# `mcp.server.fastmcp` outright -- the decorator API every tool in `mcp/server.py` is
+# bound with -- so the server does not import at all there, and PyInstaller's
+# `collect_submodules("mcp")` dies on the same package with "typer is required", which
+# takes all three installers down with it. 1.29.0 still ships fastmcp and deprecates
+# nothing. Lifting this means porting 39 tools to the 2.x API, which is a change with its
+# own verification attached, not a version bump.
+mcp = ["mcp>=1.0,<2"]
 
 [project.scripts]
 perfstudio = "perfstudio.ui.main:main"

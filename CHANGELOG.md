@@ -691,6 +691,23 @@ closed without a bump.
 
 ### Fixed
 
+- **The MCP server did not import at all against the current SDK, and it took all three
+  installers down with it.** `pyproject` asked for `mcp>=1.0` with no upper bound, so a
+  fresh install resolved to `mcp` 2.0.0 — which removes `mcp.server.fastmcp`, the
+  decorator API every one of the 39 tools is bound with. `python -m perfstudio.mcp` died
+  on the import, and PyInstaller's `collect_submodules("mcp")` died on the same package
+  with *"typer is required"*, so the Windows, Linux and macOS bundles all failed to build
+  before a single byte was packed. Capped at `<2`: 1.29.0 still ships fastmcp, deprecates
+  nothing, and keeps typer in an extra where it belongs.
+  - **A development machine could not have noticed.** `pip install -e ".[mcp]"` leaves an
+    already-satisfied requirement alone, so a tree that installed 1.x weeks ago keeps it
+    and stays green — while every CI runner, every packaging job and every new user starts
+    from nothing and gets 2.0.0. The local suite and a fresh clone were testing two
+    different dependency sets, which is exactly the failure an unbounded range invites.
+  - Lifting the cap means porting the tool surface to the 2.x API. That is a change with
+    its own verification attached, not a version bump, so it is not being done on the way
+    out of the door.
+
 - **Escape did not cancel placing a part.** Reported. It was bound to the Draw menu's stop
   entry, which cancelled drawing, pin-picking and connecting — and not placement. Worse,
   being a *window* shortcut it fires before the board scene sees the key at all, so the
