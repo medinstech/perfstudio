@@ -3103,11 +3103,7 @@ class MainWindow(QMainWindow):
             rule_item.setForeground(0, QColor(ERROR if severity == "error" else WARNING))
             rule_item.setData(0, ROLE_FINDING_KEY, f"drc:{rule}")
             drc_root.addChild(rule_item)
-            for v in items:
-                leaf = QTreeWidgetItem(["", v.message])
-                leaf.setData(0, ROLE_HOLES, v.holes)
-                leaf.setData(0, ROLE_COMPONENT_IDS, v.component_ids)
-                rule_item.addChild(leaf)
+            self._add_drc_findings(rule_item, rule, items, expanded)
             rule_item.setExpanded(f"drc:{rule}" in expanded)
         drc_root.setExpanded("DRC" in expanded or not expanded)
 
@@ -3140,6 +3136,66 @@ class MainWindow(QMainWindow):
                 kind_item.addChild(leaf)
             kind_item.setExpanded(f"lvs:{kind}" in expanded)
         lvs_root.setExpanded("LVS" in expanded or not expanded)
+
+    #: Findings of one rule above which they are gathered by the conductor they are
+    #: about. Three, because two or three rows are quicker to read than a heading.
+    COLLAPSE_FINDINGS_ABOVE = 3
+
+    def _add_drc_findings(
+        self,
+        rule_item: QTreeWidgetItem,
+        rule: str,
+        items: list[DrcViolation],
+        expanded: set[str],
+    ) -> None:
+        """A rule's findings, gathered by conductor when there are enough to bury the rest.
+
+        ``solder-trace-proximity`` is why this exists, and it is not the rule being wrong.
+        Two traces run side by side for eight pads and it reports one finding per pad, per
+        trace: sixteen rows saying the same sentence about the same pair of runs, and the
+        panel's other findings scrolled off the bottom. The rule is a WARNING about the
+        commonest way a perfboard build fails, and the engine's output is compared
+        byte-for-byte against the reference implementation the port is proved against
+        (tests/test_drc.py::test_matches_typescript_golden_drc), so the fix belongs here,
+        where the problem actually is -- one row per run, opened to the pads underneath.
+        """
+        by_conductor: dict[str, list[DrcViolation]] = {}
+        for violation in items:
+            key = violation.conductor_ids[0] if violation.conductor_ids else ""
+            by_conductor.setdefault(key, []).append(violation)
+
+        gathered = len(items) > self.COLLAPSE_FINDINGS_ABOVE and any(
+            key and len(group) > 1 for key, group in by_conductor.items()
+        )
+        if not gathered:
+            for violation in items:
+                rule_item.addChild(self._drc_leaf(violation))
+            return
+
+        for key, group in by_conductor.items():
+            if not key or len(group) == 1:
+                for violation in group:
+                    rule_item.addChild(self._drc_leaf(violation))
+                continue
+            # Named by WHERE it runs rather than by the conductor's id, which is a
+            # generated string a user has never seen. The addresses are the vocabulary
+            # every other message in this application already speaks.
+            holes = tuple(hole for violation in group for hole in violation.holes)
+            span = f"{format_hole(group[0].holes[0])}–{format_hole(group[-1].holes[0])}"
+            node = QTreeWidgetItem([span, f"{len(group)} {t('pads')}"])
+            node.setData(0, ROLE_HOLES, holes)
+            node.setData(0, ROLE_FINDING_KEY, f"drc:{rule}:{key}")
+            for violation in group:
+                node.addChild(self._drc_leaf(violation))
+            node.setExpanded(f"drc:{rule}:{key}" in expanded)
+            rule_item.addChild(node)
+
+    @staticmethod
+    def _drc_leaf(violation: DrcViolation) -> QTreeWidgetItem:
+        leaf = QTreeWidgetItem(["", violation.message])
+        leaf.setData(0, ROLE_HOLES, violation.holes)
+        leaf.setData(0, ROLE_COMPONENT_IDS, violation.component_ids)
+        return leaf
 
     def _expanded_drc_keys(self) -> set[str]:
         """Which groups are open, by NAME rather than by position.

@@ -3008,6 +3008,64 @@ def test_the_findings_can_be_filtered_down_to_one_rule() -> None:
     _close(window)
 
 
+def _two_traces_side_by_side() -> PerfDocument:
+    """Two solder traces on neighbouring rows, on different nets. The commonest shape on
+    a routed perfboard, and the one that floods the panel."""
+    from perfstudio.model import ComponentInstance, DocumentMeta, Net, NetNode
+
+    board = Board(
+        type="pad-per-hole", cols=20, rows=12, pitch=2.54, thickness=1.6,
+        material="FR4", pad_diameter=1.9, drill_diameter=0.8,
+    )
+
+    def trace(cid: str, net_id: str, row: int) -> SolderTraceConductor:
+        return SolderTraceConductor(
+            id=cid, kind="solder-trace", side="bottom", net_id=net_id,
+            path=tuple(HoleCoord(col=c, row=row) for c in range(2, 10)),
+        )
+
+    def part(ref: str, row: int) -> ComponentInstance:
+        return ComponentInstance(
+            id=f"cmp-{ref}", ref=ref, value="", footprint_id="r-axial-3",
+            anchor=HoleCoord(col=2, row=row),
+        )
+
+    return PerfDocument(
+        meta=DocumentMeta(name="t", created="2024-01-01T00:00:00.000Z",
+                          modified="2024-01-01T00:00:00.000Z"),
+        board=board,
+        components=(part("R1", 3), part("R2", 4)),
+        nets=(
+            Net(id="n1", name="A", net_class="signal",
+                nodes=(NetNode(component_ref="R1", pin="1"),)),
+            Net(id="n2", name="B", net_class="signal",
+                nodes=(NetNode(component_ref="R2", pin="1"),)),
+        ),
+        conductors=(trace("t1", "n1", 3), trace("t2", "n2", 4)),
+    )
+
+
+def test_two_traces_side_by_side_are_one_row_each_not_sixteen() -> None:
+    """The rule is right and it is a WARNING, not an error -- but it fires once per pad
+    per trace, so eight pads of ordinary parallel routing put sixteen copies of one
+    sentence in the panel and scrolled everything else off the bottom.
+
+    The engine's output cannot change: it is compared byte-for-byte against the reference
+    implementation this port is proved against. So the panel gathers them, and nothing is
+    dropped -- every pad is still there, one level down.
+    """
+    window = _window_on(_two_traces_side_by_side())
+
+    proximity = _drc_group(window, "drc:solder-trace-proximity")
+    assert proximity is not None, "the fixture should trip the proximity rule"
+    findings = sum(proximity.child(i).childCount() or 1 for i in range(proximity.childCount()))
+
+    assert proximity.childCount() == 2, "one row per trace"
+    assert findings == 16, "and every pad still reachable underneath"
+    assert "–" in proximity.child(0).text(0), "named by where it runs"
+    _close(window)
+
+
 def test_a_severity_has_the_same_colour_in_the_tree_as_on_the_status_bar() -> None:
     from perfstudio.ui.theme import ERROR, WARNING
 

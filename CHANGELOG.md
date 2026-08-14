@@ -22,6 +22,19 @@ closed without a bump.
 
 ### Changed
 
+- **Two solder traces running side by side are one row in the findings panel, not
+  sixteen.** `solder-trace-proximity` fires once per pad *per trace*, so eight pads of
+  perfectly ordinary parallel routing put sixteen copies of one sentence in the panel and
+  pushed everything else off the bottom — which is how the most valuable rule in the tool
+  became the one people scroll past. Gathered by the run now (`C4–J4 · 8 pads`), with
+  every pad still there one level down.
+  - The rule itself is unchanged, and deliberately: it is a **warning**, not an error —
+    nothing is refused and the board is legal — and DRC's output is compared byte-for-byte
+    against the reference implementation this port is proved against
+    (`test_matches_typescript_golden_drc`). Grouping in the engine was written, measured
+    at 8 findings → 4 on `random-09`, and reverted for that reason. The noise was never in
+    the engine; it was in the panel.
+
 - **Auto-place stops turning parts for nothing.** The annealer accepts any move whose
   cost delta is `<= 0`, and a rotation's delta is *exactly* zero for every part the cost
   function cannot tell apart turned — one on no net, or one whose courtyard is square. So
