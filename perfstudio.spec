@@ -54,7 +54,9 @@ hiddenimports += [
 try:
     import mcp  # noqa: F401
 
-    hiddenimports += collect_submodules("mcp", filter=lambda name: name.split(".")[:2] != ["mcp", "cli"])
+    hiddenimports += collect_submodules(
+        "mcp", filter=lambda name: name.split(".")[:2] != ["mcp", "cli"]
+    )
 except ImportError:
     print("[spec] mcp not installed; the bundle will not carry the MCP server")
 
