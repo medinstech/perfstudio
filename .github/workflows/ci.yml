@@ -146,4 +146,11 @@ jobs:
       # The findings themselves, not a count of them: this fails the build now, and a job
       # that fails should print the thing to fix.
       - run: ruff check src tests
-      - run: ruff format --check src tests
+
+      # REPORTS, DOES NOT BLOCK, and it is the one thing in this job that does not. Making
+      # the linter a gate turned this into one by accident on its first run: it answered
+      # "41 files would be reformatted" and failed the build, quietly deciding the exact
+      # question the comment above says is not being decided here. Adopting the formatter
+      # rewrites 41 of 60 files in one commit; the number is worth watching, and it is not
+      # worth watching from behind a red tick that means something else.
+      - run: ruff format --check src tests || echo "::warning::$(ruff format --check src tests 2>&1 | tail -1)"

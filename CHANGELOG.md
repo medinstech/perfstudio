@@ -53,8 +53,13 @@ closed without a bump.
     apart twice this morning; a linter is the same hazard in a smaller way, since rules
     arrive with releases and a gate that fails on a tree nobody touched is a gate people
     switch off.
-  - `ruff format` is still not run. It would rewrite 40 of the 57 files and point every
-    line of blame in the repository at a reformat, which is a decision of its own.
+  - **`ruff format` still is not adopted, and making the linter a gate nearly adopted it
+    by accident.** The same job also ran `ruff format --check`, which had been failing
+    quietly under `continue-on-error` for as long as it existed; removing that flag turned
+    "41 files would be reformatted" into a failed build, deciding the exact question the
+    comment beside it says is not being decided. It reports now and does not block. The
+    number is worth watching; it is not worth watching from behind a red tick that means
+    something else.
 
 - **CI runs all three platforms on every push**, which is what `ci.yml`'s own condition
   said to do on going public: standard runners are free on public repositories, so the
