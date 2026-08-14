@@ -32,6 +32,32 @@ closed without a bump.
 
 ### Fixed
 
+- **A machine-wide installer was putting its shortcuts in one person's profile.** Found
+  by installing v0.4.0 on a real desktop, which is a thing that had never been done: CI
+  unpacks the bundle and asks the binary its version, and the installer around it had only
+  ever been *built*. It installs into `$PROGRAMFILES64` under `RequestExecutionLevel
+  admin`, and `$SMPROGRAMS` / `$DESKTOP` default to the **current** user — which under
+  elevation is whoever answered the UAC prompt. Install for a standard user from an
+  administrator account and every shortcut lands in the administrator's profile and none
+  in the profile of the person who will use the program. `SetShellVarContext all`, in the
+  install and uninstall sections both.
+  - **And its uninstall entry was in the 32-bit registry.** `makensis` produces a 32-bit
+    installer, so `HKLM\Software` is redirected through WOW64: a 64-bit application in
+    `Program Files` was registering itself where 32-bit applications live. Add/Remove
+    Programs reads both views so it still appeared, which is why nothing looked wrong —
+    but every inventory tool and script that reads the 64-bit view saw nothing.
+    `SetRegView 64`.
+  - **Both fixes have to look backwards.** Every v0.4.0 install in the world recorded
+    itself in the 32-bit view with per-user shortcuts, so the next installer searches both
+    registry views for a previous version and clears both shortcut contexts. Without that
+    it would find nothing to remove and unpack itself over the bundle it is replacing —
+    the exact failure that block exists to prevent.
+  - What did work, end to end and on the first try: silent install in 21 s, 522 MB across
+    1008 files, the `.perf` association (double-clicking a board opened it in the installed
+    build), the Turkish Start-menu entries the machine's locale selected, the full headless
+    pipeline out of `Program Files` including 29 rendered step images, and a silent
+    uninstall that left nothing behind — no files, no registry keys, no shortcuts.
+
 - **The release ritual's own last step failed the tests that enforce it.**
   [docs/RELEASING.md](./docs/RELEASING.md) step 4 opens the next cycle by putting the
   `.devN` suffix back on and leaving an **empty** `## [Unreleased]` heading — and

@@ -141,6 +141,12 @@ LangString S_LnkWebsite   ${LANG_TURKISH} "GitHub'da PerfStudio"
 
 ; ----------------------------------------------------------------- funcs ---
 Function .onInit
+  ; Before anything reads the registry -- InstallDirRegKey above resolves during init, and
+  ; a 32-bit installer resolves it in the 32-bit view unless told otherwise. The default
+  ; install directory is the same either way; setting it here is what keeps every lookup
+  ; in this file talking about one set of keys.
+  SetRegView 64
+
   ; Pick the installer's language from the machine rather than asking. Somebody who set
   ; their Windows to Turkish has already answered this question.
   !insertmacro MUI_LANGDLL_DISPLAY
@@ -176,6 +182,22 @@ FunctionEnd
 Section "$(S_SecMain)" SecMain
   SectionIn RO
 
+  ; THIS INSTALL IS MACHINE-WIDE, SO ITS SHORTCUTS AND ITS REGISTRY ENTRIES MUST BE TOO.
+  ; Both defaults are wrong here and both were, until a real install was inspected:
+  ;
+  ; $SMPROGRAMS and $DESKTOP default to the CURRENT user, and under RequestExecutionLevel
+  ; admin that is whoever answered the elevation prompt. Installing for a standard user
+  ; from an administrator account therefore puts every shortcut in the administrator's
+  ; profile and none in the profile of the person who will use the program.
+  ;
+  ; makensis produces a 32-bit installer, so HKLM\Software goes through WOW64 redirection
+  ; into Software\WOW6432Node -- a 64-bit application, installed into $PROGRAMFILES64,
+  ; registering itself where 32-bit applications live. Add/Remove Programs reads both
+  ; views so it still appears, but every script and inventory tool that looks in the
+  ; 64-bit view sees nothing.
+  SetShellVarContext all
+  SetRegView 64
+
   ; Upgrade in place by clearing the old install first. The previous uninstaller is
   ; deliberately not called - it can prompt even when run silently - and installing
   ; *over* a PyInstaller bundle is worse than either: leftover modules and DLLs from the
@@ -183,16 +205,38 @@ Section "$(S_SecMain)" SecMain
   ;
   ; This has to run before SetOutPath "$INSTDIR": if the working directory is inside the
   ; folder being removed, RMDir cannot remove the folder itself.
+  ;
+  ; BOTH REGISTRY VIEWS ARE SEARCHED, and that is not belt-and-braces. 0.4.0 shipped
+  ; without the SetRegView above, so every copy of it in the world recorded itself in the
+  ; 32-bit view; a 0.5.0 installer that looked only where it writes would find nothing,
+  ; skip this whole block, and unpack itself over the bundle it was meant to replace --
+  ; which is the exact failure the block exists to prevent.
   SetOutPath "$TEMP"
   ReadRegStr $R2 HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "InstallLocation"
+  ${If} $R2 == ""
+    SetRegView 32
+    ReadRegStr $R2 HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "InstallLocation"
+    ${If} $R2 != ""
+      DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}"
+      DeleteRegKey HKLM "Software\${APP_VENDOR}\${APP_NAME}"
+    ${EndIf}
+    SetRegView 64
+  ${EndIf}
   ${If} $R2 != ""
   ${AndIf} ${FileExists} "$R2\${EXE_NAME}"     ; never RMDir a path from a broken key
     DetailPrint "$(S_RemovingOld)"
     Push "$R2"
     Call AssertExeClosed
     RMDir /r "$R2"
+    ; Both contexts, for the same reason: 0.4.0's shortcuts went into the profile of
+    ; whoever ran it, and leaving them behind points a Start menu entry at an executable
+    ; this installer has just deleted.
     Delete "$DESKTOP\${APP_NAME}.lnk"
     RMDir /r "$SMPROGRAMS\${APP_NAME}"
+    SetShellVarContext current
+    Delete "$DESKTOP\${APP_NAME}.lnk"
+    RMDir /r "$SMPROGRAMS\${APP_NAME}"
+    SetShellVarContext all
     DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}"
   ${EndIf}
 
@@ -272,6 +316,11 @@ SectionEnd
 
 ; ------------------------------------------------------------ uninstall ----
 Section "Uninstall"
+  ; Matching the install section, and it has to: an uninstaller that reads the other
+  ; shell context finds no shortcuts to delete and leaves them pointing at nothing.
+  SetShellVarContext all
+  SetRegView 64
+
   Delete "$DESKTOP\${APP_NAME}.lnk"
   RMDir /r "$SMPROGRAMS\${APP_NAME}"
 
