@@ -69,7 +69,9 @@ from perfstudio.geometry import (
     holes_without_grid_pad,
     is_inside_board,
     legend_strip_mm,
+    manhattan,
     pad_extent_mm,
+    path_length_mm,
     printed_row_label,
     row_label,
     transform_offset,
@@ -793,6 +795,38 @@ def next_reference(document: PerfDocument, footprint_id: str) -> str:
     while f"{prefix}{index}" in used:
         index += 1
     return f"{prefix}{index}"
+
+
+def describe_span(a: HoleCoord, b: HoleCoord, board: Board) -> str:
+    """Two holes, and the three different distances between them.
+
+    They are genuinely three answers and not one rounded three ways:
+
+      * **holes across** is what you count on the board and what a footprint is written
+        in -- "R3: C7 to C11, 4 holes" is the language the build guide already speaks.
+      * **mm** is the straight, centre-to-centre distance, which is what a lead-bending
+        jig and a pair of pliers are set to, and the only one of the three that answers
+        "will this part physically reach".
+      * **steps** is the orthogonal count, which is how long a solder trace between them
+        would be -- solder crosses the 0.6 mm gap to an orthogonal neighbour and not the
+        1.7 mm diagonal one, so a diagonal is 2 steps of copper and not 1.4.
+
+    Same hole twice is not an error and not a measurement; it says so instead.
+    """
+    if a == b:
+        return f"{format_hole(a)} — the same hole."
+    d_col, d_row = abs(b.col - a.col), abs(b.row - a.row)
+    mm = path_length_mm((a, b), board)
+    steps = manhattan(a, b)
+    span = (
+        f"{d_col + 1} × {d_row + 1} holes"
+        if d_col and d_row
+        else f"{max(d_col, d_row) + 1} holes"
+    )
+    return (
+        f"{format_hole(a)} → {format_hole(b)}   {span}   {mm:.2f} mm apart   "
+        f"{steps} step(s) by trace"
+    )
 
 
 def next_net_name(document: PerfDocument) -> str:
@@ -1833,6 +1867,11 @@ class BoardScene(QGraphicsScene):
     #: (col, row) under the cursor. The whole tool speaks hole addresses, so the status
     #: bar has to be able to say which one the pointer is on -- otherwise you count.
     hoveredHole = Signal(int, int)
+    #: Emitted when the measuring tool is armed or disarmed.
+    measureArmed = Signal(bool)
+    #: The measurement as a sentence, live while the pointer moves, or "" when there is
+    #: nothing to say. Text rather than numbers because every consumer of it is prose.
+    measured = Signal(str)
 
     def __init__(
         self,
@@ -1872,6 +1911,9 @@ class BoardScene(QGraphicsScene):
         self._connect_first: tuple[str, str] | None = None
         self._connect_hole: HoleCoord | None = None
         self._connect_item: PickedPinsItem | None = None
+        self._measure_armed = False
+        self._measure_from: HoleCoord | None = None
+        self._measure_item: PickedPinsItem | None = None
         self._ghost: PlacementGhostItem | None = None
         #: Whether the last placement landed somewhere already occupied. Read by the host to
         #: say so, since the bus allows it and only DRC objects.
@@ -2165,6 +2207,7 @@ class BoardScene(QGraphicsScene):
             self.arm_placement(None)  # The board modes are mutually exclusive.
             self._disarm_net_pins()
             self._disarm_connect()
+            self._disarm_measure()
             self._draw_preview = DrawPreviewItem(kind, self.document.board, self.side)
             self.addItem(self._draw_preview)
         self.drawArmed.emit(kind or "")
@@ -2288,6 +2331,7 @@ class BoardScene(QGraphicsScene):
             self.arm_placement(None)
             self.arm_drawing(None)
             self._disarm_connect()
+            self._disarm_measure()
         self._clear_net_pins()
         self._net_pin_target = net_id
         if net_id is not None:
@@ -2384,6 +2428,76 @@ class BoardScene(QGraphicsScene):
     # two legs and saying THOSE go together. This is that, and it produces exactly the
     # same documents the long way round does -- one command per pair, on the same bus.
 
+    # -- measuring, which is the one tool that changes nothing ---------------
+    #
+    # Perfboard work is full of distances that have to be right before anything is
+    # soldered: how far apart to bend a resistor's legs, whether a TO-220 clears the
+    # capacitor beside it, how long a wire has to be cut. All of it was countable off the
+    # ruler and none of it was readable, so people counted holes on the screen with a
+    # finger. Three numbers answer nearly all of it, and they are not the same number:
+    # the hole span (how many holes across), the straight distance in mm (what you set a
+    # pair of pliers or a lead-bending jig to), and the orthogonal step count (how long a
+    # solder trace between the two would be).
+
+    def arm_measure(self, on: bool) -> None:
+        """Arm (or disarm) measuring between two holes."""
+        if on:
+            # The board modes are mutually exclusive: a click means one thing.
+            self.arm_placement(None)
+            self.arm_drawing(None)
+            self._disarm_net_pins()
+            self._disarm_connect()
+        self._clear_measure()
+        self._measure_armed = on
+        self.measureArmed.emit(on)
+        self.measured.emit("Click the first hole." if on else "")
+
+    @property
+    def measure_armed(self) -> bool:
+        return self._measure_armed
+
+    def measure_from(self) -> HoleCoord | None:
+        """The hole a measurement started from, if one is half made."""
+        return self._measure_from
+
+    def _disarm_measure(self) -> None:
+        if not self._measure_armed:
+            return
+        self._clear_measure()
+        self._measure_armed = False
+        self.measureArmed.emit(False)
+        self.measured.emit("")
+
+    def _clear_measure(self) -> None:
+        if self._measure_item is not None:
+            self.removeItem(self._measure_item)
+            self._measure_item = None
+        self._measure_from = None
+
+    def measure_click(self, at: HoleCoord) -> None:
+        """Take the first hole, or finish the measurement at the second.
+
+        Finishing leaves the tool armed and the answer on screen: measuring one distance
+        is almost never what somebody is doing -- they are comparing several -- and a
+        tool that disarmed itself after each one would have to be re-armed for every
+        comparison.
+        """
+        if not self._measure_armed or not is_inside_board(at, self.document.board):
+            return
+        if self._measure_from is None or self._measure_from == at:
+            self._measure_from = at
+            if self._measure_item is None:
+                self._measure_item = PickedPinsItem(self.document.board, self.side)
+                self.addItem(self._measure_item)
+            self._measure_item.set_holes([at])
+            self.measured.emit(f"From {format_hole(at)} — click the second hole.")
+            return
+
+        if self._measure_item is not None:
+            self._measure_item.set_holes([self._measure_from, at])
+        self.measured.emit(describe_span(self._measure_from, at, self.document.board))
+        self._measure_from = None
+
     # -- leaving whatever mode you are in ------------------------------------
 
     @property
@@ -2394,6 +2508,7 @@ class BoardScene(QGraphicsScene):
             or self._draw_kind is not None
             or self._net_pin_target is not None
             or self._connect_armed
+            or self._measure_armed
         )
 
     def leave_mode(self) -> None:
@@ -2412,6 +2527,7 @@ class BoardScene(QGraphicsScene):
         self.arm_drawing(None)
         self.arm_net_pins(None)
         self.arm_connect(False)
+        self.arm_measure(False)
 
     def arm_connect(self, on: bool) -> None:
         """Arm (or disarm) joining pins by clicking two of them."""
@@ -2419,6 +2535,7 @@ class BoardScene(QGraphicsScene):
             self.arm_placement(None)
             self.arm_drawing(None)
             self._disarm_net_pins()
+            self._disarm_measure()
         self._clear_connect()
         self._connect_armed = on
         self.connectArmed.emit(on)
@@ -2565,6 +2682,7 @@ class BoardScene(QGraphicsScene):
         if self._armed_footprint is not None:
             self._disarm_net_pins()
             self._disarm_connect()
+            self._disarm_measure()
             self._ghost = PlacementGhostItem(self._armed_footprint, self.document.board, self.side)
             self.addItem(self._ghost)
         self.placementArmed.emit(self._armed_id or "")
@@ -2608,10 +2726,23 @@ class BoardScene(QGraphicsScene):
             self._ghost.set_anchor(at, self._placement_blocked(at))
         if self._draw_preview is not None:
             self._refresh_draw_preview(at)
+        # Live, because the question is nearly always "how far is it to about there"
+        # rather than "how far is it to exactly that hole": the answer has to move with
+        # the pointer or it is a two-click way of asking something already answered.
+        if self._measure_from is not None and is_inside_board(at, self.document.board):
+            self.measured.emit(describe_span(self._measure_from, at, self.document.board))
         self.hoveredHole.emit(at.col, at.row)
         super().mouseMoveEvent(event)
 
     def mousePressEvent(self, event: Any) -> None:
+        if self._measure_armed:
+            at = screen_to_hole(event.scenePos(), self.document.board, self.side)
+            if event.button() == Qt.MouseButton.LeftButton:
+                self.measure_click(at)
+            elif event.button() == Qt.MouseButton.RightButton:
+                self._disarm_measure()
+            event.accept()
+            return
         if self._connect_armed:
             at = screen_to_hole(event.scenePos(), self.document.board, self.side)
             if event.button() == Qt.MouseButton.LeftButton:

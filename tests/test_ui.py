@@ -1040,6 +1040,194 @@ def test_solder_beads_sit_inside_the_pad_rather_than_over_it() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Finding a part
+# ---------------------------------------------------------------------------
+
+
+def test_a_part_can_be_found_by_reference_value_or_footprint() -> None:
+    """Which of the three somebody remembers depends on why they are looking: "R37" from
+    a DRC message, "10k" from the schematic, "TO-220" from the pile on the bench."""
+    from perfstudio.ui.main import GoToPartDialog
+
+    doc = _load_dense()
+    dialog = GoToPartDialog(doc.components, footprint_lookup())
+    everything = dialog.list.count()
+
+    first = doc.components[0]
+    dialog.filter.setText(first.ref)
+    assert 0 < dialog.list.count() < everything
+    assert dialog.chosen_id() is not None
+
+    dialog.filter.setText("no such part anywhere")
+    assert dialog.list.count() == 0
+    assert dialog.chosen_id() is None
+
+
+def test_going_to_a_part_selects_it_and_moves_the_view() -> None:
+    window = _window_on(_load_dense())
+    target = window.bus.document.components[-1]
+
+    window.go_to_component(target.id)
+
+    assert window.scene.selected_component_ids() == (target.id,)
+    assert target.ref in window.statusBar().currentMessage()
+    _close(window)
+
+
+# ---------------------------------------------------------------------------
+# Measuring
+# ---------------------------------------------------------------------------
+
+
+def test_measuring_reports_three_different_distances() -> None:
+    """They are three answers, not one rounded three ways: holes across is what a
+    footprint is written in, mm is what a lead-bending jig is set to, and steps is how
+    much solder trace it would take -- a diagonal is two steps of copper, not 1.4."""
+    from perfstudio.ui.view2d import describe_span
+
+    doc = _load_dense()
+
+    text = describe_span(view2d.HoleCoord(2, 6), view2d.HoleCoord(6, 8), doc.board)
+
+    assert "C7" in text and "G9" in text
+    assert "5 × 3 holes" in text
+    assert "11.36 mm" in text  # sqrt(4^2 + 2^2) * 2.54
+    assert "6 step(s)" in text
+
+
+def test_measuring_the_same_hole_twice_is_not_a_measurement() -> None:
+    from perfstudio.ui.view2d import describe_span
+
+    doc = _load_dense()
+
+    assert "same hole" in describe_span(
+        view2d.HoleCoord(4, 4), view2d.HoleCoord(4, 4), doc.board
+    )
+
+
+def test_the_measuring_tool_takes_two_clicks_and_stays_armed() -> None:
+    """Measuring one distance is almost never what somebody is doing -- they are
+    comparing several -- so it does not disarm itself after each answer."""
+    doc = _load_dense()
+    scene = BoardScene(doc, footprint_lookup(), side="top")
+    said: list[str] = []
+    scene.measured.connect(said.append)
+
+    scene.arm_measure(True)
+    scene.measure_click(view2d.HoleCoord(1, 1))
+    scene.measure_click(view2d.HoleCoord(1, 5))
+
+    assert "5 holes" in said[-1] and "10.16 mm" in said[-1]
+    assert scene.measure_armed is True
+    assert scene.measure_from() is None, "and it is ready for the next pair"
+
+
+def test_measuring_arms_no_other_mode_and_escape_ends_it() -> None:
+    """Every board mode is exclusive: a click has to mean one thing."""
+    doc = _load_dense()
+    scene = BoardScene(doc, footprint_lookup(), side="top")
+
+    scene.arm_drawing("bare-wire")
+    scene.arm_measure(True)
+    assert scene.armed_draw_kind is None
+
+    scene.arm_drawing("bare-wire")
+    assert scene.measure_armed is False
+
+    scene.arm_measure(True)
+    scene.leave_mode()
+    assert scene.measure_armed is False
+
+
+def test_measuring_changes_nothing_on_the_board() -> None:
+    """The one tool that is not an edit. It has no bus dispatch to make."""
+    doc = _load_dense()
+    bus = _new_bus(doc)
+    scene = BoardScene(bus.document, footprint_lookup(), side="top", bus=bus)
+
+    scene.arm_measure(True)
+    scene.measure_click(view2d.HoleCoord(2, 2))
+    scene.measure_click(view2d.HoleCoord(9, 9))
+
+    assert bus.document is doc
+    assert bus.can_undo() is False
+
+
+# ---------------------------------------------------------------------------
+# Copy, paste, duplicate
+#
+# What a block IS is tested in tests/test_clipboard.py, which needs no window. These
+# three are the seam: the real system clipboard, and the selection the window reads.
+# ---------------------------------------------------------------------------
+
+
+def test_copy_then_paste_puts_a_second_copy_of_the_part_on_the_board() -> None:
+    from PySide6.QtWidgets import QApplication
+
+    window = _window_on(_load_dense())
+    before = len(window.bus.document.components)
+    first = window.bus.document.components[0]
+    window.scene.select_components([first.id])
+
+    window.on_copy()
+    assert "perfstudio-block" in QApplication.clipboard().text()
+    window.on_paste()
+
+    assert len(window.bus.document.components) == before + 1
+    pasted = window.bus.document.components[-1]
+    assert pasted.footprint_id == first.footprint_id
+    assert pasted.ref != first.ref, "a copy of R1 is not R1"
+    assert pasted.anchor != first.anchor, "and it is not underneath it either"
+    _close(window)
+
+
+def test_nothing_on_the_clipboard_is_an_ordinary_answer_rather_than_a_crash() -> None:
+    """The clipboard usually holds whatever was copied last, in another application."""
+    from PySide6.QtWidgets import QApplication
+
+    window = _window_on(_load_dense())
+    QApplication.clipboard().setText("https://example.com/")
+    before = window.bus.document
+
+    window.on_paste()
+
+    assert window.bus.document is before
+    assert "clipboard" in window.statusBar().currentMessage()
+    _close(window)
+
+
+def test_duplicate_leaves_the_system_clipboard_alone() -> None:
+    """Duplicating a part is a board operation. It has no business throwing away what
+    somebody copied in another application to use in a minute."""
+    from PySide6.QtWidgets import QApplication
+
+    window = _window_on(_load_dense())
+    QApplication.clipboard().setText("something the user still wants")
+    window.scene.select_components([window.bus.document.components[0].id])
+    before = len(window.bus.document.components)
+
+    window.on_duplicate()
+
+    assert len(window.bus.document.components) == before + 1
+    assert QApplication.clipboard().text() == "something the user still wants"
+    _close(window)
+
+
+def test_a_paste_selects_what_it_pasted() -> None:
+    """So the very next thing -- a drag, R, M -- lands on the new block rather than on
+    whatever happened to be selected when it was copied."""
+    window = _window_on(_load_dense())
+    first = window.bus.document.components[0]
+    window.scene.select_components([first.id])
+
+    window.on_duplicate()
+
+    pasted = window.bus.document.components[-1]
+    assert window.scene.selected_component_ids() == (pasted.id,)
+    _close(window)
+
+
+# ---------------------------------------------------------------------------
 # Unsaved work
 # ---------------------------------------------------------------------------
 

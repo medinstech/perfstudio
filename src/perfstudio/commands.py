@@ -457,6 +457,32 @@ class MoveComponentsPayload:
 
 
 @dataclass(frozen=True, slots=True)
+class PlaceBlockPayload:
+    """Several parts AND the copper between them, placed as ONE command.
+
+    What a paste is. A block of perfboard -- an input stage, one channel of eight -- is
+    parts and the connections that make them a circuit, and splitting it into
+    ``component.placeMany`` followed by ``conductor.addMany`` would put a state on the
+    undo stack that nobody ever chose: the parts down with their wiring gone, one Ctrl+Z
+    from a board that looks finished and is not.
+
+    Conductors are prepared against the document the components have ALREADY joined, so
+    a pasted lead bend can name a part that did not exist when the payload was built.
+    All-or-nothing like every other batch here: a duplicate ref or a path off the board
+    refuses the whole block rather than leaving half of it down.
+    """
+
+    components: tuple[PlaceComponentPayload, ...] = ()
+    conductors: tuple[NewConductor, ...] = ()
+    #: Optional explicit ids for the conductors, for reproducible replay. Components
+    #: carry their own ``id`` field, so this is only needed for the copper.
+    conductor_ids: tuple[ConductorId, ...] | None = None
+    #: Undo-stack label. A batch cannot tell what it is from its contents, and "Paste 4
+    #: part(s)" is a better thing to read than "Place a block of 4 and 3".
+    label: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class MirrorComponentPayload:
     id: ComponentId
     mirrored: bool
@@ -722,36 +748,103 @@ class DeleteEdgeConnectorPayload:
 # ---------------------------------------------------------------------------
 
 
+def _prepare_component(
+    doc: PerfDocument,
+    p: PlaceComponentPayload,
+    ctx: CommandContext,
+    taken_refs: set[str],
+    taken_ids: set[ComponentId],
+) -> ComponentInstance:
+    """Validate one placement against the document and give it its id.
+
+    Shared by ``component.place`` and ``block.place`` for the reason
+    ``_prepare_conductor`` is shared by the single and batch conductor adds: a batch
+    exists to save undo entries, never to reach a weaker set of checks. The two ``taken``
+    sets accumulate across a block, which is what catches a caller placing two parts
+    called R1 in one payload -- the document alone cannot see that.
+    """
+    assert_hole_on_board(p.anchor, doc.board, f"Anchor for {p.ref}")
+    rotation: Rotation = p.rotation if p.rotation is not None else 0
+    assert_rotation(rotation)
+
+    if p.ref in taken_refs:
+        raise CommandError("duplicate-ref", f'A component with ref "{p.ref}" already exists.')
+    taken_refs.add(p.ref)
+    id_ = p.id if p.id is not None else ctx.next_id("cmp")
+    if id_ in taken_ids:
+        raise CommandError("duplicate-id", f'A component with id "{id_}" already exists.')
+    taken_ids.add(id_)
+
+    return ComponentInstance(
+        id=id_,
+        ref=p.ref,
+        value=p.value,
+        footprint_id=p.footprint_id,
+        anchor=p.anchor,
+        rotation=rotation,
+        mirrored=p.mirrored if p.mirrored is not None else False,
+        locked=False,
+    )
+
+
 class _PlaceComponent:
     type = "component.place"
 
     def apply(
         self, doc: PerfDocument, p: PlaceComponentPayload, ctx: CommandContext
     ) -> PerfDocument:
-        assert_hole_on_board(p.anchor, doc.board, f"Anchor for {p.ref}")
-        rotation: Rotation = p.rotation if p.rotation is not None else 0
-        assert_rotation(rotation)
-
-        if any(c.ref == p.ref for c in doc.components):
-            raise CommandError("duplicate-ref", f'A component with ref "{p.ref}" already exists.')
-        id_ = p.id if p.id is not None else ctx.next_id("cmp")
-        if any(c.id == id_ for c in doc.components):
-            raise CommandError("duplicate-id", f'A component with id "{id_}" already exists.')
-
-        component = ComponentInstance(
-            id=id_,
-            ref=p.ref,
-            value=p.value,
-            footprint_id=p.footprint_id,
-            anchor=p.anchor,
-            rotation=rotation,
-            mirrored=p.mirrored if p.mirrored is not None else False,
-            locked=False,
+        component = _prepare_component(
+            doc, p, ctx, {c.ref for c in doc.components}, {c.id for c in doc.components}
         )
         return dataclasses.replace(doc, components=(*doc.components, component))
 
     def describe(self, p: PlaceComponentPayload, doc: PerfDocument) -> str:
         return f"Place {p.ref} at {format_hole(p.anchor)}"
+
+
+class _PlaceBlock:
+    type = "block.place"
+
+    def apply(self, doc: PerfDocument, p: PlaceBlockPayload, ctx: CommandContext) -> PerfDocument:
+        if not p.components and not p.conductors:
+            raise CommandError(
+                "nothing-to-place",
+                "block.place needs a part or a conductor; an empty block would put a "
+                "no-op on the undo stack.",
+            )
+        if p.conductor_ids is not None and len(p.conductor_ids) != len(p.conductors):
+            raise CommandError(
+                "id-count-mismatch",
+                f"Got {len(p.conductor_ids)} id(s) for {len(p.conductors)} conductor(s).",
+            )
+
+        taken_refs = {c.ref for c in doc.components}
+        taken_ids = {c.id for c in doc.components}
+        placed = tuple(
+            _prepare_component(doc, spec, ctx, taken_refs, taken_ids) for spec in p.components
+        )
+
+        # The parts join the document BEFORE the copper is checked against it, because a
+        # lead bend names the component it belongs to and that component is in this same
+        # block. Checking the copper first would refuse every block that carried one.
+        with_parts = dataclasses.replace(doc, components=doc.components + placed)
+
+        taken_conductor_ids = _existing_conductor_ids(with_parts)
+        prepared: list[Conductor] = []
+        for index, spec in enumerate(p.conductors):
+            id_ = p.conductor_ids[index] if p.conductor_ids is not None else ctx.next_id("cond")
+            prepared.append(_prepare_conductor(with_parts, spec, id_, taken_conductor_ids))
+
+        # All-or-nothing: everything above is validated before the document below changes,
+        # so a bad member raises out and the caller's document is untouched.
+        return dataclasses.replace(
+            with_parts, conductors=with_parts.conductors + tuple(prepared)
+        )
+
+    def describe(self, p: PlaceBlockPayload, doc: PerfDocument) -> str:
+        if p.label:
+            return p.label
+        return f"Place {len(p.components)} part(s) and {len(p.conductors)} connection(s)"
 
 
 class _MoveComponent:
@@ -1734,6 +1827,7 @@ class _SetHeightLimit:
 # ---------------------------------------------------------------------------
 
 place_component: CommandDefinition[PlaceComponentPayload] = _PlaceComponent()
+place_block: CommandDefinition[PlaceBlockPayload] = _PlaceBlock()
 move_component: CommandDefinition[MoveComponentPayload] = _MoveComponent()
 move_components: CommandDefinition[MoveComponentsPayload] = _MoveComponents()
 rotate_component: CommandDefinition[RotateComponentPayload] = _RotateComponent()
@@ -1768,6 +1862,7 @@ set_height_limit: CommandDefinition[SetHeightLimitPayload] = _SetHeightLimit()
 # TPayload in command.py.
 STANDARD_COMMANDS: tuple[CommandDefinition[Any], ...] = (
     place_component,
+    place_block,
     move_component,
     move_components,
     rotate_component,

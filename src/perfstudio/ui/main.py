@@ -26,7 +26,7 @@ import math
 import os
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -46,6 +46,8 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QMessageBox,
     QProgressDialog,
@@ -88,6 +90,7 @@ from perfstudio.commands import (
     DisconnectPinsPayload,
     ImportNetlistPayload,
     MirrorComponentPayload,
+    PlaceBlockPayload,
     PlaceComponentPayload,
     RotateComponentPayload,
     SetBoardPayload,
@@ -99,6 +102,7 @@ from perfstudio.commands import (
     create_standard_registry,
     create_starter_document,
 )
+from perfstudio.connectivity import FootprintLookup
 from perfstudio.drc import DrcViolation, run_drc
 from perfstudio.footprints import footprint_lookup, standard_footprints
 from perfstudio.geometry import (
@@ -159,10 +163,11 @@ from perfstudio.version import describe as describe_version
 from . import icons, view3d
 from .boardcolors import SCHEMES as BOARD_SCHEMES
 from .boardcolors import choose as choose_board_colour
+from .clipboard import block_from_json, block_to_json, paste_payload, paste_position
 from .export_pdf import export_pdf, verify_scale
 from .i18n import set_language, t
 from .theme import ERROR, OK, STYLESHEET, TEXT_DIM, WARNING
-from .view2d import RULER_MARGIN_MM, BoardScene, BoardView, next_reference
+from .view2d import RULER_MARGIN_MM, BoardScene, BoardView, hole_to_screen, next_reference
 
 #: What the Preferred Connection menu can be set to: one of the router's styles, or "best"
 #: to route with every style and keep whichever produces the board that is least work to
@@ -861,6 +866,81 @@ class NetDialog(QDialog):
         )
 
 
+class GoToPartDialog(QDialog):
+    """Find a part by name on a board too big to scan by eye.
+
+    A board of any size has no way to answer "where is R37" other than reading the screen
+    until it turns up -- and the parts that need finding are the ones on a dense board,
+    which is exactly where reading the screen does not work.
+
+    Filters on reference, value and footprint together, because which of the three someone
+    remembers depends on why they are looking: "R37" from a DRC message, "10k" from the
+    schematic, "TO-220" from the pile of parts on the bench.
+    """
+
+    def __init__(
+        self,
+        components: Sequence[ComponentInstance],
+        lookup: FootprintLookup,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(t("Go to Part"))
+        self.resize(460, 480)
+        self._components = tuple(components)
+        self._lookup = lookup
+
+        self.filter = QLineEdit()
+        self.filter.setPlaceholderText(t("Filter parts…  (R37, 10k, TO-220, C7)"))
+        self.filter.textChanged.connect(self._refilter)
+        self.list = QListWidget()
+        self.list.itemDoubleClicked.connect(lambda _item: self.accept())
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+        layout = QVBoxLayout()
+        layout.addWidget(self.filter)
+        layout.addWidget(self.list)
+        layout.addWidget(buttons)
+        self.setLayout(layout)
+        self._refilter("")
+        # Focus in the filter box, because typing is what somebody opening this came to
+        # do: the list is how they confirm it, not how they search it.
+        self.filter.setFocus()
+
+    def _describe(self, component: ComponentInstance) -> str:
+        footprint = self._lookup(component.footprint_id)
+        name = footprint.name if footprint is not None else component.footprint_id
+        value = f"  {component.value}" if component.value else ""
+        return f"{component.ref}{value}  ·  {name}  ·  {format_hole(component.anchor)}"
+
+    def _refilter(self, text: str) -> None:
+        needle = text.strip().lower()
+        self.list.clear()
+        for component in self._components:
+            row = self._describe(component)
+            if needle and needle not in row.lower():
+                continue
+            item = QListWidgetItem(row)
+            item.setData(Qt.ItemDataRole.UserRole, component.id)
+            self.list.addItem(item)
+        # Pre-selected, so Enter goes straight to the obvious answer once a filter has
+        # narrowed it to one. Without this the dialog asks to be clicked as well as typed.
+        if self.list.count():
+            self.list.setCurrentRow(0)
+
+    def chosen_id(self) -> str | None:
+        item = self.list.currentItem()
+        if item is None:
+            return None
+        chosen = item.data(Qt.ItemDataRole.UserRole)
+        return str(chosen) if chosen is not None else None
+
+
 class ShortcutsDialog(QDialog):
     """Every keyboard shortcut, READ OFF THE MENU BAR rather than listed by hand.
 
@@ -1060,6 +1140,10 @@ class MainWindow(QMainWindow):
         #: Which primitive the router should reach for first. See router.RoutingStyle, and
         #: StylePreference for the extra "best" value that measures rather than assumes.
         self._routing_style: StylePreference = "balanced"
+        #: The hole under the pointer, kept because Paste lands there. Starts off the
+        #: board on purpose: before the pointer has been over the board at all there is
+        #: no such hole, and (0, 0) would be a lie that pasted a block into A1.
+        self._hovered_hole = HoleCoord(-1, -1)
 
         #: The document as it last hit disk. Identity comparison against the bus's
         #: current document is what "modified" means here -- see is_modified.
@@ -1084,6 +1168,8 @@ class MainWindow(QMainWindow):
         self.scene.pinsConnected.connect(self._on_pins_connected)
         self.scene.hoveredHole.connect(self._on_hovered_hole)
         self.scene.componentPlaced.connect(self._on_component_placed)
+        self.scene.measureArmed.connect(self._on_measure_armed)
+        self.scene.measured.connect(self._on_measured)
 
         # The 2D editor is the application; the 3D view is a panel you open when you want
         # it. See _build_3d_dock for why that is not just a layout preference.
@@ -1444,6 +1530,33 @@ class MainWindow(QMainWindow):
         self.act_redo.triggered.connect(self.on_redo)
         edit_menu.addSeparator()
 
+        # A perfboard project repeats itself in a way a PCB does not -- eight identical
+        # channels, the same RC pair at every op-amp -- and until this the only way to
+        # build the second one was to place every part again by hand.
+        edit_menu.setToolTipsVisible(True)
+        self.act_copy = edit_menu.addAction(t("Cop&y"))
+        self.act_copy.setShortcut(QKeySequence.StandardKey.Copy)
+        self.act_copy.setToolTip(
+            "Put the selected parts and copper on the clipboard as text, so a block can "
+            "be pasted into another board, another window, or a bug report."
+        )
+        self.act_copy.triggered.connect(self.on_copy)
+        self.act_paste = edit_menu.addAction(t("&Paste"))
+        self.act_paste.setShortcut(QKeySequence.StandardKey.Paste)
+        self.act_paste.setToolTip(
+            "Place the clipboard's block under the pointer. New references, no net "
+            "claim: a copy of R1 is not R1, and its copper is not on R1's net."
+        )
+        self.act_paste.triggered.connect(self.on_paste)
+        self.act_duplicate = edit_menu.addAction(t("Dupl&icate"))
+        self.act_duplicate.setShortcut(QKeySequence("Ctrl+D"))
+        self.act_duplicate.setToolTip(
+            "Copy and paste the selection in one step, beside itself and without "
+            "touching the clipboard."
+        )
+        self.act_duplicate.triggered.connect(self.on_duplicate)
+        edit_menu.addSeparator()
+
         # The engine has had component.rotate and component.mirror since the first commit
         # and nothing in the window could reach them, so a part could only ever be placed
         # in the orientation it arrived in. Placing a DIP or an electrolytic without turning
@@ -1466,12 +1579,17 @@ class MainWindow(QMainWindow):
 
         #: Actions that act on the selection, so they can be greyed out when there is none.
         #: A menu item that silently does nothing is indistinguishable from a broken one.
+        # Copy and Duplicate are here and Paste is not: Paste depends on what is on the
+        # clipboard, which can change while this window is not looking, and an action
+        # greyed out on a stale answer is worse than one that explains itself when pressed.
         self.selection_actions = (
             self.act_rotate_cw,
             self.act_rotate_ccw,
             self.act_mirror,
             self.act_lock,
             self.act_delete,
+            self.act_copy,
+            self.act_duplicate,
         )
         for action in self.selection_actions:
             action.setEnabled(False)
@@ -1693,6 +1811,29 @@ class MainWindow(QMainWindow):
             "on the far side already is. Turn it off to see them solid."
         )
         self.act_hatch.toggled.connect(self.scene.set_hatch_far_side)
+
+        # Perfboard work is full of distances that have to be right before anything is
+        # soldered -- how far apart to bend a resistor's legs, whether a TO-220 clears
+        # the capacitor beside it -- and every one of them was countable off the ruler
+        # and none of them readable. The tool changes nothing on the board, which is why
+        # it is in View rather than Draw.
+        self.act_measure = view_menu.addAction(t("Measure &Distance"))
+        self.act_measure.setCheckable(True)
+        self.act_measure.setShortcut(QKeySequence("Ctrl+M"))
+        self.act_measure.setToolTip(
+            "Click two holes. Says how many holes across they are, how far apart in mm, "
+            "and how many steps of solder trace it would take to join them — three "
+            "different numbers that answer three different questions."
+        )
+        self.act_measure.toggled.connect(self.on_measure_mode)
+
+        act_go_to = view_menu.addAction(t("&Go to Part…"))
+        act_go_to.setShortcut(QKeySequence("Ctrl+G"))
+        act_go_to.setToolTip(
+            "Find a part by reference, value or footprint and centre the view on it. "
+            "On a dense board there is otherwise no way to answer “where is R37”."
+        )
+        act_go_to.triggered.connect(self.on_go_to_part)
         view_menu.addSeparator()
 
         self.act_3d = self.dock_3d.toggleViewAction()
@@ -2007,6 +2148,13 @@ class MainWindow(QMainWindow):
             )
             return f"{t('Drawing')} {kind.replace('-', ' ')}  ·  {how}"
 
+        if self.scene.measure_armed:
+            from_ = self.scene.measure_from()
+            where = (
+                f"{t('from')} {format_hole(from_)}" if from_ is not None else t("click two holes")
+            )
+            return f"{t('Measuring')}  ·  {where}, {t('Esc ends')}"
+
         return ""
 
     def _refresh_empty_hint(self) -> None:
@@ -2209,7 +2357,10 @@ class MainWindow(QMainWindow):
         The whole tool speaks hole addresses -- every DRC message, every guide step, every
         MCP argument -- and there was no way to tell which one the pointer was on except
         by counting along a ruler.
+
+        Kept as well as shown, because Paste lands where the pointer is.
         """
+        self._hovered_hole = HoleCoord(col, row)
         board = self.bus.document.board
         inside = 0 <= col < board.cols and 0 <= row < board.rows
         text = format_hole(HoleCoord(col, row)) if inside else "—"
@@ -2477,6 +2628,12 @@ class MainWindow(QMainWindow):
         components = self._selected_components()
         for action in self.selection_actions:
             action.setEnabled(bool(components))
+        # ...except that copper on its own is a block worth copying: a length of rail,
+        # or the three traces that make an input stage. Rotate and Mirror mean nothing
+        # without a part, so they stay off.
+        copyable = bool(components) or bool(self.scene.selected_conductor_ids())
+        self.act_copy.setEnabled(copyable)
+        self.act_duplicate.setEnabled(copyable)
 
         if not components:
             self.label_selection.clear()
@@ -3027,6 +3184,153 @@ class MainWindow(QMainWindow):
             for c in components
         ]
         self._report_refusals(results, f"Mirrored {len(results)} part(s)")
+
+    # -- copy, paste, duplicate ----------------------------------------------
+    #
+    # The block itself -- what goes on the clipboard, what comes back, and what command
+    # it becomes -- is ui/clipboard.py, which imports no Qt and is tested without a
+    # display. What is left here is the three things a window has to own: reaching the
+    # system clipboard, knowing where the pointer is, and saying what happened.
+
+    def _copied_block(self) -> str:
+        """The selection as clipboard text, or "" when nothing is selected."""
+        components = [c.id for c in self._selected_components()]
+        conductors = self.scene.selected_conductor_ids()
+        if not components and not conductors:
+            return ""
+        return block_to_json(self.bus.document, components, conductors)
+
+    def on_copy(self) -> None:
+        text = self._copied_block()
+        if not text:
+            self.statusBar().showMessage(
+                "Select a part or a conductor on the board first, then copy it.", 6000
+            )
+            return
+        QApplication.clipboard().setText(text)
+
+        # Read back rather than counted here, because reading back is the path Paste
+        # takes: a block that cannot be parsed is one that cannot be pasted, and this is
+        # where that shows up rather than three keystrokes later.
+        block = block_from_json(text)
+        if block is None:
+            return
+        message = f"Copied {len(block.components)} part(s), {len(block.conductors)} conductor(s)"
+        if block.orphaned_lead_bends:
+            message += (
+                f" — {block.orphaned_lead_bends} lead bend(s) left behind: a bent leg "
+                f"belongs to a part that was not in the selection"
+            )
+        self.statusBar().showMessage(message, 8000)
+
+    def on_paste(self) -> None:
+        self._paste_text(QApplication.clipboard().text(), "Paste")
+
+    def on_duplicate(self) -> None:
+        """Copy and paste in one keystroke, and deliberately NOT through the clipboard.
+
+        Duplicating a part is a board operation; it has no business throwing away what
+        somebody had copied in another application to use in a minute.
+        """
+        text = self._copied_block()
+        if not text:
+            self.statusBar().showMessage(
+                "Select a part or a conductor on the board first, then duplicate it.", 6000
+            )
+            return
+        self._paste_text(text, "Duplicate")
+
+    def _paste_text(self, text: str, what: str) -> None:
+        block = block_from_json(text)
+        if block is None or block.is_empty:
+            self.statusBar().showMessage(
+                "There is no block on the clipboard. Copy a part or some copper first.", 6000
+            )
+            return
+
+        # Under the pointer when the pointer is on the board, because that is where a
+        # person pasting is looking. Off the board -- the menu was used, or the pointer
+        # has not moved yet -- it lands beside where the block was cut from.
+        near = self._hovered_hole if self._pointer_is_on_board() else None
+        at = paste_position(self.bus.document, block, near)
+        paste = paste_payload(self.bus.document, block, at, label=f"{what} at {format_hole(at)}")
+        if paste.is_empty:
+            self.statusBar().showMessage("That block does not fit on this board.", 6000)
+            return
+
+        result = self.bus.dispatch("block.place", paste.payload)
+        if not result.ok:
+            self.statusBar().showMessage(f"[{result.code}] {result.message}", 8000)
+            return
+
+        # Selected, so the very next thing -- a drag, R, M -- lands on what was just
+        # pasted rather than on whatever happened to be selected when it was copied.
+        self.scene.select_components([spec.id for spec in paste.payload.components if spec.id])
+        message = (
+            f"{what}d {len(paste.payload.components)} part(s) and "
+            f"{len(paste.payload.conductors)} conductor(s) at {format_hole(at)}"
+        )
+        if paste.dropped_conductors:
+            message += f" — {paste.dropped_conductors} conductor(s) would have run off the board"
+        self.statusBar().showMessage(message, 8000)
+
+    def _pointer_is_on_board(self) -> bool:
+        board = self.bus.document.board
+        at = self._hovered_hole
+        return 0 <= at.col < board.cols and 0 <= at.row < board.rows
+
+    def on_go_to_part(self) -> None:
+        """Find a part by name, select it, and put the view on it."""
+        components = self.bus.document.components
+        if not components:
+            self.statusBar().showMessage("There are no parts on this board yet.", 6000)
+            return
+        dialog = GoToPartDialog(components, self.lookup, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        chosen = dialog.chosen_id()
+        if chosen is None:
+            return
+        self.go_to_component(chosen)
+
+    def go_to_component(self, component_id: str) -> None:
+        """Select a part and centre the view on it. Also what the DRC dock wants."""
+        component = next((c for c in self.bus.document.components if c.id == component_id), None)
+        if component is None:
+            return
+        self.scene.select_components([component_id])
+        self.view.centerOn(
+            hole_to_screen(component.anchor, self.bus.document.board, self.side)
+        )
+        self.statusBar().showMessage(
+            f"{component.ref} at {format_hole(component.anchor)}", 6000
+        )
+
+    def on_measure_mode(self, checked: bool) -> None:
+        """Arm or disarm the measuring tool."""
+        self.scene.arm_measure(checked)
+        if not checked:
+            self.statusBar().clearMessage()
+
+    def _on_measure_armed(self, on: bool) -> None:
+        """Keep the menu in step when the scene ends measuring by itself (Esc, right-click).
+
+        The action is blocked while it is set, because setChecked re-emits toggled and
+        would arm the tool again from inside the disarming -- the same reason every other
+        mode reports through its own signal rather than the menu keeping its own answer.
+        """
+        was = self.act_measure.blockSignals(True)
+        self.act_measure.setChecked(on)
+        self.act_measure.blockSignals(was)
+        self._refresh_mode_banner()
+
+    def _on_measured(self, text: str) -> None:
+        """The measurement, live, in the status bar. Timeout 0: it stays until it changes,
+        because it is being read off the screen while a part is held against the board."""
+        if text:
+            self.statusBar().showMessage(text, 0)
+        else:
+            self.statusBar().clearMessage()
 
     def on_stop_tool(self) -> None:
         """Leave whatever mode the board is in. What Escape does, from anywhere.
@@ -3642,10 +3946,23 @@ class MainWindow(QMainWindow):
             col += width
             row_height = max(row_height, height)
 
-        results = [self.bus.dispatch("component.place", spec) for spec in specs]
-        ok = sum(1 for r in results if r.ok)
-        skipped = len(wanted) - ok
-        message = f"Placed {ok} part(s)"
+        if not specs:
+            return
+        # ONE command, which is what the docstring above has always promised and what
+        # this could not deliver until block.place existed: dispatched one at a time, a
+        # thirty-part netlist took thirty presses of Ctrl+Z to take back, and each press
+        # left a board that was half-imported.
+        result = self.bus.dispatch(
+            "block.place",
+            PlaceBlockPayload(
+                components=tuple(specs), label=f"Place {len(specs)} imported part(s)"
+            ),
+        )
+        if not result.ok:
+            self.statusBar().showMessage(f"[{result.code}] {result.message}", 10000)
+            return
+        skipped = len(wanted) - len(specs)
+        message = f"Placed {len(specs)} part(s)"
         if skipped:
             message += f"; {skipped} could not be placed and will show in LVS as unplaced"
         self.statusBar().showMessage(message, 10000)

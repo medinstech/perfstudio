@@ -20,7 +20,53 @@ closed without a bump.
 
 ## [Unreleased]
 
+### Added
+
+- **Copy, paste and duplicate a block of board** (`Ctrl+C` / `Ctrl+V` / `Ctrl+D`). A
+  perfboard project repeats itself in a way a PCB does not — eight identical channels,
+  the same RC pair at every op-amp — and until now the only way to build the second one
+  was to place every part again by hand.
+  - **A block is parts AND the copper between them**, placed by one new command,
+    `block.place`. Two commands would put a state on the undo stack nobody chose: the
+    parts down with their wiring gone, one `Ctrl+Z` from a board that looks finished and
+    is not. The copper is validated against a document the new parts have *already*
+    joined, which is what lets a pasted lead bend name the part it is a leg of.
+  - **JSON on the system clipboard**, not a variable on the window, so a block crosses
+    documents and crosses two running copies of the application — which is the "channel 1
+    into that other board" case. It is readable, so a block can be pasted into a bug
+    report, for the same reason the project file is diffable.
+  - **A copy of R1 is not R1.** Pasted parts get fresh references counted from the board,
+    and pasted copper carries **no net claim**: copper that kept `net_id` would tell LVS
+    the new block is wired to a schematic that has never heard of it. Unclaimed copper is
+    also the one kind rip-up and the stale-conductor cleanup both promise never to touch.
+  - Three things are deliberately left behind, and each is reported rather than silent: a
+    lead bend whose part was not in the selection (it would be a leg of nothing), the
+    lock (a pasted part is one you are still positioning), and copper that the offset
+    would have pushed off the board.
+  - **Duplicate does not touch the system clipboard.** Duplicating a part is a board
+    operation; it has no business throwing away what somebody copied elsewhere.
+
+- **Measure the distance between two holes** (View ▸ Measure Distance, `Ctrl+M`). It
+  reports three numbers because they answer three different questions: **holes across**
+  is what a footprint and the build guide are written in, **mm** is what a lead-bending
+  jig and a pair of pliers are set to, and **steps** is how much solder trace it would
+  take — a diagonal is two steps of copper, not 1.4, because solder crosses the 0.6 mm
+  orthogonal gap and not the 1.7 mm diagonal one. The answer follows the pointer, because
+  the question is usually "how far to about there". The one tool in the window that
+  changes nothing.
+
+- **Go to Part** (View ▸ Go to Part…, `Ctrl+G`) — filters on reference, value and
+  footprint together and centres the view on what it finds. Which of the three somebody
+  remembers depends on why they are looking: `R37` from a DRC message, `10k` from the
+  schematic, `TO-220` from the pile of parts on the bench. On a dense board there was no
+  way to answer "where is R37" except to read the screen until it turned up.
+
 ### Changed
+
+- **Importing a netlist places its parts in one undo step**, which is what the code doing
+  it has claimed in its own docstring since it was written. It dispatched one
+  `component.place` per part, so taking back a thirty-part import took thirty presses of
+  `Ctrl+Z` and every one of them left a half-imported board. It is one `block.place` now.
 
 - **The build guide is a third of the size it was.** `dense.perf` produced a 6378 KB
   `guide.html`; the same board now produces 2070 KB, and nothing was dropped from it.

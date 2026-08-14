@@ -63,6 +63,12 @@ TURKISH: Mapping[str, str] = {
     # -- edit ----------------------------------------------------------------
     "&Undo": "&Geri Al",
     "&Redo": "&Yinele",
+    # Kopyala takes p and Yapıştır takes r: G, Y, D, T, A, K and S are all spoken for in
+    # this menu already, and an item whose accelerator is claimed cannot be reached from
+    # the keyboard at all.
+    "Cop&y": "Ko&pyala",
+    "&Paste": "Yapıştı&r",
+    "Dupl&icate": "&Çoğalt",
     "Rotate &Clockwise": "Saat Yönünde &Döndür",
     "Rotate Counter-clock&wise": "Saat Yönünün &Tersine Döndür",
     "&Mirror": "&Aynala",
@@ -122,6 +128,10 @@ TURKISH: Mapping[str, str] = {
     "Show &Ratsnest": "&Bağlantı Ağını Göster",
     "Show Hole &Addresses": "&Delik Adreslerini Göster",
     "&Hatch Copper on the Far Side": "Karşı Yüzdeki Bakırı &Taralı Göster",
+    "Measure &Distance": "&Mesafe Ölç",
+    "&Go to Part…": "Parçaya &Git…",
+    "Go to Part": "Parçaya Git",
+    "Filter parts…  (R37, 10k, TO-220, C7)": "Parçaları süz…  (R37, 10k, TO-220, C7)",
     "Show &3D View": "&3D Görünümü Göster",
     "Reset 3D &Camera": "3D &Kamerayı Sıfırla",
     "Board &Colour": "Kart &Rengi",
@@ -150,6 +160,10 @@ TURKISH: Mapping[str, str] = {
     "click both ends, Esc cancels": "iki ucu da tıkla, Esc iptal eder",
     "click each pad, Enter or right-click finishes, Esc cancels":
         "her pede tıkla, Enter veya sağ tık bitirir, Esc iptal eder",
+    "Measuring": "Ölçülüyor",
+    "click two holes": "iki deliğe tıkla",
+    "from": "başlangıç",
+    "Esc ends": "Esc bitirir",
     "Adding pins to": "Pin ekleniyor:",
     "Enter or right-click finishes, Esc cancels": "Enter veya sağ tık bitirir, Esc iptal eder",
     "no pins yet": "henüz pin yok",
