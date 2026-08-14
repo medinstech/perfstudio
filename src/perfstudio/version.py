@@ -27,7 +27,7 @@ from __future__ import annotations
 
 #: PEP 440 / SemVer. A ``.devN`` suffix means "not released yet": the changelog's
 #: Unreleased section describes what is accumulating towards it.
-__version__ = "0.6.0.dev0"
+__version__ = "0.6.0"
 
 
 def version_tuple() -> tuple[int, int, int]:
