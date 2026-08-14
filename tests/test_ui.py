@@ -64,6 +64,8 @@ from perfstudio.ui.view2d import (
 from perfstudio.version import __version__
 from perfstudio.version import describe as describe_version
 
+from .glprobe import requires_offscreen_gl
+
 GOLDEN = pathlib.Path(__file__).resolve().parent.parent / "tools" / "diffcheck" / "golden" / "dense.perf"
 
 
@@ -1595,6 +1597,7 @@ def _actor_colours(ren: object) -> list[tuple[float, float, float]]:
     ]
 
 
+@requires_offscreen_gl
 def test_every_step_gets_a_picture_of_its_own() -> None:
     """PLAN.md §7.2. Keyed by guide.step_focus, which is what guide_export looks them up
     by, so a mismatch here shows as a guide with no illustrations rather than a crash."""

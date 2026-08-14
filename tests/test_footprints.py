@@ -37,11 +37,14 @@ on bounding boxes, rendering rounds to pixels, the PDF rounds to points, and
 footprints are a library rather than document data so they never reach the
 byte-identical .perf round-trip.
 
-Rather than loosen the comparison, `assert_coord` accepts a difference of at
-most ONE ULP and rejects anything larger. A real formula divergence is orders
-of magnitude bigger than that and still fails; so would a second ULP creeping
-in from somewhere else. The bound is exactly as wide as the diagnosed problem
-and no wider.
+Rather than loosen the comparison, `assert_coord` bounds the difference at TWO
+ULPs OF THE SCALE THE VERTEX WAS COMPUTED AT — the centre and the radius that
+were added together, not the smaller number that survives their cancellation.
+A real formula divergence is orders of magnitude bigger than that and still
+fails; so would a third ULP creeping in from somewhere else. The bound is
+exactly as wide as the diagnosed problem and no wider. The note above
+`MAX_TRIG_PROPAGATION_ULPS` records the second libm — macOS arm64 — that made
+the distinction between those two scales matter.
 """
 
 from __future__ import annotations
@@ -74,26 +77,45 @@ def _ulps_apart(a: float, b: float) -> int:
     return abs(ordered(a) - ordered(b))
 
 
-# A circle vertex is computed as `centre + radius * sin(theta)`. The diagnosed V8/CPython
-# disagreement puts sin one ULP out; multiplying by the radius carries that relative
-# error through, and the final addition may round one further ULP away. So two is the
-# most the known artifact can produce, and that is the bound — derived from the
-# arithmetic, not fitted to whatever made the suite green.
+# A circle vertex is computed as `centre + radius * cos(theta)`. Two implementations of
+# cos disagree by at most one ULP, the multiply carries that relative error through, and
+# the addition may round one further away. So two is the most the known artifact can
+# produce, and that is the bound — derived from the arithmetic, not fitted to whatever
+# made the suite green.
+#
+# TWO ULPS OF WHAT, THOUGH. This was originally counted on the vertex, which is correct
+# until the addition cancels — and on a circle it cancels somewhere by construction.
+# `led-3mm` vertex 8 is `1.27 + (-1.385)`: the terms are an order of magnitude larger
+# than the 0.115 that survives them, so one ULP at the scale the arithmetic is done at is
+# SIXTEEN ULPs at the scale of the result, without any formula having changed. Running
+# the suite on macOS arm64 against a golden file generated on x86-64 produced exactly
+# that: 16 ULPs on `led-3mm` and 4 on `c-elec-d10-p3`, matching the 16x and 4x
+# amplification each vertex's own cancellation predicts, and nothing anywhere else.
+#
+# So the bound is applied where the error is made rather than where it is read off: two
+# ULPs of the largest coordinate the footprint's own arithmetic works at. A genuine
+# formula difference — wrong radius, wrong centre, wrong vertex count — is still around
+# twelve orders of magnitude larger and still fails loudly.
 MAX_TRIG_PROPAGATION_ULPS = 2
 
 
-def assert_coord(footprint_id: str, field: str, actual: float, expected: float) -> None:
-    """Exact match, or at most the ULPs the V8/CPython trig disagreement can propagate.
+def assert_coord(
+    footprint_id: str, field: str, actual: float, expected: float, term_scale_mm: float
+) -> None:
+    """Exact match, or at most the ULPs a trig disagreement can propagate into a sum.
 
-    See the module docstring. This is a bound set at a diagnosed artifact, not a
-    tolerance: a genuine formula difference (wrong radius, wrong centre, wrong vertex
-    count) is around twelve orders of magnitude larger and still fails loudly.
+    ``term_scale_mm`` is the magnitude the vertex was computed at — the largest
+    coordinate in the same outline, which bounds both the centre and the radius that
+    were added to produce this one. See the note above for why the bound cannot be
+    counted on the result.
     """
     ulps = _ulps_apart(actual, expected)
-    assert ulps <= MAX_TRIG_PROPAGATION_ULPS, (
+    allowed = MAX_TRIG_PROPAGATION_ULPS * math.ulp(term_scale_mm)
+    assert abs(actual - expected) <= allowed, (
         f"[{footprint_id}] {field}: {actual!r} != {expected!r} ({ulps} ULPs apart, "
-        f"bound is {MAX_TRIG_PROPAGATION_ULPS}). Beyond the bound this is a real formula "
-        f"difference, not a trig rounding artifact — do not widen the bound, find the bug."
+        f"{abs(actual - expected):.3e} mm, bound is {allowed:.3e} mm at a term scale of "
+        f"{term_scale_mm} mm). Beyond the bound this is a real formula difference, not a "
+        f"trig rounding artifact — do not widen the bound, find the bug."
     )
 
 from perfstudio.footprints import (
@@ -200,9 +222,15 @@ def test_footprint_matches_golden_field_by_field(footprint_id: str) -> None:
     assert len(actual.body_outline) == len(expected_outline), (
         f"[{footprint_id}] field 'bodyOutline': length {len(actual.body_outline)} != {len(expected_outline)}"
     )
+    # The scale the outline's own arithmetic is done at: every centre and radius that
+    # produced a vertex is bounded by the largest coordinate the outline reaches.
+    term_scale = max(
+        (abs(c) for p in actual.body_outline for c in (p.x, p.y)),
+        default=1.0,
+    )
     for i, (ao, eo) in enumerate(zip(actual.body_outline, expected_outline, strict=True)):
-        assert_coord(footprint_id, f"bodyOutline[{i}].x", ao.x, eo["x"])
-        assert_coord(footprint_id, f"bodyOutline[{i}].y", ao.y, eo["y"])
+        assert_coord(footprint_id, f"bodyOutline[{i}].x", ao.x, eo["x"], term_scale)
+        assert_coord(footprint_id, f"bodyOutline[{i}].y", ao.y, eo["y"], term_scale)
 
     assert actual.body_height == expected["bodyHeight"], (
         f"[{footprint_id}] field 'bodyHeight': {actual.body_height!r} != {expected['bodyHeight']!r}"

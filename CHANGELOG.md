@@ -691,14 +691,11 @@ closed without a bump.
 
 ### Fixed
 
-- **The MCP server did not import at all against the current SDK, and it took all three
-  installers down with it.** `pyproject` asked for `mcp>=1.0` with no upper bound, so a
-  fresh install resolved to `mcp` 2.0.0 — which removes `mcp.server.fastmcp`, the
-  decorator API every one of the 39 tools is bound with. `python -m perfstudio.mcp` died
-  on the import, and PyInstaller's `collect_submodules("mcp")` died on the same package
-  with *"typer is required"*, so the Windows, Linux and macOS bundles all failed to build
-  before a single byte was packed. Capped at `<2`: 1.29.0 still ships fastmcp, deprecates
-  nothing, and keeps typer in an extra where it belongs.
+- **The MCP server did not import at all against the current SDK.** `pyproject` asked for
+  `mcp>=1.0` with no upper bound, so a fresh install resolved to `mcp` 2.0.0 — which
+  removes `mcp.server.fastmcp`, the decorator API every one of the 39 tools is bound with.
+  `python -m perfstudio.mcp` died on the import. Capped at `<2`: 1.29.0 still ships
+  fastmcp and deprecates nothing.
   - **A development machine could not have noticed.** `pip install -e ".[mcp]"` leaves an
     already-satisfied requirement alone, so a tree that installed 1.x weeks ago keeps it
     and stays green — while every CI runner, every packaging job and every new user starts
@@ -707,6 +704,49 @@ closed without a bump.
   - Lifting the cap means porting the tool surface to the 2.x API. That is a change with
     its own verification attached, not a version bump, so it is not being done on the way
     out of the door.
+
+- **No installer could be built on any platform, and the reason was older than the SDK
+  break above.** `perfstudio.spec` collects the MCP package with
+  `collect_submodules("mcp")`, which *imports* every module it walks — including
+  `mcp.cli`, a Typer front end that does `print(...); sys.exit(1)` at import time when
+  typer is absent. So the collecting child process exits, PyInstaller reports *"Child
+  process call to _collect_submodules() failed"*, and all three bundles die before a byte
+  is packed. `mcp.cli` is excluded now; nothing in this application invokes the SDK's
+  command line, and the 19 `fastmcp` modules that matter are untouched.
+  - This is present in `mcp` 1.x as well as 2.x, so capping the version did not fix it
+    and would not have. It built on the machine it was written on because that machine
+    happened to have typer pulled in by something unrelated — the same class of fault as
+    the cap above, found the same way, and the reason both are in this release rather
+    than in the first bug report from somebody who downloaded nothing.
+
+- **Two footprints failed their golden comparison on macOS arm64, and the bound was
+  measuring at the wrong scale.** A circle vertex is `centre + radius * cos(theta)`, and
+  the ULP bound the test allows for a trig disagreement was counted on the vertex — which
+  is right until that addition cancels, and on a circle it cancels somewhere by
+  construction. `led-3mm` vertex 8 is `1.27 + (-1.385)`: one ULP at the scale the
+  arithmetic is done at is **sixteen** ULPs at the scale of the 0.115 that survives it.
+  The observed failures were exactly 16 ULPs there and 4 on `c-elec-d10-p3`, matching each
+  vertex's own cancellation factor to the digit — a second libm disagreeing by the
+  smallest amount a libm can, not a formula difference. The bound is now applied at the
+  scale the terms are added at, where the error is actually made, and it still rejects a
+  divergence of a nanometre.
+
+- **The suite aborted rather than failed on a machine with no OpenGL.** VTK does not
+  decline when there is no context behind an offscreen window — it takes the interpreter
+  down, so on GitHub's Windows runners `win.Render()` in `render_step_images` ended the
+  pytest process with an access violation and every test after it was not reported at all.
+  `tests/glprobe.py` now asks the question in a child process, where a crash is an answer
+  rather than the end of the session, and the three tests that put a board through VTK
+  skip when it says no. Qt's offscreen platform plugin is not a GL context, which is the
+  same reason the Linux job runs under xvfb.
+  - The frozen bundle's smoke test on that runner is no longer held to its exit status
+    either, and the reason is written into both workflows. Everything the check exists for
+    still happens before the 3D stage — the app starts, opens a document, renders 2D,
+    writes the 1:1 PDF, runs DRC and LVS — and a missing `out_2d.png` still fails the job.
+  - **What this does not fix**: `generate_guide` catches an exception from the render and
+    writes a picture-less guide, which is the right behaviour and is unreachable when the
+    failure is an abort rather than an exception. Surviving that means rendering in a
+    subprocess, which is a change to the application rather than to its tests.
 
 - **Escape did not cancel placing a part.** Reported. It was bound to the Draw menu's stop
   entry, which cancelled drawing, pin-picking and connecting — and not placement. Worse,

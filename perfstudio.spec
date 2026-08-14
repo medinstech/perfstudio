@@ -41,10 +41,20 @@ hiddenimports += [
 #: The MCP server is an optional extra (`pip install -e ".[mcp]"`), and the packaged
 #: build carries it when it is present at build time.  Guarded rather than assumed: a
 #: bundle should still build on a machine that installed only what the GUI needs.
+#:
+#: `mcp.cli` is excluded rather than collected, and it has to be.  collect_submodules
+#: imports every module it walks, and that one is a Typer front end which does
+#: `print(...); sys.exit(1)` at import time when typer is absent -- so on any machine
+#: without typer the collecting child process EXITS, PyInstaller reports "Child process
+#: call to _collect_submodules() failed", and the whole bundle dies before a byte is
+#: packed.  That is every CI runner and every user who installed `.[mcp]` rather than
+#: `mcp[cli]`; it built here only because this machine happened to have typer pulled in
+#: by something else.  Nothing in this application invokes the MCP command line: the
+#: server is `python -m perfstudio.mcp`, bound in `mcp/server.py`.
 try:
     import mcp  # noqa: F401
 
-    hiddenimports += collect_submodules("mcp")
+    hiddenimports += collect_submodules("mcp", filter=lambda name: name.split(".")[:2] != ["mcp", "cli"])
 except ImportError:
     print("[spec] mcp not installed; the bundle will not carry the MCP server")
 
