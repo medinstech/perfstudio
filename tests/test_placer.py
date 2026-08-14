@@ -60,11 +60,13 @@ from perfstudio.placer import (
     DEFAULT_PLACEMENT_OPTIONS,
     PlacementOptions,
     PlacementWeights,
+    _anneal,
     _build_nets,
     _build_parts,
     _initial_state,
     _propose,
     _Scorer,
+    _settle_rotations,
     describe,
     plan_placement,
     summarize_changes,
@@ -532,6 +534,74 @@ def test_alignment_rewards_pins_that_share_a_row() -> None:
 
     assert row_scorer.full(row_state).alignment_mm == 0.0
     assert spread_scorer.full(spread_state).alignment_mm > 0.0
+
+
+@pytest.mark.parametrize("fixture", ["dense", "random-11"])
+def test_the_placer_stops_turning_parts_for_nothing(fixture: str, monkeypatch) -> None:
+    """The annealer accepts any move whose delta is <= 0, and a rotation's delta is
+    exactly zero for every part the cost cannot tell apart turned -- one on no net, or
+    one whose courtyard is square. So it turned parts for no reason: on the dense fixture
+    it turned 11, and 5 of those cost 0.00 to turn back.
+
+    That is not free to whoever is holding the iron. Every rotation is an orientation to
+    get right at the bench and a polarity line in the build guide, so when the tool has no
+    preference, the user's own orientation is the one to keep.
+
+    Measured against the same search with the tidy-up disabled, because that is the claim:
+    fewer parts turned, and the router no worse off for it.
+    """
+    from perfstudio import placer as placer_module
+
+    registry = footprint_lookup()
+    doc = dataclasses.replace(golden_document(fixture), conductors=())
+    options = PlacementOptions(seed=0)
+
+    monkeypatch.setattr(placer_module, "_settle_rotations", lambda *args, **kwargs: None)
+    churned = plan_placement(doc, registry, options)
+    monkeypatch.undo()
+    settled = plan_placement(doc, registry, options)
+
+    turned = sum(1 for c in settled.changes if c.rotated)
+    turned_before = sum(1 for c in churned.changes if c.rotated)
+    assert turned < turned_before, f"{turned} turned, was {turned_before}"
+
+    # ...and it bought that with nothing. The router is the arbiter that chose this board,
+    # so it is the one that has to agree the tidy-up was free.
+    assert plan_autoroute(settled.document, registry).summary.total_cost <= (
+        plan_autoroute(churned.document, registry).summary.total_cost
+    )
+
+
+def test_settling_a_rotation_never_makes_the_placement_worse() -> None:
+    """It only ever hands an orientation back, and only when the total does not go up --
+    so it is a tidy-up, not a second optimiser with an opinion of its own."""
+    registry = footprint_lookup()
+    doc = dataclasses.replace(golden_document("dense"), conductors=())
+    options = PlacementOptions(seed=0, iterations=3000, restarts=1, score_with_router=False)
+
+    parts = _build_parts(doc, registry)
+    state = _initial_state(doc, parts)
+    nets, nets_of = _build_nets(doc, parts)
+    scorer = _Scorer(
+        board_pitch=doc.board.pitch,
+        board_cols=doc.board.cols,
+        board_rows=doc.board.rows,
+        weights=options.weights,
+        nets=nets,
+        nets_of=nets_of,
+    )
+    movable = [position for position, part in enumerate(state.parts) if part.movable]
+    original = tuple(state.rot)
+    _anneal(state, scorer, movable, doc, options, options.iterations or 0, options.seed)
+    before = scorer.full(state).total(options.weights)
+    turned_before = sum(1 for p in movable if state.rot[p] != original[p])
+
+    _settle_rotations(state, scorer, movable, original, options)
+
+    after = scorer.full(state).total(options.weights)
+    turned_after = sum(1 for p in movable if state.rot[p] != original[p])
+    assert after <= before
+    assert turned_after <= turned_before
 
 
 def test_a_net_reaching_fewer_than_two_placed_pins_is_ignored() -> None:

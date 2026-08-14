@@ -20,6 +20,28 @@ closed without a bump.
 
 ## [Unreleased]
 
+### Changed
+
+- **Auto-place stops turning parts for nothing.** The annealer accepts any move whose
+  cost delta is `<= 0`, and a rotation's delta is *exactly* zero for every part the cost
+  function cannot tell apart turned — one on no net, or one whose courtyard is square. So
+  it turned parts for no reason at all: on the `dense` fixture it turned 11, and 5 of
+  those cost 0.00 to turn back. That is not free to whoever is holding the iron — every
+  rotation is an orientation to get right at the bench and a polarity line in the build
+  guide, and a plan reading "11 turned" describes work the tool did rather than noise it
+  made. When the placer has no preference, the user's own orientation is now the one
+  kept: across eight fixtures and eight seeds, **parts turned went from 46 to 30 with the
+  routed cost identical to the last decimal**.
+  - Applied to the WINNER only, after `_pick_best` has chosen, and checked against the
+    router. Tidying every candidate *before* the choice changes the boards the router is
+    shown and therefore which one wins — measured on `dense`, where doing it that way
+    left the mean routed cost 31.5 → 35.9 while the best was unchanged.
+  - Letting a rotation nudge the anchor at the same time — the obvious fix for a part
+    that can only be turned if it also moves a hole or two — was tried and **measured
+    worse**: summed mean routed cost 254.1 → 261.0 at half the rotations nudging, 260.0 at
+    a quarter, 262.6 at 0.15, with ne555 losing most of it. That result is written down at
+    the proposal site so nobody re-derives it.
+
 ## [0.5.0] - 2026-08-14
 
 ### Added

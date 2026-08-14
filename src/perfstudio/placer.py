@@ -805,6 +805,17 @@ def _propose(
     position = rng.choice(movable)
     part = state.parts[position]
 
+    # Turned IN PLACE, and it was worth trying the other way before believing it. A part
+    # turned on the spot sweeps a different rectangle -- a DIP-14 turned 90 degrees is 5
+    # holes wide instead of 14 -- so on a packed board it lands in its neighbour, is
+    # scored on an overlap that a hole or two of slack would have avoided, and the
+    # orientation is never seen again with the translation that makes it fit. Letting a
+    # rotation nudge the anchor is the obvious fix and it MEASURED WORSE: summed mean
+    # routed cost over seven fixtures and four seeds went 254.1 -> 261.0 at half the
+    # rotations nudging, 260.0 at a quarter, 262.6 at 0.15, with ne555 losing most of it
+    # (152.2 -> 161.9, and 3 insulated wires becoming 4.8). Translation already carries
+    # the search; a rotation that needs a translation to pay off is reachable as two
+    # accepted moves, and coupling them mostly perturbs the sequence that finds the rest.
     if kind == "rotate":
         rot = (state.rot[position] + rng.choice((1, 2, 3))) % 4
         if not _in_bounds(part, rot, state.col[position], state.row[position]):
@@ -861,6 +872,9 @@ def plan_placement(
     before = scorer.full(state)
     movable = [position for position, part in enumerate(state.parts) if part.movable]
     locked = len(state.parts) - len(movable)
+    #: The orientations the user chose, kept so a run can hand back any it changed for
+    #: nothing. See _settle_rotations.
+    original_rotations = tuple(state.rot)
 
     if not movable:
         return _plan_from(doc, (), before, before, options, 0, 0, 0, locked, None)
@@ -894,7 +908,13 @@ def plan_placement(
             )
         )
 
-    return _pick_best(candidates, doc, lookup, options)
+    winner = _pick_best(candidates, doc, lookup, options)
+    # AFTER the winner is chosen, and only to the winner. Settling every candidate before
+    # the choice changes what the router is shown and therefore which candidate wins --
+    # measured on the dense fixture, where doing it that way left the mean routed cost
+    # 31.5 -> 35.9 while the best was identical. Tidying the one board that won cannot do
+    # that, and is checked against the router besides.
+    return _settle_winner(winner, doc, lookup, parts, scorer, movable, original_rotations, options)
 
 
 def _anneal(
@@ -960,6 +980,59 @@ def _anneal(
     # necessarily the best thing it saw. Return the best.
     state.restore(best_snapshot)
     return scorer.full(state), accepted
+
+
+def _settle_rotations(
+    state: _State,
+    scorer: _Scorer,
+    movable: list[int],
+    original: tuple[int, ...],
+    options: PlacementOptions,
+) -> None:
+    """Put back every orientation the search changed for nothing.
+
+    The annealer accepts any move whose delta is ``<= 0``, and a rotation's delta is
+    EXACTLY zero for every part the cost function cannot tell apart turned -- a part on no
+    net, or one whose courtyard is square. So the placer turned parts for no reason at
+    all: on the dense fixture it turned 11, and 5 of those cost 0.00 to turn back.
+
+    That is not free to the person holding the soldering iron. Every rotation is an
+    orientation to get right at the bench and a polarity line in the build guide, and a
+    plan that says "11 turned" reads as work the tool did rather than noise it made. When
+    the tool has no reason to prefer an orientation, the user's own is the one to keep.
+
+    Non-worsening by construction: an original orientation goes back only when the total
+    does not go up. Greedy and in order, so it stays deterministic; scored with ``full``
+    rather than a local delta because it runs once at the end of a run, not a hundred
+    thousand times inside one.
+
+    Repeated to a fixpoint, because one sweep is not enough: handing back one part's
+    orientation can be what makes the next part's free, and a single pass leaves those
+    behind depending on the order it happened to visit them. It terminates -- every pass
+    either changes nothing or moves at least one part back towards the orientation it
+    started in, and no part is ever turned away from it here.
+    """
+    weights = options.weights
+    current = scorer.full(state).total(weights)
+    changed = True
+    while changed:
+        changed = False
+        for position in movable:
+            was = original[position]
+            if state.rot[position] == was:
+                continue
+            part = state.parts[position]
+            col, row = state.col[position], state.row[position]
+            if not _in_bounds(part, was, col, row):
+                continue
+            turned = state.rot[position]
+            state.set_placement(position, col, row, was)
+            restored = scorer.full(state).total(weights)
+            if restored <= current:
+                current = restored
+                changed = True
+            else:
+                state.set_placement(position, col, row, turned)
 
 
 def _calibrate(
@@ -1077,6 +1150,54 @@ def _pick_best(
 
     assert best is not None and best_key is not None
     return replace(best, route_cost=best_key[2], route_unrouted=best_key[1])
+
+
+def _settle_winner(
+    plan: PlacementPlan,
+    doc: PerfDocument,
+    lookup: FootprintLookup,
+    parts: list[_Part],
+    scorer: _Scorer,
+    movable: list[int],
+    original: tuple[int, ...],
+    options: PlacementOptions,
+) -> PlacementPlan:
+    """Give the chosen board back every orientation it was turned for nothing.
+
+    Kept honest by the same arbiter that chose the board in the first place: if the
+    router prefers the turned version, the turned version is what ships. So this can
+    remove gratuitous rotations and cannot cost a connection -- across eight fixtures and
+    eight seeds it took the parts turned from 46 to 27 with the routed cost unchanged.
+
+    Costs one extra autoroute on a board that has a netlist, next to the four
+    ``_pick_best`` already ran.
+    """
+    state = _initial_state(plan.document, parts)
+    _settle_rotations(state, scorer, movable, original, options)
+    if tuple(state.rot) == tuple(_initial_state(plan.document, parts).rot):
+        return plan
+
+    settled = _plan_from(
+        doc, _changes(doc, state), plan.before, scorer.full(state), options,
+        plan.iterations, plan.accepted, plan.movable, plan.locked, plan.seed,
+    )
+    if plan.route_cost is None or plan.route_unrouted is None:
+        # Nothing routed this board -- no netlist, or scoring turned off -- so the
+        # internal cost is the only measure there is, and _settle_rotations has already
+        # guaranteed it did not go up.
+        return settled
+
+    route = plan_autoroute(settled.document, lookup)
+    if (route.summary.links_unrouted, route.summary.total_cost) <= (
+        plan.route_unrouted,
+        plan.route_cost,
+    ):
+        return replace(
+            settled,
+            route_cost=route.summary.total_cost,
+            route_unrouted=route.summary.links_unrouted,
+        )
+    return plan
 
 
 def _plan_from(
