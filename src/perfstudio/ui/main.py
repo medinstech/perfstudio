@@ -30,7 +30,16 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, Literal, cast
 
-from PySide6.QtCore import QEventLoop, QRectF, QSettings, QSize, Qt, QThread, QTimer
+from PySide6.QtCore import (
+    QEventLoop,
+    QFileSystemWatcher,
+    QRectF,
+    QSettings,
+    QSize,
+    Qt,
+    QThread,
+    QTimer,
+)
 from PySide6.QtGui import QAction, QColor, QIcon, QImage, QKeySequence, QPainter
 from PySide6.QtWidgets import (
     QApplication,
@@ -1190,6 +1199,17 @@ class MainWindow(QMainWindow):
         #: board on purpose: before the pointer has been over the board at all there is
         #: no such hole, and (0, 0) would be a lie that pasted a block into A1.
         self._hovered_hole = HoleCoord(-1, -1)
+        #: The document as it last passed through the file: written by a save, filled by
+        #: a load. What lets the file watcher tell somebody else's write from our own.
+        self._disk_text: str | None = None
+        # PLAN.md §9.3 -- the window notices when the file changes underneath it, so an
+        # agent that only writes files is a participant rather than a source of stale
+        # screens. See _reload_if_changed for what it does about it.
+        self._file_watcher = QFileSystemWatcher(self)
+        self._file_watcher.fileChanged.connect(self._on_file_changed)
+        self._watch_timer = QTimer(self)
+        self._watch_timer.setSingleShot(True)
+        self._watch_timer.timeout.connect(self._reload_if_changed)
 
         #: The document as it last hit disk. Identity comparison against the bus's
         #: current document is what "modified" means here -- see is_modified.
@@ -1235,6 +1255,15 @@ class MainWindow(QMainWindow):
 
         self._subscribe_bus()
         self.on_bus_changed(self.bus.document, None)
+
+        # A window opened on a path -- from the command line, or from the recent list --
+        # watches that file from the start, and remembers what it said. Without the text,
+        # the first external write would look like a change and the first save like one
+        # too.
+        if self.current_path is not None:
+            text, _problem = read_document_text(self.current_path)
+            self._disk_text = text
+            self._watch_current_path()
 
     # -- bus wiring ----------------------------------------------------------
 
@@ -1527,6 +1556,16 @@ class MainWindow(QMainWindow):
         act_save_as = file_menu.addAction(t("Save &As…"))
         act_save_as.setShortcut(QKeySequence.StandardKey.SaveAs)
         act_save_as.triggered.connect(self.on_save_as)
+        # The manual half of the file watcher. A window with unsaved edits is never
+        # reloaded behind the user's back, so there has to be a way to say "take the
+        # file's version" -- which is what an agent editing the same board needs.
+        act_reload = file_menu.addAction(t("Re&load from Disk"))
+        act_reload.setShortcut(QKeySequence("F5"))
+        act_reload.setToolTip(
+            "Load the file again, discarding what is in this window. The board reloads "
+            "itself automatically when it changes on disk and there is nothing unsaved."
+        )
+        act_reload.triggered.connect(self.on_reload)
         file_menu.addSeparator()
         act_board = file_menu.addAction(t("&Board Setup…"))
         act_board.setToolTip(
@@ -3633,6 +3672,8 @@ class MainWindow(QMainWindow):
                 document, edge_connectors=connectors, mounting_holes=holes
             )
         self.current_path = None
+        self._disk_text = None
+        self._watch_current_path()
         self.bus = self._new_bus(document)
         self._subscribe_bus()
         self.scene.bus = self.bus
@@ -3757,7 +3798,84 @@ class MainWindow(QMainWindow):
             return
         self._load_path(Path(path_str))
 
-    def _load_path(self, path: Path) -> None:
+    # -- the file, watched -----------------------------------------------------
+    #
+    # PLAN.md §9.3: the project file is agent-friendly precisely so that an agent that
+    # only writes files still works. Without this the window is the one participant that
+    # does not notice -- a Claude Code session edits the .perf, the board on screen goes
+    # quietly stale, and the next save overwrites everything the agent did.
+    #
+    # A reload is not always the right answer, so the rule is stated rather than guessed:
+    # a window with NO unsaved edits reloads itself, and a window with them says the file
+    # changed and leaves the decision alone. Losing someone's work to a background event
+    # is the one outcome that must not happen.
+
+    #: Editors and agents write in bursts -- truncate, write, rename -- and each step is a
+    #: change event. Reloading on the first would read a half-written file.
+    _WATCH_SETTLE_MS = 250
+
+    def _watch_current_path(self) -> None:
+        """Watch the open document, and only it."""
+        watcher = self._file_watcher
+        if watcher is None:
+            return
+        for watched in watcher.files():
+            watcher.removePath(watched)
+        if self.current_path is not None and self.current_path.exists():
+            watcher.addPath(str(self.current_path))
+
+    def _on_file_changed(self, _path: str) -> None:
+        # Re-armed on every event: a write that replaces the file rather than editing it
+        # in place -- which is what most editors and every atomic writer do -- leaves Qt
+        # watching an inode nobody will write to again.
+        self._watch_timer.start(self._WATCH_SETTLE_MS)
+
+    def _reload_if_changed(self) -> None:
+        path = self.current_path
+        if path is None:
+            return
+        self._watch_current_path()
+        text, problem = read_document_text(path)
+        if text is None:
+            self.statusBar().showMessage(f"{path.name} changed on disk but could not be read: "
+                                         f"{problem}", 8000)
+            return
+        if text == self._disk_text:
+            return  # Our own save, or a write that changed nothing.
+
+        if self.is_modified:
+            # Not reloaded, and not silently ignored either. The file and the window have
+            # both moved and only the person in front of it can say which one is right.
+            self.statusBar().showMessage(
+                f"{path.name} changed on disk, and this window has unsaved edits. "
+                f"File ▸ Reload from Disk to take the file's version.",
+                0,
+            )
+            return
+        self._load_path(path, reason=f"Reloaded {path.name}: it changed on disk")
+
+    def on_reload(self) -> None:
+        """Take the version on disk, discarding whatever is in the window."""
+        path = self.current_path
+        if path is None:
+            self.statusBar().showMessage("This board has never been saved, so there is "
+                                         "nothing on disk to reload.", 6000)
+            return
+        if self.is_modified:
+            answer = QMessageBox.question(
+                self,
+                t("Reload from disk?"),
+                f"Discard the unsaved changes in this window and load {path.name} as it is "
+                f"on disk?\n\nThis cannot be undone: reloading replaces the document, and "
+                f"the undo history with it.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+        self._load_path(path, reason=f"Reloaded {path.name}")
+
+    def _load_path(self, path: Path, reason: str = "") -> None:
         # The file dialog only offers files that exist, but it does not guarantee one is
         # still there, still readable, or actually text by the time it is opened -- and an
         # unhandled read error here would take the whole window down over a bad pick.
@@ -3775,15 +3893,21 @@ class MainWindow(QMainWindow):
                 t("Open failed"), f"[{result.code}] {result.message}{location}")
             return
         self.current_path = path
+        self._disk_text = text
         self.bus = self._new_bus(result.document)
         self._subscribe_bus()
         self.scene.bus = self.bus
         self.on_bus_changed(self.bus.document, None)
-        self.view.fit_board()
+        # The viewport is left alone on a reload: somebody watching an agent work is
+        # looking at a particular corner of the board, and refitting on every write would
+        # snatch it back to the whole board a dozen times a minute.
+        if not reason:
+            self.view.fit_board()
         note = f" ({len(result.warnings)} warning(s))" if result.warnings else ""
-        self.statusBar().showMessage(f"Loaded {path.name}{note}", 8000)
+        self.statusBar().showMessage(f"{reason or f'Loaded {path.name}'}{note}", 8000)
         self._mark_saved()
         self._remember_path(path)
+        self._watch_current_path()
 
     # -- nets, entered by hand -----------------------------------------------
     #
@@ -4203,9 +4327,15 @@ class MainWindow(QMainWindow):
         # SERIALIZED copy only, without pushing that change through the bus.
         doc = self.bus.document
         stamped = dataclasses.replace(doc, meta=dataclasses.replace(doc.meta, modified=_now_iso()))
-        path.write_text(persist.serialize_document(stamped), encoding="utf-8")
+        text = persist.serialize_document(stamped)
+        path.write_text(text, encoding="utf-8")
+        # Remembered so the watcher can tell this write from somebody else's: a save
+        # changes the file, and a window that reloaded itself after every save would
+        # throw away its own undo history for nothing.
+        self._disk_text = text
         self._mark_saved()
         self._remember_path(path)
+        self._watch_current_path()
         self.statusBar().showMessage(f"Saved {path}")
 
     def on_export_pdf(self) -> None:

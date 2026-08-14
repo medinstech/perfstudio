@@ -48,6 +48,8 @@ TURKISH: Mapping[str, str] = {
     "&Open…": "&Aç…",
     "&Save": "&Kaydet",
     "Save &As…": "&Farklı Kaydet…",
+    "Re&load from Disk": "Diskten Ye&niden Yükle",
+    "Reload from disk?": "Diskten yeniden yüklensin mi?",
     # Ayar&ları, not &Ayarları: "&Aç…" already claims A in this menu, and two items with
     # the same accelerator means one of them cannot be reached from the keyboard at all.
     "&Board Setup…": "Kart Ayar&ları…",

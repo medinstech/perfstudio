@@ -90,6 +90,29 @@ closed without a bump.
     putting a net's pins on one strip, which on stripboard is most of the design — said
     here rather than left to be discovered.
 
+- **The window notices when the file changes underneath it** (PLAN.md §9.3). The project
+  file is diffable and agent-friendly precisely so that a session which only *writes
+  files* still works — and the window was the one participant that did not notice: the
+  board on screen went quietly stale and the next save overwrote everything the agent had
+  done.
+  - **A window with no unsaved edits reloads itself.** One with unsaved edits does not,
+    and says so instead: the file and the window have both moved, and only the person in
+    front of it can say which is right. Losing somebody's work to a background event is
+    the one outcome that must not happen, so **File ▸ Reload from Disk** (`F5`) is the
+    manual way to take the file's version.
+  - The viewport is left where it was on a reload — somebody watching an agent work is
+    looking at a particular corner of the board — and a save does not trigger one, which
+    would have thrown away the window's own undo history for nothing.
+
+- **Five MCP tools for the board itself**: `set_board`, `add_mounting_hole`,
+  `add_edge_connector`, `cut_track` and `remove_board_feature`. The asymmetry they fix is
+  the argument for them: `get_board_info` reported mounting holes and edge connectors that
+  nothing could add, and the only route to a different board size, material or type was
+  `new_document`, which throws the work away. One delete covers all three kinds of feature
+  because they differ only in which list the id is in. Forty-four tools now, against
+  PLAN.md §2's "~25, deliberately narrow" — the cap is a decision somebody has to make on
+  purpose, and `tests/test_mcp.py` still makes them make it.
+
 - **Measure the distance between two holes** (View ▸ Measure Distance, `Ctrl+M`). It
   reports three numbers because they answer three different questions: **holes across**
   is what a footprint and the build guide are written in, **mm** is what a lead-bending

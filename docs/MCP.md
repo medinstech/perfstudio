@@ -74,16 +74,27 @@ conductor at a time.
 | **Seeing** | `render_2d_view` · `render_3d_view` |
 | **Documents** | `new_document` · `open_document` · `save_document` · `import_netlist` |
 | **Netlist** | `create_net` · `connect_pins` · `disconnect_pins` · `update_net` · `delete_net` |
+| **The board** | `set_board` · `add_mounting_hole` · `add_edge_connector` · `cut_track` · `remove_board_feature` |
 | **Editing** | `place_component` · `move_component` · `rotate_component` · `set_component_locked` · `delete_component` · `add_wire` · `add_solder_trace` · `remove_stale_conductors` · `set_height_limit` |
 | **Planning** | `autoroute` · `optimize_placement` |
 | **Verifying** | `run_drc` · `run_lvs` · `check_heights` |
 | **Output** | `generate_guide` · `export_pdf` |
 | **State** | `snapshot` · `restore` · `undo` · `redo` |
 
-Thirty-nine, against PLAN.md §2's "~25, deliberately narrow". Each is a verb that cannot
-be composed from the others, and the surface was trimmed rather than grown: the history
-listing folded into `get_status`, and there is no separate "add solder bridge" because a
-bridge is a two-pad solder trace and one concept should not have two names.
+Forty-four, against PLAN.md §2's "~25, deliberately narrow". Each is a verb that cannot
+be composed from the others, and the surface was trimmed rather than grown where it
+could be: the history listing folded into `get_status`, there is no separate "add solder
+bridge" because a bridge is a two-pad solder trace and one concept should not have two
+names, and one `remove_board_feature` covers mounting holes, edge connectors and track
+cuts because the three differ only in which list the id is in.
+
+**The board group is the newest and the asymmetry it fixes is the argument for it.**
+`get_board_info` reported mounting holes and edge connectors that nothing could add, and
+the only route to a different board size, material or type was `new_document`, which
+throws the work away. `set_board` also carries the board TYPE, which is not a display
+setting: on stripboard whole rows of holes arrive already joined, so connectivity, DRC,
+the build guide and `autoroute` all answer differently — `autoroute` on one plans cuts
+and links rather than traces and wires, and reports the pairs it could not separate.
 
 `check_heights` is the one from PLAN.md §9.2's list that neither render tool can stand
 in for: a part too tall for the case looks exactly like one that fits, from every angle

@@ -151,7 +151,7 @@ pip install -e ".[mcp]"
 claude mcp add perfstudio -- python -m perfstudio.mcp
 ```
 
-Otuz dokuz tool, ve her delik insanların perfboard'dan bahsederken kullandığı adresle
+Kırk dört tool, ve her delik insanların perfboard'dan bahsederken kullandığı adresle
 (`A1`, `C7`, `AC12`) — hiçbir yerde ham koordinat yok. Tool listesi, diğer istemcilerin
 istediği JSON yapılandırması ve kurulumun geri kalanı için [docs/MCP.md](./docs/MCP.md).
 

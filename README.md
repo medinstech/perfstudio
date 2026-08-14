@@ -149,7 +149,7 @@ pip install -e ".[mcp]"
 claude mcp add perfstudio -- python -m perfstudio.mcp
 ```
 
-Thirty-nine tools, every hole addressed the way people talk about perfboard (`A1`, `C7`,
+Forty-four tools, every hole addressed the way people talk about perfboard (`A1`, `C7`,
 `AC12`) and never as raw coordinates. See [docs/MCP.md](./docs/MCP.md) for the tool list,
 the JSON config other clients want, and the rest of the setup.
 

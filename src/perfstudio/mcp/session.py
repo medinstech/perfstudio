@@ -27,7 +27,7 @@ from __future__ import annotations
 import dataclasses
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, cast, get_args
+from typing import Any, Literal, cast, get_args
 
 from perfstudio import persist
 from perfstudio.autoroute import (
@@ -42,9 +42,15 @@ from perfstudio.command import CommandBus, CommandContext
 from perfstudio.commands import (
     KEEP,
     AddConductorPayload,
+    AddCutPayload,
+    AddEdgeConnectorPayload,
+    AddMountingHolePayload,
     AddNetPayload,
     ConnectPinsPayload,
     DeleteComponentPayload,
+    DeleteCutPayload,
+    DeleteEdgeConnectorPayload,
+    DeleteMountingHolePayload,
     DeleteNetPayload,
     DisconnectPinsPayload,
     ImportNetlistPayload,
@@ -53,6 +59,7 @@ from perfstudio.commands import (
     NewWireConductor,
     PlaceComponentPayload,
     RotateComponentPayload,
+    SetBoardPayload,
     SetHeightLimitPayload,
     UpdateComponentPayload,
     UpdateNetPayload,
@@ -78,6 +85,10 @@ from perfstudio.guide_export import bom_to_csv, cut_list_to_csv, guide_to_html, 
 from perfstudio.lvs import run_lvs, stale_conductor_ids
 from perfstudio.model import (
     Board,
+    BoardEdge,
+    BoardFace,
+    BoardMaterial,
+    BoardType,
     ComponentInstance,
     DocumentMeta,
     HoleCoord,
@@ -640,6 +651,129 @@ class BoardSession:
     def set_height_limit(self, height_limit_mm: float | None) -> dict[str, Any]:
         return self._dispatch(
             "height-limit.set", SetHeightLimitPayload(height_limit_mm=height_limit_mm)
+        )
+
+    # -- the board itself, and the things that are part of it ----------------
+    #
+    # An agent could place parts on a board and could not change the board: the only way
+    # to a different size, a different material or a stripboard was new_document, which
+    # throws the work away. And a mounting hole or an edge connector could be READ back
+    # (get_board_info reports both) with no way to add one, which is the kind of asymmetry
+    # that reads as a broken tool rather than a missing one.
+
+    def set_board(
+        self,
+        cols: int | None = None,
+        rows: int | None = None,
+        material: str | None = None,
+        board_type: str | None = None,
+        strip_axis: str | None = None,
+        pitch: float | None = None,
+        single_sided: bool | None = None,
+    ) -> dict[str, Any]:
+        """Change the board under the design. Anything left out is left alone.
+
+        Shrinking a board that still has a part hanging off the new edge comes back as a
+        refusal naming the part, because ``board.set`` checks it -- the same answer the
+        window gets from the same command.
+        """
+        board = self.document.board
+        if board_type is not None and board_type not in get_args(BoardType):
+            raise SessionError(
+                f"{board_type!r} is not a board type. Use one of: "
+                f"{', '.join(get_args(BoardType))}."
+            )
+        if material is not None and material not in get_args(BoardMaterial):
+            raise SessionError(
+                f"{material!r} is not a board material. Use one of: "
+                f"{', '.join(get_args(BoardMaterial))}."
+            )
+        if strip_axis is not None and strip_axis not in ("horizontal", "vertical"):
+            raise SessionError(
+                f"{strip_axis!r} is not a strip axis. Use 'horizontal' or 'vertical'."
+            )
+        wanted_type = cast(BoardType, board_type) if board_type is not None else board.type
+        updated = dataclasses.replace(
+            board,
+            type=wanted_type,
+            cols=cols if cols is not None else board.cols,
+            rows=rows if rows is not None else board.rows,
+            material=cast(BoardMaterial, material) if material is not None else board.material,
+            pitch=pitch if pitch is not None else board.pitch,
+            single_sided=single_sided if single_sided is not None else board.single_sided,
+            # Only a stripboard has an axis, the way only an oblong pad has a length: a
+            # field describing nothing does not belong in the file.
+            strip_axis=(
+                cast(Literal["horizontal", "vertical"], strip_axis)
+                if strip_axis is not None and wanted_type == "stripboard"
+                else (board.strip_axis if wanted_type == "stripboard" else None)
+            ),
+        )
+        return self._dispatch("board.set", SetBoardPayload(board=updated))
+
+    def add_mounting_hole(
+        self, hole: str, diameter: float = 3.2, head_diameter: float = 6.0
+    ) -> dict[str, Any]:
+        """Drill a screw hole. It removes the copper from the pads it lands on."""
+        return self._dispatch(
+            "mounting-hole.add",
+            AddMountingHolePayload(
+                at=_hole(hole), diameter=diameter, head_diameter=head_diameter
+            ),
+        )
+
+    def add_edge_connector(
+        self,
+        edge: str,
+        start: int,
+        count: int,
+        finger_width: float = 2.0,
+        face: str = "bottom",
+    ) -> dict[str, Any]:
+        """Replace a run of grid pads along one edge with connector fingers."""
+        if edge not in get_args(BoardEdge):
+            raise SessionError(
+                f"{edge!r} is not a board edge. Use one of: {', '.join(get_args(BoardEdge))}."
+            )
+        if face not in ("top", "bottom"):
+            raise SessionError(f"{face!r} is not a face. Use 'top' or 'bottom'.")
+        return self._dispatch(
+            "edge-connector.add",
+            AddEdgeConnectorPayload(
+                edge=cast(BoardEdge, edge),
+                start=start,
+                count=count,
+                finger_width=finger_width,
+                face=cast(BoardFace, face),
+            ),
+        )
+
+    def cut_track(self, hole: str) -> dict[str, Any]:
+        """Break a stripboard track at a hole. The cut takes that hole's pad with it."""
+        return self._dispatch("cut.add", AddCutPayload(at=_hole(hole)))
+
+    def remove_board_feature(self, id: str) -> dict[str, Any]:
+        """Take back a mounting hole, an edge connector or a track cut, by its id.
+
+        One tool rather than three, because the three deletes differ only in which list
+        the id is in -- and an agent that has just been handed an id by
+        ``get_board_info`` should not have to work out which kind of thing it named.
+        """
+        if any(mount.id == id for mount in self.document.mounting_holes):
+            return self._dispatch("mounting-hole.delete", DeleteMountingHolePayload(id=id))
+        if any(connector.id == id for connector in self.document.edge_connectors):
+            return self._dispatch("edge-connector.delete", DeleteEdgeConnectorPayload(id=id))
+        if any(cut.id == id for cut in self.document.cuts):
+            return self._dispatch("cut.delete", DeleteCutPayload(id=id))
+        known = [
+            *(m.id for m in self.document.mounting_holes),
+            *(c.id for c in self.document.edge_connectors),
+            *(c.id for c in self.document.cuts),
+        ]
+        return _refused(
+            "no-such-feature",
+            f"No mounting hole, edge connector or cut with id {id!r}. "
+            f"This board has: {', '.join(known) if known else 'none'}.",
         )
 
     def place_component(

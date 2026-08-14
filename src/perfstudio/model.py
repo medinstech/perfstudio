@@ -72,7 +72,14 @@ VALID_ROTATIONS: tuple[Rotation, ...] = (0, 90, 180, 270)
 # Board
 # ---------------------------------------------------------------------------
 
-type BoardType = Literal["pad-per-hole", "stripboard", "plain"]
+#: Which kind of board this is, and it decides what a connection IS: on pad-per-hole
+#: every hole is an island and every connection is added, while on stripboard whole rows
+#: arrive joined and the design is where the copper is BROKEN (see stripboard.py).
+#: Spelled with ``TypeAlias`` for the same reason ``BoardMaterial`` below is: it is READ
+#: AT RUN TIME, by the MCP server validating an agent's requested type against
+#: ``get_args`` -- which returns an empty tuple for a PEP 695 alias, so every value would
+#: be refused by a check that raises nothing.
+BoardType: TypeAlias = Literal["pad-per-hole", "stripboard", "plain"]  # noqa: UP040
 
 #: Substrate material. Not cosmetic: FR-2 phenolic paper (cheap "pertinaks") lifts pads
 #: under sustained heat far more readily than FR-4, which bounds how long a pure solder
@@ -177,8 +184,9 @@ class Board:
 # Mechanical features of the board itself
 # ---------------------------------------------------------------------------
 
-#: Which edge of the board something runs along.
-type BoardEdge = Literal["top", "bottom", "left", "right"]
+#: Which edge of the board something runs along. ``TypeAlias`` again, and again because
+#: the MCP server reads its members at run time to tell an agent what the choices are.
+BoardEdge: TypeAlias = Literal["top", "bottom", "left", "right"]  # noqa: UP040
 
 
 @dataclass(frozen=True, slots=True)

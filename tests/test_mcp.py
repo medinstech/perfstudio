@@ -464,6 +464,153 @@ def test_an_agent_can_take_a_blank_board_to_a_build_guide(tmp_path: Path) -> Non
 
 
 # ---------------------------------------------------------------------------
+# The board itself
+#
+# get_board_info reported mounting holes and edge connectors that nothing could add, and
+# the only way to a different board was new_document, which throws the work away.
+# ---------------------------------------------------------------------------
+
+
+def test_an_agent_can_change_the_board_without_losing_the_work_on_it(session) -> None:
+    session.place_component("R1", "r-axial-4", "B2")
+
+    result = session.set_board(cols=30, rows=24, material="FR2")
+
+    assert result["ok"], result
+    assert session.document.board.cols == 30
+    assert session.document.board.material == "FR2"
+    assert [c.ref for c in session.document.components] == ["R1"]
+
+
+def test_anything_left_out_of_set_board_is_left_alone(session) -> None:
+    before = session.document.board
+
+    session.set_board(material="FR2")
+
+    after = session.document.board
+    assert after.material == "FR2"
+    assert (after.cols, after.rows, after.pitch) == (before.cols, before.rows, before.pitch)
+
+
+def test_a_board_that_cannot_hold_what_is_on_it_is_refused_with_the_reason(session) -> None:
+    """The same answer the window gets from the same command: shrinking a board out from
+    under a part is refused, and the refusal names it."""
+    session.place_component("R1", "r-axial-4", "T14")
+
+    result = session.set_board(cols=6, rows=6)
+
+    assert result["ok"] is False
+    assert "R1" in result["message"]
+
+
+def test_switching_to_stripboard_changes_what_is_connected(session) -> None:
+    """The point of the board type, and the thing an agent cannot see any other way: on
+    stripboard the board itself joins the holes along a row."""
+    from perfstudio.connectivity import extract_physical_nets
+
+    session.place_component("R1", "r-axial-4", "B2")
+    session.place_component("R2", "r-axial-4", "H2")
+    islands = len(extract_physical_nets(session.document, session.lookup))
+
+    session.set_board(board_type="stripboard", strip_axis="horizontal")
+
+    assert session.document.board.strip_axis == "horizontal"
+    assert session.get_board_info()["type"] == "stripboard"
+    # Four pins on one row: four islands before, one after, and nobody soldered anything.
+    assert islands == 4
+    assert len(extract_physical_nets(session.document, session.lookup)) == 1
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("board_type", "veroboard"), ("material", "FR9"), ("strip_axis", "sideways")],
+)
+def test_a_value_that_is_not_one_of_the_choices_says_what_they_are(session, field, value) -> None:
+    with pytest.raises(SessionError) as err:
+        session.set_board(**{field: value})
+
+    assert value in str(err.value)
+
+
+def test_an_agent_can_add_and_take_back_a_mounting_hole(session) -> None:
+    result = session.add_mounting_hole("C3")
+
+    assert result["ok"], result
+    assert len(session.document.mounting_holes) == 1
+    id_ = session.get_board_info()["mounting_holes"][0]["id"]
+
+    assert session.remove_board_feature(id_)["ok"]
+    assert session.document.mounting_holes == ()
+
+
+def test_an_agent_can_add_an_edge_connector(session) -> None:
+    result = session.add_edge_connector("bottom", start=2, count=6)
+
+    assert result["ok"], result
+    assert len(session.document.edge_connectors) == 1
+    assert len(session.get_board_info()["edge_connectors"][0]["holes"]) == 6
+
+
+def test_cutting_a_track_needs_a_board_with_tracks(session) -> None:
+    """A refusal, not an exception: an agent has to be able to try and be told no."""
+    refused = session.cut_track("C3")
+    assert refused["ok"] is False
+    assert refused["code"] == "not-stripboard"
+
+    session.set_board(board_type="stripboard")
+    assert session.cut_track("C3")["ok"]
+    assert len(session.document.cuts) == 1
+
+
+def test_one_delete_covers_all_three_kinds_of_feature(session) -> None:
+    """They differ only in which list the id is in, and an agent handed an id by
+    get_board_info should not have to work out which kind of thing it named."""
+    session.set_board(board_type="stripboard")
+    session.add_mounting_hole("C3")
+    session.add_edge_connector("bottom", start=2, count=4)
+    session.cut_track("F5")
+    ids = [
+        session.document.mounting_holes[0].id,
+        session.document.edge_connectors[0].id,
+        session.document.cuts[0].id,
+    ]
+
+    for id_ in ids:
+        assert session.remove_board_feature(id_)["ok"], id_
+
+    assert not session.document.mounting_holes
+    assert not session.document.edge_connectors
+    assert not session.document.cuts
+
+
+def test_an_unknown_feature_id_comes_back_as_a_refusal_listing_the_real_ones(session) -> None:
+    session.add_mounting_hole("C3")
+    real = session.document.mounting_holes[0].id
+
+    result = session.remove_board_feature("nonsense-1")
+
+    assert result["ok"] is False
+    assert result["code"] == "no-such-feature"
+    assert real in result["message"]
+
+
+def test_an_agent_routes_a_stripboard_by_cutting_and_linking(session) -> None:
+    """The stripboard router, over MCP. Same planner the window uses, so the two cannot
+    produce different boards from the same document."""
+    session.set_board(board_type="stripboard", strip_axis="horizontal")
+    session.place_component("R1", "r-axial-4", "B2")
+    session.place_component("R2", "r-axial-4", "H2")
+    session.create_net("IN", pins=["R1.1"])
+    session.create_net("OUT", pins=["R2.1"])
+
+    result = session.autoroute()
+
+    assert result["ok"], result
+    assert result["cuts"], "two nets share row 2, so the board is shorting them"
+    assert session.run_lvs()["shorts"] == 0
+
+
+# ---------------------------------------------------------------------------
 # The protocol layer -- only what nothing else can check
 # ---------------------------------------------------------------------------
 
@@ -483,7 +630,15 @@ def test_the_tool_surface_is_registered_and_stays_narrow() -> None:
     # update_net, delete_net), which is argued at length in server.py's module docstring:
     # without it an agent could place, draw and route but could not state the intent all
     # three are measured against.
-    assert len(tools) <= 39, f"{len(tools)} tools; see the note in server.py before adding more"
+    #
+    # Raised again from 39 for the board itself: set_board, add_mounting_hole,
+    # add_edge_connector, cut_track and one remove_board_feature that covers all three.
+    # The asymmetry being fixed is the argument -- get_board_info REPORTED mounting holes
+    # and edge connectors that nothing could add, and the only route to a different board
+    # size, material or type was new_document, which throws the work away. The five are
+    # one delete rather than three for the same reason: they differ only in which list
+    # the id is in.
+    assert len(tools) <= 44, f"{len(tools)} tools; see the note in server.py before adding more"
     for critical in ("render_2d_view", "render_3d_view", "snapshot", "restore"):
         assert critical in names, f"{critical} is named in PLAN.md Sec 9.2 as load-bearing"
     assert all(tool.description for tool in tools), "a tool with no description is unusable"

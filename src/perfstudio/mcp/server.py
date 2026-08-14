@@ -198,6 +198,69 @@ def new_document(cols: int = 30, rows: int = 20, material: str = "FR4") -> dict[
     return session.get_status()
 
 
+# ---------------------------------------------------------------------------
+# The board itself
+#
+# An agent could place parts on a board and could not change the board: the only route
+# to a different size, a different material or a stripboard was new_document, which
+# throws the work away. Mounting holes and edge connectors could be READ back and not
+# added, which reads as a broken tool rather than a missing one.
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def set_board(
+    cols: int | None = None,
+    rows: int | None = None,
+    material: str | None = None,
+    board_type: str | None = None,
+    strip_axis: str | None = None,
+    pitch: float | None = None,
+    single_sided: bool | None = None,
+) -> dict[str, Any]:
+    """Change the board under the design, keeping everything on it. Anything left out is
+    left alone. board_type is "pad-per-hole" (every hole its own island) or "stripboard"
+    (whole rows already joined — you cut the track to separate them, and strip_axis says
+    which way they run). Shrinking a board that still has a part hanging off the new edge
+    is refused, naming the part."""
+    return session.set_board(cols, rows, material, board_type, strip_axis, pitch, single_sided)
+
+
+@mcp.tool()
+def add_mounting_hole(
+    hole: str, diameter: float = 3.2, head_diameter: float = 6.0
+) -> dict[str, Any]:
+    """Drill a screw hole at a hole address. It removes the copper from the pads it lands
+    on — including the orthogonal neighbours of a bore this size — and a pin left standing
+    on one is a DRC error, because there is nothing there to solder to."""
+    return session.add_mounting_hole(hole, diameter, head_diameter)
+
+
+@mcp.tool()
+def add_edge_connector(
+    edge: str, start: int, count: int, finger_width: float = 2.0, face: str = "bottom"
+) -> dict[str, Any]:
+    """Replace a run of grid pads along one edge ("top", "bottom", "left", "right") with
+    connector fingers, starting at index `start` and `count` wide. A finger IS the pad
+    there, rather than something over it."""
+    return session.add_edge_connector(edge, start, count, finger_width, face)
+
+
+@mcp.tool()
+def cut_track(hole: str) -> dict[str, Any]:
+    """Break a stripboard track at a hole. The cut is drilled through the pad, so that
+    hole has nothing to solder to afterwards — which is what separates the two nets that
+    were sharing the strip. Refused on a board that has no tracks."""
+    return session.cut_track(hole)
+
+
+@mcp.tool()
+def remove_board_feature(id: str) -> dict[str, Any]:
+    """Take back a mounting hole, an edge connector or a track cut, by the id
+    get_board_info gave you."""
+    return session.remove_board_feature(id)
+
+
 @mcp.tool()
 def import_netlist(path: str) -> dict[str, Any]:
     """Import a KiCad netlist — one way the circuit's intent gets onto the board, and what

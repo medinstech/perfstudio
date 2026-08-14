@@ -1040,6 +1040,89 @@ def test_solder_beads_sit_inside_the_pad_rather_than_over_it() -> None:
 
 
 # ---------------------------------------------------------------------------
+# The file, watched (PLAN.md §9.3)
+#
+# The point of a diffable project file is that an agent which only writes files still
+# works. The window is the participant that has to notice -- otherwise the board on
+# screen goes quietly stale and the next save overwrites everything the agent did.
+# ---------------------------------------------------------------------------
+
+
+def _write(path: pathlib.Path, doc: PerfDocument) -> None:
+    path.write_text(persist.serialize_document(doc), encoding="utf-8")
+
+
+def test_an_unmodified_window_reloads_when_the_file_changes_underneath_it(tmp_path) -> None:
+    from perfstudio.commands import MoveComponentPayload
+
+    path = tmp_path / "board.perf"
+    doc = _load_dense()
+    _write(path, doc)
+    window = _window_on(doc)
+    window.current_path = path
+    window._disk_text = path.read_text(encoding="utf-8")
+
+    # Somebody else edits the file: an agent, an editor, a git checkout.
+    edited = _new_bus(doc)
+    first = doc.components[0]
+    edited.dispatch("component.move", MoveComponentPayload(id=first.id, anchor=HoleCoord(9, 9)))
+    _write(path, edited.document)
+
+    window._reload_if_changed()
+
+    moved = next(c for c in window.bus.document.components if c.id == first.id)
+    assert moved.anchor == HoleCoord(9, 9)
+    assert window.is_modified is False
+    _close(window)
+
+
+def test_a_window_with_unsaved_work_is_never_reloaded_behind_the_users_back(tmp_path) -> None:
+    """The one outcome that must not happen. The file and the window have both moved and
+    only the person in front of it can say which is right."""
+    from perfstudio.commands import MoveComponentPayload
+
+    path = tmp_path / "board.perf"
+    doc = _load_dense()
+    _write(path, doc)
+    window = _window_on(doc)
+    window.current_path = path
+    window._disk_text = path.read_text(encoding="utf-8")
+    first = window.bus.document.components[0]
+    window.bus.dispatch("component.move", MoveComponentPayload(id=first.id, anchor=HoleCoord(3, 3)))
+
+    edited = _new_bus(doc)
+    edited.dispatch("component.move", MoveComponentPayload(id=first.id, anchor=HoleCoord(9, 9)))
+    _write(path, edited.document)
+
+    window._reload_if_changed()
+
+    kept = next(c for c in window.bus.document.components if c.id == first.id)
+    assert kept.anchor == HoleCoord(3, 3), "the user's unsaved edit survived"
+    assert "changed on disk" in window.statusBar().currentMessage()
+    _close(window)
+
+
+def test_saving_does_not_make_the_window_reload_itself(tmp_path) -> None:
+    """A save changes the file, and a window that reloaded after every one would throw
+    away its own undo history for nothing."""
+    from perfstudio.commands import MoveComponentPayload
+
+    path = tmp_path / "board.perf"
+    window = _window_on(_load_dense())
+    window.current_path = path
+    first = window.bus.document.components[0]
+    window.bus.dispatch("component.move", MoveComponentPayload(id=first.id, anchor=HoleCoord(3, 3)))
+    window._save_to(path)
+    before = window.bus.document
+
+    window._reload_if_changed()
+
+    assert window.bus.document is before
+    assert window.bus.can_undo() is True
+    _close(window)
+
+
+# ---------------------------------------------------------------------------
 # Finding a part
 # ---------------------------------------------------------------------------
 
