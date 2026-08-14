@@ -20,7 +20,31 @@ closed without a bump.
 
 ## [Unreleased]
 
+### Added
+
+- **A pin on an edge-connector finger is a DRC error** (`edge-connector-conflict`), the
+  third member of the family with `mounting-hole-conflict` and `cut-track-conflict` and
+  the most absolute of the three: a bore and a cut each destroy the pad and leave a hole,
+  but a finger is solid copper that was *never drilled* (`geometry.undrilled_holes`), so a
+  through-hole lead cannot be fitted there at all. Nothing checked it, so a part dropped on
+  the finger strip was accepted in silence — and the finger strip runs along the board
+  edge, which is exactly where a connector or a terminal block gets placed.
+
 ### Changed
+
+- **The placement ghost goes red over a hole with no pad.** A mounting bore, an
+  edge-connector finger and a cut track all leave a position on the grid with nothing to
+  solder a lead into, and DRC has always called each of them an error — but the ghost
+  stayed green right up to the click, so the part went down and the only thing that ever
+  said so was a line in the DRC panel afterwards. The status line now names it too. The
+  placement is still not *refused*: a mounting hole can be added over a part that was
+  already there, so refusing would only make the same board harder to reach while leaving
+  it reachable.
+- **The blank-board guidance appears until you have placed your first part, then stops.**
+  It is for the first launch; repeating it on every launch afterwards is the application
+  explaining its own front door to somebody who has been through it a hundred times — and
+  there was nowhere to click it away, because the block is transparent to the mouse by
+  design.
 
 - **Two solder traces running side by side are one row in the findings panel, not
   sixteen.** `solder-trace-proximity` fires once per pad *per trace*, so eight pads of

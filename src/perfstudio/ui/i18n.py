@@ -369,6 +369,8 @@ TURKISH: Mapping[str, str] = {
     "Message": "Mesaj",
     "Filter findings…  (error, short, R5', C7)": "Bulguları süz…  (error, short, R5', C7)",
     "pads": "ped",
+    "a pin has no pad there — see DRC": "orada bir pinin pedi yok — DRC'ye bak",
+    "it overlaps an existing pin — see DRC": "mevcut bir pinle çakışıyor — DRC'ye bak",
     # "To route", not "Left": the board edge in Board Features is already called Left,
     # and one English key cannot carry two meanings in a catalogue whose keys ARE the
     # English strings. Saying what the number counts is better English anyway.

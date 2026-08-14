@@ -503,6 +503,57 @@ def test_solder_trace_invalid_path_does_not_flag_a_valid_chain() -> None:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# edge-connector-conflict -- the third member of the "nothing to solder to" family
+# ---------------------------------------------------------------------------
+
+
+def _with_a_finger_strip(*, components=(), conductors=()):
+    import dataclasses
+
+    from perfstudio.model import EdgeConnector
+
+    return dataclasses.replace(
+        make_doc(components=components, conductors=conductors),
+        edge_connectors=(EdgeConnector(id="ec-1", edge="bottom", start=0, count=4),),
+    )
+
+
+def test_a_pin_on_an_edge_connector_finger_is_an_error() -> None:
+    """A finger is solid copper that was never drilled -- strictly more impossible than a
+    mounting bore, which leaves a hole. Nothing checked it, so a part dropped on the
+    finger strip was accepted in silence, and the finger strip runs along the board edge:
+    exactly where a connector or a terminal block gets placed."""
+    from perfstudio.geometry import undrilled_holes
+
+    board_rows = make_doc().board.rows
+    finger = hole(0, board_rows - 1)
+    doc = _with_a_finger_strip(components=(make_component("c1", "J1", "r-axial-4", finger),))
+    assert str(finger.col) or undrilled_holes(doc), "the fixture must actually have fingers"
+
+    violations = by_rule(run_drc(doc, _FOOTPRINT_LOOKUP), "edge-connector-conflict")
+
+    assert violations, "a pin on a finger has no hole to go through"
+    assert all(v.severity == "error" for v in violations)
+    assert "ec-1" in violations[0].message
+
+
+def test_a_pin_beside_the_finger_strip_is_fine() -> None:
+    """Or the rule would be refusing the whole edge of the board."""
+    board_rows = make_doc().board.rows
+    doc = _with_a_finger_strip(
+        components=(make_component("c1", "J1", "r-axial-4", hole(0, board_rows - 3)),)
+    )
+
+    assert by_rule(run_drc(doc, _FOOTPRINT_LOOKUP), "edge-connector-conflict") == []
+
+
+def test_a_board_with_no_edge_connectors_is_not_checked_for_them() -> None:
+    doc = make_doc(components=(make_component("c1", "J1", "r-axial-4", hole(2, 2)),))
+
+    assert by_rule(run_drc(doc, _FOOTPRINT_LOOKUP), "edge-connector-conflict") == []
+
+
 def test_solder_trace_proximity_flags_once_for_a_different_net_neighbour() -> None:
     fp = _FOOTPRINT_LOOKUP("r-axial-4")
     assert fp is not None

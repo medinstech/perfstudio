@@ -44,6 +44,7 @@ from .geometry import (
     all_pin_holes,
     consumed_holes,
     copper_gap_mm,
+    edge_connector_holes,
     format_hole,
     hole_key,
     hole_to_mm,
@@ -57,6 +58,7 @@ from .geometry import (
     paths_cross,
     pin_hole,
     transform_offset,
+    undrilled_holes,
     validate_orthogonal_chain,
 )
 from .model import (
@@ -796,6 +798,82 @@ def _check_mounting_hole_conflicts(
     return violations
 
 
+def _check_edge_connector_conflicts(
+    doc: PerfDocument, lookup: FootprintLookup
+) -> list[DrcViolation]:
+    """Pins and conductors landing on an edge-connector finger, which has no bore at all.
+
+    The third member of the family with ``mounting-hole-conflict`` and
+    ``cut-track-conflict``, and the most absolute of the three. A mounting bore destroys
+    the pad and leaves a hole; a cut destroys the pad and leaves a hole. A finger is a
+    SOLID contact -- it replaces the grid pad and is never drilled (see
+    ``geometry.undrilled_holes``), so a through-hole lead cannot be fitted there at all.
+    You solder to a finger from the surface, which is not what a footprint's pin means.
+
+    It was the one hole in this family that nothing checked, so a part dropped on the
+    finger strip was accepted in silence -- and the finger strip is along the board edge,
+    which is exactly where a connector or a terminal block gets placed.
+    """
+    fingers = undrilled_holes(doc)
+    if not fingers:
+        return []
+
+    def blame(hole: HoleCoord) -> str:
+        """Which connector owns this position, named so the message can be acted on."""
+        for connector in doc.edge_connectors:
+            if any(hole_key(h) == hole_key(hole) for h in edge_connector_holes(connector, doc.board)):
+                return connector.id
+        return doc.edge_connectors[0].id
+
+    violations: list[DrcViolation] = []
+    for component in doc.components:
+        footprint = lookup(component.footprint_id)
+        if footprint is None:
+            continue
+        for pin, hole in all_pin_holes(component, footprint):
+            if hole_key(hole) not in fingers:
+                continue
+            violations.append(
+                DrcViolation(
+                    rule="edge-connector-conflict",
+                    severity="error",
+                    message=(
+                        f"{component.ref} pin {pin.number} sits at {_safe_hole(hole)}, which is "
+                        f"part of edge connector {blame(hole)}. A finger is solid copper with no "
+                        f"hole through it, so the lead cannot be fitted there — move the part, or "
+                        f"shorten the connector."
+                    ),
+                    holes=(hole,),
+                    component_ids=(component.id,),
+                )
+            )
+
+    for conductor in doc.conductors:
+        # The same contact rule the mounting-hole check uses: a solder trace is soldered
+        # down at every pad it crosses, a wire only at its ends.
+        contacts = (
+            conductor.path
+            if contacts_every_path_hole(conductor)
+            else conductor.path[:1] + conductor.path[-1:]
+        )
+        for hole in contacts:
+            if hole_key(hole) not in fingers:
+                continue
+            violations.append(
+                DrcViolation(
+                    rule="edge-connector-conflict",
+                    severity="error",
+                    message=(
+                        f"Conductor {conductor.id} is soldered at {_safe_hole(hole)}, which is "
+                        f"part of edge connector {blame(hole)} and has no hole through it."
+                    ),
+                    holes=(hole,),
+                    conductor_ids=(conductor.id,),
+                )
+            )
+    return violations
+
+
 def _check_cut_track_conflicts(doc: PerfDocument, lookup: FootprintLookup) -> list[DrcViolation]:
     """Pins and conductors soldered where a track cut has taken the copper away.
 
@@ -1432,6 +1510,7 @@ def run_drc(
         *_check_solder_trace_paths(doc),
         *_check_solder_trace_proximity(doc, node_index),
         *_check_mounting_hole_conflicts(doc, lookup),
+        *_check_edge_connector_conflicts(doc, lookup),
         *_check_mounting_hole_clearance(doc, lookup),
         *_check_cut_track_conflicts(doc, lookup),
         *_check_pad_lifting_risk(doc, options),

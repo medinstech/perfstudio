@@ -63,6 +63,7 @@ from perfstudio.geometry import (
     board_edge_margin_mm,
     board_outline_mm,
     column_label,
+    consumed_holes,
     edge_connector_holes,
     edge_finger_rect,
     format_hole,
@@ -2028,6 +2029,11 @@ class BoardScene(QGraphicsScene):
         #: Whether the last placement landed somewhere already occupied. Read by the host to
         #: say so, since the bus allows it and only DRC objects.
         self.last_placement_overlapped = False
+        #: Whether the last placement put a pin where no lead can go at all -- a mounting
+        #: bore, an edge-connector finger, a cut track. Separate from the above because
+        #: the two need different sentences: one is a board you probably do not want, the
+        #: other is a board that cannot be built.
+        self.last_placement_on_a_dead_hole = False
         #: What every part placed from here is given as its value ("10k", "100nF"), set by
         #: the host from the parts panel. Held across placements rather than cleared with
         #: the armed footprint: five resistors of the same value is the case, and retyping
@@ -2098,6 +2104,14 @@ class BoardScene(QGraphicsScene):
         # wrappers whose C++ object is gone and raises "Internal C++ object already deleted".
         # Emptying first means the handler sees an empty selection, which is the truth.
         self.component_items = {}
+        # Every grid position a lead cannot be fitted into: a mounting bore has taken the
+        # pad, a finger was never drilled, a cut took the pad with it. Computed once per
+        # rebuild because the placement ghost asks about it on every mouse move.
+        self._unusable_holes = (
+            consumed_holes(self.document)
+            | undrilled_holes(self.document)
+            | cut_holes(self.document)
+        )
         self.clear()
         self._risk_item = None
         self._ratsnest_item = None
@@ -2888,11 +2902,40 @@ class BoardScene(QGraphicsScene):
             self.removeItem(self._ghost)
             self._ghost = None
 
-    def _placement_blocked(self, anchor: HoleCoord) -> bool:
-        """Would this placement be refused, or land on an occupied hole?
+    def _placement_holes(self, anchor: HoleCoord) -> list[HoleCoord]:
+        """Where the armed footprint's pins would land, anchored here."""
+        footprint = self._armed_footprint
+        if footprint is None:
+            return []
+        holes = []
+        for pin in footprint.pins:
+            d_col, d_row = transform_pin_offset(pin.d_col, pin.d_row, 0, False)
+            holes.append(HoleCoord(anchor.col + d_col, anchor.row + d_row))
+        return holes
 
-        Only a preview -- the bus is still the authority and still gets to refuse. Showing it
-        red beforehand saves the user a click and a status-bar message.
+    def placement_lands_on_nothing(self, anchor: HoleCoord) -> bool:
+        """Whether a pin would land where no lead can be soldered at all.
+
+        A mounting bore has destroyed the pad; an edge-connector finger is solid copper
+        that was never drilled; a track cut took the pad with it. In all three there is
+        a position on the grid and nothing to fit a lead into, which is why DRC calls
+        each of them an ERROR rather than a warning -- it is physical impossibility, not
+        a risk. Reported separately from the rest of the ghost's reasons so the message
+        after the click can say WHICH thing is wrong.
+        """
+        return any(hole_key(hole) in self._unusable_holes for hole in self._placement_holes(anchor))
+
+    def _placement_blocked(self, anchor: HoleCoord) -> bool:
+        """Would this placement be refused, or land somewhere it cannot be soldered?
+
+        Only a preview -- the bus is still the authority and still gets to refuse. Showing
+        it red beforehand saves the user a click and a status-bar message.
+
+        Mounting bores, edge-connector fingers and track cuts are in here and were not:
+        the ghost stayed green over a corner mounting hole, so a part went down on a
+        position with no pad, and the only thing that ever said so was a line in the DRC
+        panel after the fact. The ghost is where "you cannot solder that there" belongs,
+        because it is the moment before it happens.
         """
         footprint = self._armed_footprint
         if footprint is None:
@@ -2903,12 +2946,12 @@ class BoardScene(QGraphicsScene):
             for comp in self.document.components
             for _pin, hole in _pin_holes_of(comp, self.lookup)
         }
-        for pin in footprint.pins:
-            d_col, d_row = transform_pin_offset(pin.d_col, pin.d_row, 0, False)
-            hole = HoleCoord(anchor.col + d_col, anchor.row + d_row)
+        for hole in self._placement_holes(anchor):
             if not is_inside_board(hole, board):
                 return True
             if (hole.col, hole.row) in occupied:
+                return True
+            if hole_key(hole) in self._unusable_holes:
                 return True
         return False
 
@@ -3008,6 +3051,7 @@ class BoardScene(QGraphicsScene):
         if self.bus is None or self._armed_footprint is None or self._armed_id is None:
             return None
         self.last_placement_overlapped = self._placement_blocked(anchor)
+        self.last_placement_on_a_dead_hole = self.placement_lands_on_nothing(anchor)
         result = self.bus.dispatch(
             "component.place",
             PlaceComponentPayload(

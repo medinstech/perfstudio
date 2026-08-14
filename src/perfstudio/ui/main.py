@@ -239,6 +239,10 @@ RULERS_KEY = "session/showRulers"
 HATCH_KEY = "session/hatchFarSide"
 ROUTING_STYLE_KEY = "session/routingStyle"
 LANGUAGE_KEY = "session/language"
+#: Whether this person has ever placed a part. The blank-board guidance is for the first
+#: launch, and repeating it forever is the application explaining its own front door to
+#: somebody who has walked through it a hundred times.
+HAS_PLACED_KEY = "session/hasPlacedAPart"
 
 ROLE_HOLES = int(Qt.ItemDataRole.UserRole) + 1
 ROLE_COMPONENT_IDS = int(Qt.ItemDataRole.UserRole) + 2
@@ -1342,6 +1346,9 @@ class MainWindow(QMainWindow):
         self._watch_timer = QTimer(self)
         self._watch_timer.setSingleShot(True)
         self._watch_timer.timeout.connect(self._reload_if_changed)
+
+        #: Set once the user has ever placed a part, in any session. See _refresh_empty_hint.
+        self._has_placed_a_part = _stored_bool(app_settings(), HAS_PLACED_KEY, False)
 
         #: The document as it last hit disk. Identity comparison against the bus's
         #: current document is what "modified" means here -- see is_modified.
@@ -2531,16 +2538,34 @@ class MainWindow(QMainWindow):
 
         return ""
 
+    def _remember_a_part_was_placed(self) -> None:
+        """Note, once and for good, that this person has placed a part.
+
+        What the blank-board guidance is FOR is the first launch. Repeating it on every
+        launch afterwards is the application explaining its own front door to somebody who
+        has been through it a hundred times -- and there is nowhere to click it away,
+        because the block is transparent to the mouse by design (see ViewOverlay).
+        """
+        if self._has_placed_a_part:
+            return
+        self._has_placed_a_part = True
+        app_settings().setValue(HAS_PLACED_KEY, True)
+
     def _refresh_empty_hint(self) -> None:
-        """Tell a blank board what to do with itself.
+        """Tell a blank board what to do with itself, the first time round.
 
         The application opens on an empty 5 x 7 board, and every route, check and export
         needs something on it first. An empty viewport with a full menu bar above it is
         the one screen where a person cannot tell whether they are looking at a tool that
-        is ready or one that is broken.
+        is ready or one that is broken -- which is a real problem exactly once.
         """
         document = self.bus.document
-        if document.components or document.conductors or self._mode_text():
+        if (
+            document.components
+            or document.conductors
+            or self._mode_text()
+            or self._has_placed_a_part
+        ):
             self.view.set_empty_hint("")
             return
         self.view.set_empty_hint(
@@ -2558,13 +2583,20 @@ class MainWindow(QMainWindow):
             # An overlap is reported rather than prevented: the bus allows two pins in one hole
             # because it is a legal document, and DRC is what objects. Saying only "placed" for
             # something the ghost had just drawn in red would read as approval.
-            note = (
-                "  ·  it overlaps an existing pin — see DRC"
-                if self.scene.last_placement_overlapped
-                else ""
-            )
+            # A pin with nothing to solder to is said FIRST and said plainly. The board is
+            # still legal -- a mounting hole can be added over a part that was already
+            # there, so refusing the placement would only make the same board harder to
+            # reach -- but DRC calls it an error, and a status line that only said
+            # "placed" would be the last chance anybody had to notice.
+            if self.scene.last_placement_on_a_dead_hole:
+                note = f"  ·  {t('a pin has no pad there — see DRC')}"
+            elif self.scene.last_placement_overlapped:
+                note = f"  ·  {t('it overlaps an existing pin — see DRC')}"
+            else:
+                note = ""
             self.statusBar().showMessage(f"{result.description}{note} — Esc to stop placing.", 6000)
             self._on_placement_armed(self.scene.armed_footprint_id or "")
+            self._remember_a_part_was_placed()
         else:
             self.statusBar().showMessage(f"Cannot place there: {result.message}", 6000)
 

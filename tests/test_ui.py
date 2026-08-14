@@ -3008,6 +3008,93 @@ def test_the_findings_can_be_filtered_down_to_one_rule() -> None:
     _close(window)
 
 
+def _board_with_a_corner_bore() -> PerfDocument:
+    from perfstudio.model import DocumentMeta, MountingHole
+
+    board = Board(
+        type="pad-per-hole", cols=16, rows=12, pitch=2.54, thickness=1.6,
+        material="FR4", pad_diameter=1.9, drill_diameter=0.8,
+    )
+    return PerfDocument(
+        meta=DocumentMeta(name="t", created="2024-01-01T00:00:00.000Z",
+                          modified="2024-01-01T00:00:00.000Z"),
+        board=board,
+        mounting_holes=(MountingHole(id="m1", at=HoleCoord(col=2, row=2), diameter=3.2),),
+    )
+
+
+def test_the_ghost_goes_red_over_a_mounting_bore() -> None:
+    """The bore has destroyed the pad, so there is nothing there to solder a lead into --
+    DRC has always called that an error, and the ghost stayed green right up to the click.
+    """
+    from perfstudio.geometry import consumed_holes, hole_key
+
+    doc = _board_with_a_corner_bore()
+    bus = _new_bus(doc)
+    scene = BoardScene(doc, footprint_lookup(), side="top", bus=bus)
+    scene.arm_placement("r-axial-3")
+
+    consumed = consumed_holes(doc)
+    dead = next(
+        HoleCoord(col=c, row=r)
+        for c in range(doc.board.cols)
+        for r in range(doc.board.rows)
+        if hole_key(HoleCoord(col=c, row=r)) in consumed
+    )
+
+    assert scene.placement_lands_on_nothing(dead) is True
+    assert scene._placement_blocked(dead) is True
+    # ...and somewhere with a pad is still fine, or the check would just say no to
+    # everything.
+    assert scene.placement_lands_on_nothing(HoleCoord(col=10, row=8)) is False
+
+
+def test_a_part_dropped_on_a_bore_says_so_rather_than_only_placing_it() -> None:
+    from perfstudio.geometry import consumed_holes, hole_key
+
+    window = _window_on(_board_with_a_corner_bore())
+    window.scene.arm_placement("r-axial-3")
+    consumed = consumed_holes(window.bus.document)
+    dead = next(
+        HoleCoord(col=c, row=r)
+        for c in range(window.bus.document.board.cols)
+        for r in range(window.bus.document.board.rows)
+        if hole_key(HoleCoord(col=c, row=r)) in consumed
+    )
+
+    window.scene.place_armed(dead)
+
+    assert window.scene.last_placement_on_a_dead_hole is True
+    assert "no pad" in window.statusBar().currentMessage()
+    # DRC is still the authority and still calls it an error.
+    assert any(v.rule == "mounting-hole-conflict" for v in window._last_violations)
+    _close(window)
+
+
+def test_the_blank_board_guidance_stops_once_a_part_has_ever_been_placed() -> None:
+    """It is for the first launch. Repeating it forever is the application explaining its
+    own front door to somebody who has been through it a hundred times -- and there is
+    nowhere to click it away, because the block is transparent to the mouse by design."""
+    from perfstudio.model import DocumentMeta
+
+    blank = PerfDocument(
+        meta=DocumentMeta(name="t", created="2024-01-01T00:00:00.000Z",
+                          modified="2024-01-01T00:00:00.000Z"),
+        board=Board(type="pad-per-hole", cols=16, rows=12, pitch=2.54, thickness=1.6,
+                    material="FR4", pad_diameter=1.9, drill_diameter=0.8),
+    )
+
+    first = _window_on(blank)
+    assert first.view.empty_hint.isHidden() is False
+    first.scene.arm_placement("r-axial-3")
+    first.scene.place_armed(HoleCoord(col=4, row=4))
+    _close(first)
+
+    second = _window_on(blank)
+    assert second.view.empty_hint.isHidden() is True
+    _close(second)
+
+
 def _two_traces_side_by_side() -> PerfDocument:
     """Two solder traces on neighbouring rows, on different nets. The commonest shape on
     a routed perfboard, and the one that floods the panel."""
