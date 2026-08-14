@@ -182,11 +182,14 @@ değil, "yerine geçtiği implementasyonla bayt bayt aynı sonucu üretiyor" olm
 src/perfstudio/            motor: doküman modeli, komut veri yolu, bağlantısallık,
                            router, autorouter, yerleştirici, DRC, LVS, kalıcılık
 src/perfstudio/guide.py    lehimleme rehberi; HTML/CSV/JSON için guide_export.py
+src/perfstudio/stripboard.py  bakırı baştan bağlı gelen kart; striproute.py onun üstünde
+                           tasarım yapan kes-ve-bağla planlayıcısı
 src/perfstudio/parsers/    KiCad netlist içe aktarıcı
-src/perfstudio/ui/         Qt uygulaması: 2D editör, VTK 3D görünüm, 1:1 PDF çıktısı
+src/perfstudio/ui/         Qt uygulaması: 2D editör, VTK 3D görünüm, 1:1 PDF çıktısı,
+                           ve headless.py: CI'ın çıktısını denetlediği ekransız koşu
 src/perfstudio/mcp/        MCP sunucusu (docs/MCP.md)
 examples/                  içe aktarılacak bir netlist
-tests/                     1260 test; motor mypy --strict temiz
+tests/                     1363 test; motor mypy --strict temiz
 packages/                  Python portunun karşısında kanıtlandığı referans olarak
                            saklanan orijinal TypeScript motoru
 ```

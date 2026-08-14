@@ -39,6 +39,15 @@ equal-f nodes is popped first, and that can silently pick a different (still opt
 but different) path -- which would break byte-for-byte agreement with the golden
 fixtures dumped from the TypeScript engine. Keep the linear scan.
 
+...and it is not what makes this slow, which was worth measuring before trading the
+proof away for it. Autorouting a 100 x 60 board with 60 parts took 6.8 s, and a profile
+put the search's own loop at under a tenth of it: the time was in ``_has_foreign_neighbour``
+(R5' priced into the search, asked a million times for about two thousand distinct
+questions per route) and in building ``"37,12"`` hole-key strings 15.8 million times.
+Memoising the first and keying this module's own sets on ``(col, row)`` tuples took the
+same board to 4.5 s -- 33% -- with every golden route still byte-identical, which is the
+only reason to believe the change was safe.
+
 KNOWN COST-MODEL LIMITATION, kept for the same reason. The spine surcharge is applied
 AFTER the search, once the path length is known (see ``_solder_trace_candidate``), so it
 is not part of what A* minimises. A long detour that avoids proximity risk can therefore
@@ -61,7 +70,7 @@ from __future__ import annotations
 import dataclasses
 import math
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal, TypeAlias
 
 from .commands import (
@@ -73,7 +82,6 @@ from .commands import (
 from .connectivity import FootprintLookup, PhysicalNet, extract_physical_nets
 from .geometry import (
     format_hole,
-    hole_key,
     hole_to_mm,
     holes_under_line,
     is_inside_board,
@@ -434,7 +442,7 @@ def route_connection(
         net_at=net_at,
         opts=options,
         own_net_id=request.net_id,
-        net_holes=frozenset(hole_key(hole) for hole in request.net_holes),
+        net_holes=frozenset(_key(hole) for hole in request.net_holes),
         declared_own_nets=frozenset(
             net_id for net_id in (net_at(hole) for hole in request.net_holes) if net_id is not None
         ),
@@ -507,7 +515,7 @@ class _RouteContext:
     opts: RouterOptions
     own_net_id: NetId | None
     #: Hole keys of ``RouteRequest.net_holes``. Empty for a plain point-to-point request.
-    net_holes: frozenset[str] = frozenset()
+    net_holes: frozenset[tuple[int, int]] = frozenset()
     #: Segments of existing conductors that may not be crossed, on the solder side.
     #: Checked geometrically, because occupancy is per HOLE and two runs cross between holes
     #: (see geometry.segments_touch) -- which is how the router used to produce boards with
@@ -515,12 +523,46 @@ class _RouteContext:
     blocked_segments: tuple[tuple[HoleCoord, HoleCoord], ...] = ()
     #: Hole keys those segments sweep across, including the ones a wire merely passes over.
     #: Precomputed so the trace search can reject them in constant time.
-    swept_blocked_holes: frozenset[str] = frozenset()
+    swept_blocked_holes: frozenset[tuple[int, int]] = frozenset()
     #: Physical net ids those declared holes already sit in -- precomputed here rather
     #: than rediscovered per neighbour, since the set is fixed for the whole search.
     declared_own_nets: frozenset[str] = frozenset()
     #: See ``RouteRequest.from_pin``.
     opts_from_pin: tuple[str, str] | None = None
+    #: The nets that count as "ours" for a given pair of endpoints, worked out once.
+    #:
+    #: MEASURED, not guessed at. Routing a 100 x 60 board with 60 parts spent 9 of its 19
+    #: seconds inside ``_has_foreign_neighbour``, which was rebuilding this set -- two
+    #: net lookups and a set construction -- on each of a million calls, for a value that
+    #: cannot change during a search. The cache is a plain dict on a frozen dataclass,
+    #: which is legal and is the point: the context is immutable, the memo is not part of
+    #: what it means.
+    endpoint_own_nets: dict[tuple[int, int, int, int], frozenset[str]] = field(
+        default_factory=dict
+    )
+    #: Whether a hole is risky, for a given pair of endpoints. Same reasoning and the same
+    #: measurement: for a fixed search the answer depends only on the hole, the net index
+    #: and the endpoints, none of which move -- and A* asks about the same hole once per
+    #: neighbour that leads to it. The million calls above were about 2,000 distinct
+    #: questions per search, asked over and over.
+    risky_holes: dict[tuple[int, int, int, int, int, int], bool] = field(default_factory=dict)
+
+
+def _key(hole: HoleCoord) -> tuple[int, int]:
+    """This module's hole key, and deliberately NOT ``geometry.hole_key``.
+
+    MEASURED. The searches below key their closed set, their g-scores and three
+    membership sets by hole, and on a 100 x 60 board that was 15.8 million calls to
+    ``hole_key`` -- 2.1 seconds of building ``"37,12"`` strings, more than the A* search
+    itself spent. A tuple of two ints hashes to the same effect with none of the
+    formatting, and nothing here ever needs the key to be readable: these sets are
+    internal to one route and never cross a module boundary, which is exactly the
+    condition under which the shared string encoding stops earning its keep.
+
+    ``geometry.hole_key`` stays the one encoding for everything that DOES cross one --
+    occupancy, connectivity, DRC -- and those have golden output that must not move.
+    """
+    return (hole.col, hole.row)
 
 
 def _blocked_segments(doc: PerfDocument) -> tuple[tuple[HoleCoord, HoleCoord], ...]:
@@ -534,7 +576,7 @@ def _blocked_segments(doc: PerfDocument) -> tuple[tuple[HoleCoord, HoleCoord], .
     return tuple(segments)
 
 
-def _trace_blocked_holes(doc: PerfDocument) -> frozenset[str]:
+def _trace_blocked_holes(doc: PerfDocument) -> frozenset[tuple[int, int]]:
     """Holes a new solder trace may not use because existing copper lies across them.
 
     The holes a conductor's `path` LISTS are already blocked by the occupancy index; these are
@@ -543,13 +585,13 @@ def _trace_blocked_holes(doc: PerfDocument) -> frozenset[str]:
     differential proof against the TypeScript engine, and widening it moves three suites at
     once -- see the note in occupancy.build_occupancy.
     """
-    keys: set[str] = set()
+    keys: set[tuple[int, int]] = set()
     for conductor in doc.conductors:
         if conductor.side != "bottom" or not is_crossing_blocked(conductor):
             continue
         for index in range(len(conductor.path) - 1):
             for hole in holes_under_line(conductor.path[index], conductor.path[index + 1]):
-                keys.add(hole_key(hole))
+                keys.add(_key(hole))
     return frozenset(keys)
 
 
@@ -562,13 +604,13 @@ def _crosses_existing(ctx: _RouteContext, a: HoleCoord, b: HoleCoord) -> bool:
 
 def _build_net_index(doc: PerfDocument, lookup: FootprintLookup) -> Callable[[HoleCoord], str | None]:
     nets: list[PhysicalNet] = extract_physical_nets(doc, lookup)
-    by_hole: dict[str, str] = {}
+    by_hole: dict[tuple[int, int], str] = {}
     for net in nets:
         for node in net.nodes:
-            by_hole[hole_key(node.hole)] = net.id
+            by_hole[_key(node.hole)] = net.id
 
     def net_at(hole: HoleCoord) -> str | None:
-        return by_hole.get(hole_key(hole))
+        return by_hole.get(_key(hole))
 
     return net_at
 
@@ -771,15 +813,15 @@ def _find_hopping_path(
     the differential proof at risk for no gain.
     """
     costs = ctx.opts.costs
-    start_key = hole_key(from_)
-    goal_key = hole_key(to)
+    start_key = _key(from_)
+    goal_key = _key(to)
 
-    g_score: dict[str, float] = {start_key: 0.0}
-    came_from: dict[str, tuple[HoleCoord, bool]] = {}
+    g_score: dict[tuple[int, int], float] = {start_key: 0.0}
+    came_from: dict[tuple[int, int], tuple[HoleCoord, bool]] = {}
     open_list: list[_OpenEntry] = [
         _OpenEntry(hole=from_, f=manhattan(from_, to) * costs.solder_trace_step)
     ]
-    closed: set[str] = set()
+    closed: set[tuple[int, int]] = set()
     expanded = 0
 
     while open_list:
@@ -788,7 +830,7 @@ def _find_hopping_path(
             if open_list[i].f < open_list[best_index].f:
                 best_index = i
         current = open_list.pop(best_index)
-        current_key = hole_key(current.hole)
+        current_key = _key(current.hole)
         if current_key == goal_key:
             return _reconstruct_steps(came_from, current.hole, from_)
         if current_key in closed:
@@ -801,7 +843,7 @@ def _find_hopping_path(
 
         g = g_score.get(current_key, math.inf)
         for move_to, hopped, step_cost in _moves_from(ctx, current.hole, from_, to):
-            next_key = hole_key(move_to)
+            next_key = _key(move_to)
             if next_key in closed:
                 continue
             tentative = g + step_cost
@@ -823,14 +865,14 @@ def _moves_from(
 ) -> list[tuple[HoleCoord, bool, float]]:
     """Legal moves out of a hole: (destination, was it a hop, cost)."""
     costs = ctx.opts.costs
-    goal_key = hole_key(to)
+    goal_key = _key(to)
     moves: list[tuple[HoleCoord, bool, float]] = []
 
     for direction_col, direction_row in ((1, 0), (-1, 0), (0, 1), (0, -1)):
         step = HoleCoord(col=hole.col + direction_col, row=hole.row + direction_row)
         if not is_inside_board(step, ctx.doc.board):
             continue
-        is_goal = hole_key(step) == goal_key
+        is_goal = _key(step) == goal_key
         if is_goal or _is_traversable_by_trace(ctx, step):
             cost = costs.solder_trace_step
             if _has_foreign_neighbour(ctx, step, from_, to):
@@ -847,7 +889,7 @@ def _moves_from(
             )
             if not is_inside_board(landing, ctx.doc.board):
                 break
-            landing_is_goal = hole_key(landing) == goal_key
+            landing_is_goal = _key(landing) == goal_key
             if not landing_is_goal and not _is_traversable_by_trace(ctx, landing):
                 continue
             moves.append(
@@ -863,7 +905,7 @@ def _moves_from(
 
 
 def _reconstruct_steps(
-    came_from: dict[str, tuple[HoleCoord, bool]], goal: HoleCoord, start: HoleCoord
+    came_from: dict[tuple[int, int], tuple[HoleCoord, bool]], goal: HoleCoord, start: HoleCoord
 ) -> list[_Step]:
     # Each entry records how the search ARRIVED at that hole, so a hole's flag must be read
     # from its own entry. Carrying the flag over to the predecessor instead shifts every hop
@@ -873,7 +915,7 @@ def _reconstruct_steps(
     steps: list[_Step] = []
     cursor = goal
     while not same_hole(cursor, start):
-        entry = came_from.get(hole_key(cursor))
+        entry = came_from.get(_key(cursor))
         steps.append(_Step(hole=cursor, hopped=entry is not None and entry[1]))
         if entry is None:
             break
@@ -901,15 +943,15 @@ def _find_solder_trace_path(
     """
     costs = ctx.opts.costs
     max_expanded_nodes = ctx.opts.max_expanded_nodes
-    start_key = hole_key(from_)
-    goal_key = hole_key(to)
+    start_key = _key(from_)
+    goal_key = _key(to)
 
-    g_score: dict[str, float] = {start_key: 0.0}
-    came_from: dict[str, HoleCoord] = {}
+    g_score: dict[tuple[int, int], float] = {start_key: 0.0}
+    came_from: dict[tuple[int, int], HoleCoord] = {}
     open_list: list[_OpenEntry] = [
         _OpenEntry(hole=from_, f=manhattan(from_, to) * costs.solder_trace_step)
     ]
-    closed: set[str] = set()
+    closed: set[tuple[int, int]] = set()
     expanded = 0
 
     while open_list:
@@ -922,7 +964,7 @@ def _find_solder_trace_path(
                 best_index = i
         current = open_list.pop(best_index)
 
-        current_key = hole_key(current.hole)
+        current_key = _key(current.hole)
         if current_key == goal_key:
             return _reconstruct(came_from, current.hole, from_)
         if current_key in closed:
@@ -935,7 +977,7 @@ def _find_solder_trace_path(
 
         g = g_score.get(current_key, math.inf)
         for next_hole in neighbors4(current.hole, ctx.doc.board):
-            next_key = hole_key(next_hole)
+            next_key = _key(next_hole)
             if next_key in closed:
                 continue
             is_endpoint = next_key == goal_key
@@ -970,14 +1012,14 @@ def _is_traversable_by_trace(ctx: _RouteContext, hole: HoleCoord) -> bool:
     # the search would run a solder trace straight through the middle of an existing wire --
     # which DRC's conductor-crossing rule then, correctly, calls an error. A router must not
     # produce what the checker rejects.
-    if hole_key(hole) in ctx.swept_blocked_holes:
+    if _key(hole) in ctx.swept_blocked_holes:
         return False
     pin = ctx.occupancy.pin_at(hole)
     # A foreign pin in the way is a hard stop: soldering across it would short it in. A pin
     # the caller has declared part of this same net is the opposite -- running the trace
     # through it is how a rail collects its pins (see RouteRequest.net_holes), and doing so
     # is what makes one long rail cheaper than a fan of separate hops.
-    return not (pin and hole_key(hole) not in ctx.net_holes)
+    return not (pin and _key(hole) not in ctx.net_holes)
 
 
 def _has_foreign_neighbour(
@@ -994,29 +1036,43 @@ def _has_foreign_neighbour(
     a pad that is supposed to be on this net is not a defect, so charging risk for it
     would price the router out of the rails it should be building.
     """
-    own_nets: set[str] = set(ctx.declared_own_nets)
-    for endpoint in (from_, to):
-        net_id = ctx.net_at(endpoint)
-        if net_id is not None:
-            own_nets.add(net_id)
+    memo_key = (from_.col, from_.row, to.col, to.row, hole.col, hole.row)
+    remembered = ctx.risky_holes.get(memo_key)
+    if remembered is not None:
+        return remembered
+
+    key = (from_.col, from_.row, to.col, to.row)
+    own_nets = ctx.endpoint_own_nets.get(key)
+    if own_nets is None:
+        found: set[str] = set(ctx.declared_own_nets)
+        for endpoint in (from_, to):
+            net_id = ctx.net_at(endpoint)
+            if net_id is not None:
+                found.add(net_id)
+        own_nets = frozenset(found)
+        ctx.endpoint_own_nets[key] = own_nets
+
+    risky = False
     for neighbour in neighbors4(hole, ctx.doc.board):
         if same_hole(neighbour, from_) or same_hole(neighbour, to):
             continue
-        if hole_key(neighbour) in ctx.net_holes:
+        if _key(neighbour) in ctx.net_holes:
             continue
         net_id = ctx.net_at(neighbour)
         if net_id is not None and net_id not in own_nets:
-            return True
-    return False
+            risky = True
+            break
+    ctx.risky_holes[memo_key] = risky
+    return risky
 
 
 def _reconstruct(
-    came_from: dict[str, HoleCoord], goal: HoleCoord, start: HoleCoord
+    came_from: dict[tuple[int, int], HoleCoord], goal: HoleCoord, start: HoleCoord
 ) -> list[HoleCoord]:
     path: list[HoleCoord] = [goal]
     cursor = goal
     while not same_hole(cursor, start):
-        prev = came_from.get(hole_key(cursor))
+        prev = came_from.get(_key(cursor))
         if prev is None:
             break
         path.append(prev)

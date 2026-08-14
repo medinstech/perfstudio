@@ -778,3 +778,59 @@ def test_a_hopped_route_does_not_itself_cross_anything() -> None:
             assert not any(segments_touch(a, b, s, e) for s, e in wall_segments), (
                 f"{conductor.kind} run {a} -> {b} crosses the wall"
             )
+
+
+# ---------------------------------------------------------------------------
+# What the search asks twice
+#
+# Not a timing test -- a timing assertion is a flaky test wearing a useful hat. These
+# pin the two properties the 33% came from, both of which are silent if they regress:
+# the answers that cannot change during a search are computed once, and this module
+# keys its own sets on tuples rather than on formatted strings.
+# ---------------------------------------------------------------------------
+
+
+def test_the_proximity_answer_is_worked_out_once_per_hole() -> None:
+    """R5' priced into the search is the most expensive thing the router does: a million
+    calls on a 100 x 60 board, for about two thousand distinct questions per route. The
+    answer depends only on the hole, the endpoints and the net index, none of which move
+    while a search runs."""
+    from perfstudio.router import _has_foreign_neighbour, _RouteContext
+
+    board = doc((comp("c1", "A", h(2, 2)), comp("c2", "B", h(8, 2))), ())
+    asked: list[HoleCoord] = []
+
+    def counting_net_at(hole: HoleCoord) -> str | None:
+        asked.append(hole)
+        return None
+
+    ctx = _RouteContext(
+        doc=board,
+        occupancy=build_occupancy(board, _FOOTPRINT_LOOKUP),
+        net_at=counting_net_at,
+        opts=RouterOptions(),
+        own_net_id=None,
+    )
+
+    first = _has_foreign_neighbour(ctx, h(5, 2), h(2, 2), h(8, 2))
+    calls_after_first = len(asked)
+    second = _has_foreign_neighbour(ctx, h(5, 2), h(2, 2), h(8, 2))
+
+    assert second == first
+    assert len(asked) == calls_after_first, "the second call asked the net index again"
+
+
+def test_this_module_keys_its_own_sets_on_coordinates_not_strings() -> None:
+    """15.8 million ``f"{col},{row}"`` calls on one board, more than the A* loop itself
+    cost. ``geometry.hole_key`` stays the one encoding for everything that crosses a
+    module boundary -- occupancy, connectivity, DRC, all of which have golden output --
+    and this module, whose sets never leave it, uses a plain tuple."""
+    from perfstudio.router import _key
+
+    assert _key(h(37, 12)) == (37, 12)
+    source = (
+        Path(__file__).resolve().parents[1] / "src" / "perfstudio" / "router.py"
+    ).read_text(encoding="utf-8")
+    # The CALL, not the word: the comments in there discuss hole_key at some length, and
+    # a test that failed on a mention would be a test people delete.
+    assert "hole_key(" not in source, "router.py is building hole-key strings again"

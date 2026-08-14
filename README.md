@@ -179,11 +179,14 @@ golden fixtures in `tools/diffcheck/`, down to the last IEEE-754 double.
 src/perfstudio/            the engine: document model, command bus, connectivity,
                            router, autorouter, placer, DRC, LVS, persistence
 src/perfstudio/guide.py    the soldering guide, and guide_export.py for HTML/CSV/JSON
+src/perfstudio/stripboard.py  the board whose copper arrives joined, and striproute.py
+                           for the cuts-and-links planner that designs on one
 src/perfstudio/parsers/    KiCad netlist importer
-src/perfstudio/ui/         Qt application: 2D editor, VTK 3D view, 1:1 PDF export
+src/perfstudio/ui/         Qt application: 2D editor, VTK 3D view, 1:1 PDF export,
+                           and headless.py, the no-display run CI checks the output with
 src/perfstudio/mcp/        the MCP server (docs/MCP.md)
 examples/                  a netlist to import
-tests/                     1260 tests; the engine is mypy --strict clean
+tests/                     1363 tests; the engine is mypy --strict clean
 packages/                  the original TypeScript engine, kept as the reference the
                            Python port is proved against
 ```

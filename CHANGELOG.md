@@ -90,6 +90,22 @@ closed without a bump.
     putting a net's pins on one strip, which on stripboard is most of the design — said
     here rather than left to be discovered.
 
+- **Something now checks what the render looks like** (PLAN.md §10 asks for visual
+  regression). The headless run has always produced PNGs and CI has always kept them as
+  artefacts, and the only thing asserted about one was that it began with the PNG magic
+  bytes — so a render that lost every pad, drew the board inside out or came out blank
+  passed the build, and somebody had to open the artefact and look.
+  - **Not a pixel diff.** Antialiasing and Qt's own version move individual pixels across
+    platforms and this suite runs on three; a per-pixel golden would fail on macOS for
+    reasons that have nothing to do with the board, and a test that fails for the wrong
+    reason gets switched off. `tests/test_render_golden.py` compares the **mean colour of
+    each cell of a 6 × 6 grid** against a checked-in signature: re-rendering the board
+    moves it by 0.0 of 255, rendering the other face by 27.5, and rendering it with every
+    part and conductor removed by 22.6 — against a tolerance of 3.
+  - The first attempt measured how much of each cell was covered in ink and was nearly
+    useless: a perfboard is mostly board, so losing every part moved a cell by 2.6 points
+    against a tolerance of 2. That is recorded in the file, because it looked reasonable.
+
 - **The window notices when the file changes underneath it** (PLAN.md §9.3). The project
   file is diffable and agent-friendly precisely so that a session which only *writes
   files* still works — and the window was the one participant that did not notice: the
@@ -129,6 +145,31 @@ closed without a bump.
   way to answer "where is R37" except to read the screen until it turned up.
 
 ### Changed
+
+- **Autorouting a big board is a third faster**, and the interesting part is which third.
+  A 100 × 60 board with 60 parts took **6.8 s**; it takes **4.5 s**. Every golden route
+  reproduces byte for byte, which is the only reason to believe the change was safe.
+  - **The A\* open list was not the problem**, which was worth measuring before trading
+    away the differential proof to fix it. `router.py`'s docstring has always said a
+    binary heap would change tie-breaking among equal-f nodes and could silently pick a
+    different equal-cost path; a profile put the search loop at under a tenth of the time.
+    It stays a linear scan, now with the measurement written beside the reason.
+  - **The time was in R5'.** Pricing bridging risk into the search — the thing this
+    project is organised around — asked `_has_foreign_neighbour` a million times for about
+    two thousand distinct questions per route, rebuilding a set of "our" nets on every one
+    of them for a value that cannot change while a search runs. Both are memoised on the
+    route context now.
+  - **And in building `"37,12"` strings**: 15.8 million calls to `geometry.hole_key`, more
+    than the search itself cost. `router.py` keys its own sets on `(col, row)` tuples.
+    `hole_key` stays the one encoding for everything that crosses a module boundary —
+    occupancy, connectivity, DRC — all of which have golden output that must not move.
+  - Two tests pin the properties rather than a stopwatch: a timing assertion is a flaky
+    test wearing a useful hat.
+
+- **The headless run is its own module** (`ui/headless.py`). It is a program in its own
+  right, it shares nothing with the window but the scene it renders, and being importable
+  on its own is what lets a test call it without standing up a `MainWindow`. `main.py`
+  loses 228 lines, and starting the GUI no longer imports the CLI.
 
 - **Importing a netlist places its parts in one undo step**, which is what the code doing
   it has claimed in its own docstring since it was written. It dispatched one

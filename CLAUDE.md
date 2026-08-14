@@ -21,7 +21,7 @@ python -m perfstudio.ui.main --headless tools/diffcheck/golden/dense.perf
 python -m perfstudio.mcp          # the MCP server (docs/MCP.md)
 ```
 
-The suite is ~1175 tests in about 35 seconds, so run all of it; there is no reason to
+The suite is ~1360 tests in about 40 seconds, so run all of it; there is no reason to
 narrow to one file except while iterating.
 
 **`mypy --strict src`, never `src tests`.** The engine is strict-clean and must stay
@@ -35,20 +35,22 @@ the reason at the switch: `E501`, because its 235 hits were prose a formatter co
 split either, and `RUF001`/`2`/`3`, because 137 of its 154 were the Turkish catalogue's
 dotless ı — a rule that flags correct Turkish is a rule people learn to ignore.
 
-Two suppressions in the source are load-bearing, not noise: `model.py`'s `BoardMaterial`,
-`BodyArchetype` and `ConductorKind`, and `router.py`'s `RoutingStyle`, keep the old
-`TypeAlias` spelling with `# noqa: UP040` because they are read at run time by
-`get_args`, which returns an empty tuple for a PEP 695 `type` alias. Converting them made
-three completeness tests assert that an empty set equals an empty set.
+Five suppressions in the source are load-bearing, not noise: `model.py`'s
+`BoardMaterial`, `BoardType`, `BoardEdge`, `BodyArchetype` and `ConductorKind`, and
+`router.py`'s `RoutingStyle`, keep the old `TypeAlias` spelling with `# noqa: UP040`
+because they are read at run time by `get_args`, which returns an empty tuple for a PEP
+695 `type` alias. Converting them made three completeness tests assert that an empty set
+equals an empty set — and `BoardType` was found the same way later, refusing every board
+type an agent asked for from a check that raises nothing.
 
 `ruff format` would still rewrite 40 of the 57 files and point every line of blame in the
 repository at a reformat. That is its own decision, not a side effect of another change.
 
-`--headless` renders 2D/3D/PDF into `headless_out/`, runs DRC + LVS and prints timings
-with no display. It is how the visual output is exercised in CI — the only step that
-exercises 2D, 3D and the PDF export against a real board rather than against assertions
-about them — and the fastest way to check that a rendering change did not crash. It
-inspects a document and never edits one.
+`--headless` (`ui/headless.py`) renders 2D/3D/PDF into `headless_out/`, runs DRC + LVS
+and prints timings with no display. It is the only step that exercises 2D, 3D and the PDF
+export against a real board end to end, and the fastest way to check that a rendering
+change did not crash. It inspects a document and never edits one. What the render LOOKS
+like is a separate question, answered by `tests/test_render_golden.py` below.
 
 CI runs the full three-OS matrix on every push. It was Linux-only off `main` while the
 repository was private and minutes were metered; standard runners are free on public
@@ -60,6 +62,14 @@ macOS arm64, neither of which Linux can see.
 Without a GL context VTK does not raise, it aborts the process, so an unmarked test does
 not fail — it ends the run partway through with no summary. `test_every_vtk_touching_test_is_marked`
 finds them by reading the sources, because marking them by hand missed two.
+
+**What the render LOOKS like is checked by `tests/test_render_golden.py`**, not by the
+headless PNGs, which nobody opens. It compares the mean colour of each cell of a 6 × 6
+grid against `tests/render_signatures.json` — stable across renderers to a fraction of a
+level, and 20+ levels away from a board that lost its parts. Re-bless with
+`PERFSTUDIO_BLESS_RENDER=1` after looking at the render. The first attempt measured ink
+coverage instead and was nearly useless (a perfboard is mostly board); that is written
+down in the file so nobody tries it again.
 
 UI tests run under `QT_QPA_PLATFORM=offscreen` (set in `tests/test_ui.py` before PySide6
 is imported). Qt's offscreen plugin ships no font database on Windows, so tests that
@@ -302,10 +312,33 @@ its **address** (`"C7"`), the same language DRC and the guide speak. A refused c
 returns `{"ok": false, "code": ..., "message": ...}` rather than raising, matching
 `CommandBus.dispatch`'s contract — an agent must be able to try something and be told no.
 
+### Stripboard is the board where the copper is subtracted
+
+`board.type` is `pad-per-hole` or `stripboard`, and it is not a display setting. On
+stripboard whole rows arrive already joined, so **`connectivity.py` has a fourth rule**
+beside its three: on that board type the BOARD joins the holes along an uncut run, and
+nobody soldered those connections. Only holes something is soldered into take part — a
+strip physically joins all thirty holes in its row, and registering the rest would put
+every empty pad into a net, which is what the module's own docstring says not to do.
+
+`stripboard.py` owns the geometry, and one decision governs it: **a cut destroys the
+copper AT a hole** (`TrackCut.at`), because that is how a track is broken — a drill turned
+by hand, which takes the pad with it. A pin left in a cut hole is soldered to nothing,
+which is DRC's `cut-track-conflict`, the twin of `mounting-hole-conflict`.
+
+`striproute.py` is that board's router and it subtracts before it adds: cuts first, then
+links over the COMPONENT side — the solder side is one sheet of parallel copper, and a
+wire laid across it there shorts every strip it crosses. Both halves commit as one
+command (`stripboard.apply`), because separately one Ctrl+Z leaves the board cut apart
+with nothing linking it, or linked with nothing cut, which is a short. Pairs it cannot
+separate (adjacent pins, no hole between them to drill) are reported, never routed around:
+the fix is to move a part, and the placer does not yet score strip alignment.
+
 ### Layering
 
 ```
-model → geometry → connectivity / occupancy → drc, lvs, router, autoroute, placer, ratsnest
+model → geometry → stripboard → connectivity / occupancy
+                                    → drc, lvs, router, autoroute, placer, ratsnest, striproute
                                                         → guide → guide_export
                                                         → ui/, mcp/
 ```
@@ -340,6 +373,23 @@ editor, the 3D view and the guide's step images.
 `parsers/` is pure string-to-data: `sexpr.py` knows no KiCad semantics (just text to
 tree), `kicad.py` maps a KiCad 6+ export netlist onto `Net` / `NetNode`. Reading the file
 from disk is the caller's job, as everywhere else in the engine.
+
+`ui/headless.py` is the `--headless` run, its own module rather than the bottom of
+`main.py`: it is a program in its own right and being importable alone is what lets a
+test call it. `ui/clipboard.py` is copy/paste — text in, `block.place` payload out, no
+widgets — so the interesting half is tested by calling it.
+
+**The window watches the open file** (`QFileSystemWatcher`, PLAN.md §9.3). With nothing
+unsaved it reloads itself when the file changes; with unsaved edits it refuses and says
+so, because losing somebody's work to a background event is the one outcome that must not
+happen. A save does not trigger a reload — `_disk_text` is what tells our own write from
+somebody else's.
+
+**`router.py` keys its own sets on `(col, row)` tuples, not `geometry.hole_key`**, and
+memoises the R5' proximity answer per hole. Both are measured (33% off a 100 × 60 board;
+the numbers are in the module docstring) and neither may change a route: `hole_key` stays
+the one encoding for everything that crosses a module boundary — occupancy, connectivity,
+DRC — all of which have golden output. `tests/test_router.py` pins both properties.
 
 ### i18n
 
