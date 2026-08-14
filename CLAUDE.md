@@ -42,9 +42,16 @@ exercises 2D, 3D and the PDF export against a real board rather than against ass
 about them — and the fastest way to check that a rendering change did not crash. It
 inspects a document and never edits one.
 
-CI runs Linux on every push and the full three-OS matrix only on `main`, on tags, and on
-manual dispatch (runner minutes are metered; Windows bills 2×, macOS 10×). A
-platform-specific rendering fault therefore surfaces at merge, not on a branch push.
+CI runs the full three-OS matrix on every push. It was Linux-only off `main` while the
+repository was private and minutes were metered; standard runners are free on public
+repositories, so that restriction is gone. It earned its keep immediately — the first
+full matrix found a VTK abort on Windows and two footprint goldens off by one ULP on
+macOS arm64, neither of which Linux can see.
+
+**A test that renders through VTK must carry `@requires_offscreen_gl`** (`tests/test_gl.py`).
+Without a GL context VTK does not raise, it aborts the process, so an unmarked test does
+not fail — it ends the run partway through with no summary. `test_every_vtk_touching_test_is_marked`
+finds them by reading the sources, because marking them by hand missed two.
 
 UI tests run under `QT_QPA_PLATFORM=offscreen` (set in `tests/test_ui.py` before PySide6
 is imported). Qt's offscreen plugin ships no font database on Windows, so tests that

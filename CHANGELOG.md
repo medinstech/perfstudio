@@ -20,6 +20,16 @@ closed without a bump.
 
 ## [Unreleased]
 
+### Changed
+
+- **CI runs all three platforms on every push**, which is what `ci.yml`'s own condition
+  said to do on going public: standard runners are free on public repositories, so the
+  metered-minutes trade-off it encoded stopped applying. The first full matrix that ran
+  under the old rule is the argument for not restricting it again — it found a VTK abort
+  on Windows and two footprint goldens off by a ULP on macOS arm64, neither visible on
+  Linux, both an ordinary edit away from coming back. "Seen before a release" turns out
+  to be a weak property when a release is where they were seen.
+
 ### Fixed
 
 - **The release ritual's own last step failed the tests that enforce it.**

@@ -41,32 +41,18 @@ jobs:
       # there is a matrix at all.
       fail-fast: false
       matrix:
-        # LINUX ON EVERY PUSH, THE OTHER TWO WHERE IT MATTERS. This repository is
-        # private, so runner minutes are metered, and they are not metered evenly:
-        # Windows bills at 2x and macOS at 10x. The full matrix on every push to every
-        # branch costs upwards of sixty billed minutes a go, which for a pre-alpha with a
-        # thirty-second test suite is most of an allowance spent on re-proving that
-        # Windows still works after a docstring edit.
+        # ALL THREE, ON EVERY PUSH. This was Linux-only off the default branch while the
+        # repository was private and runner minutes were metered unevenly -- Windows at
+        # 2x, macOS at 10x -- with the condition carrying an instruction to delete it on
+        # going public, because standard runners are free on public repositories.
         #
-        # So: Linux always, and the whole matrix on the default branch, on tags, and
-        # whenever anybody asks for it from the Actions tab. A platform-specific fault
-        # cannot reach a release without being seen, which is the property worth paying
-        # for; catching it one branch push earlier is not.
-        #
-        # WHEN THIS REPOSITORY GOES PUBLIC, DELETE THE CONDITION. Standard runners are
-        # free on public repositories, so the entire trade-off above stops applying and
-        # the reason to restrict the matrix goes with it. Replace the fromJSON expression
-        # with the plain list:
-        #
-        #     os: ["ubuntu-latest", "windows-latest", "macos-latest"]
-        #
-        # This is left in place rather than done in advance because it is the private
-        # allowance that would pay for the difference in the meantime.
-        os: ${{ fromJSON(
-          (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
-           || github.event_name == 'workflow_dispatch')
-          && '["ubuntu-latest", "windows-latest", "macos-latest"]'
-          || '["ubuntu-latest"]') }}
+        # Deleted, and the first full matrix that ran under it is the argument for
+        # restricting it no further: it found a VTK abort on Windows that took the whole
+        # session down with it, and two footprint goldens failing on macOS arm64 by one
+        # ULP of the terms they are summed from. Neither is visible on Linux, and both
+        # are ordinary edits away from being reintroduced. "Seen before a release" is a
+        # weaker property than it sounds when a release is where they were seen.
+        os: ["ubuntu-latest", "windows-latest", "macos-latest"]
         python: ["3.12"]
         include:
           # The floor is what pyproject promises; the ceiling is what breaks first.
