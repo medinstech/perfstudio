@@ -35,11 +35,28 @@ link definitions at the bottom of the file.
 __version__ = "0.4.0"
 ```
 
-**3. Verify, commit, tag.**
+**3. Dry-run the release workflow, before the tag exists.**
+
+```sh
+gh workflow run release.yml -f dry_run=true
+```
+
+It builds and smoke-tests all three installers and publishes nothing. **Do not skip
+this.** The tag is the only other thing that runs those jobs, and a tag that fails
+halfway leaves a published release with some of its assets and a version number already
+spent. v0.4.0's first dry run failed on all three platforms — an unbounded `mcp>=1.0`
+had picked up a new major, and a Typer submodule the spec was collecting exited the
+interpreter it was being collected in. Neither was visible from a passing local suite.
+The macOS job has also failed once on `hdiutil detach` answering "resource busy" after
+every check in it had passed, which is a flake, and a flake is exactly what you want to
+meet here rather than on the tag.
+
+**4. Verify, commit, tag.**
 
 ```sh
 pytest                       # test_version.py checks steps 1 and 2 agree
 mypy --strict src             # `src` ONLY -- see CONTRIBUTING.md
+ruff check src tests          # a gate since 0.5.0; `ruff format` deliberately is not
 git commit -am "Release 0.4.0"
 git tag -a v0.4.0 -m "PerfStudio 0.4.0"
 git push && git push --tags
@@ -50,9 +67,16 @@ to publish unless the tag, `version.py` and `CHANGELOG.md` agree, then builds an
 smoke-tests a bundle on each of the three platforms and attaches them to the release.
 See [Packaging](#packaging) below.
 
-**4. Open the next cycle.** Set `__version__` to the next `.dev0` (`0.5.0.dev0`) and add
+**5. Open the next cycle.** Set `__version__` to the next `.dev0` (`0.5.0.dev0`) and add
 the empty `## [Unreleased]` heading if step 1 did not. Commit as `Open 0.5.0
-development`.
+development`. The empty section is expected here and the suite allows it — it did not
+until 0.4.0, which is the first release anybody ran this far.
+
+**6. Install what you published**, on at least one machine, and uninstall it again.
+Nothing in CI does this: the jobs unpack the bundle and ask the binary its version, so
+the installer *around* it is only ever built. v0.4.0's — the first anyone ran — put its
+shortcuts in one profile on a machine-wide install and registered itself in the 32-bit
+registry view.
 
 ## Why the test is strict in both directions
 
