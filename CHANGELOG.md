@@ -20,6 +20,8 @@ closed without a bump.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-14
+
 ### Added
 
 - **Installers, on all three platforms, from one PyInstaller spec.** Pushing a `v*` tag
@@ -1051,7 +1053,8 @@ was introduced during 0.4.0 development, so they are accurate but were not writt
 release time. Their compare links point at commits rather than tags for the same reason;
 from v0.4.0 onwards every release is tagged.
 
-[Unreleased]: https://github.com/medinstech/perfstudio/compare/e36ac8c...HEAD
+[Unreleased]: https://github.com/medinstech/perfstudio/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/medinstech/perfstudio/compare/e36ac8c...v0.4.0
 [0.3.0]: https://github.com/medinstech/perfstudio/compare/e66e3f8...e36ac8c
 [0.2.0]: https://github.com/medinstech/perfstudio/compare/11cb8af...e66e3f8
 [0.1.0]: https://github.com/medinstech/perfstudio/compare/2c7daa6...11cb8af

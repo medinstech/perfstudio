@@ -15,8 +15,9 @@ ve gerçekten uygulayabileceğiniz bir lehimleme rehberi alın.
 > çıkıyor: 2D editör, 3D görünüm, yerleştirme optimizasyonu, otomatik router, DRC, LVS,
 > montaj rehberi, birebir (1:1) PDF çıktısı ve bir MCP sunucusu. Eksik olan tek şey
 > dogfood testi — henüz kimse üretilen bir rehberi takip ederek gerçek bir kart
-> lehimlemedi ve [PLAN.md](./PLAN.md) §11'e göre bu olmadan M5 kapanmıyor. Henüz
-> etiketlenmiş bir sürüm de yok; kaynaktan çalıştırılıyor.
+> lehimlemedi ve [PLAN.md](./PLAN.md) §11'e göre bu olmadan M5 kapanmıyor. Gerisi
+> çalışıyor: **v0.4.0** üç masaüstü platformunun her biri için bir kurulum paketi
+> yayınlıyor, hiçbiri kod imzalı değil.
 
 ---
 
@@ -104,10 +105,12 @@ perfstudio bir/kart.perf     # ...ya da bir doküman aç
 perfstudio --version
 ```
 
-Şu an tek yol kaynaktan kurmak, çünkü **henüz hiçbir sürüm etiketlenmedi**. Paketleme
-düzeneği hazır — bir `v*` etiketi push etmek Windows kurulum paketini, Linux AppImage'ını
-ve macOS disk imajını üretip release'e ekliyor — ama henüz yayınlanmış bir sürüm yok ve
-yayınlandığında da hiçbiri kod imzalı olmayacak. Bkz. [docs/RELEASING.md](./docs/RELEASING.md).
+Ya da kurun: **[releases sayfası](https://github.com/medinstech/perfstudio/releases)**
+Windows kurulum paketini, Linux AppImage'ını ve macOS disk imajını taşıyor; üçü de
+etiketin kendisi tarafından üretilip smoke-test ediliyor. **Hiçbiri kod imzalı değil**,
+o yüzden her biri ilk açılışta uyarı veriyor ve release notları uyarının nasıl geçileceğini
+yazıyor — Windows EV sertifikası yılda ~$300, Apple notarization $99. Kaynaktan
+çalıştırmak bu uyarıyı tamamen atlıyor. Bkz. [docs/RELEASING.md](./docs/RELEASING.md).
 
 Arayüz **İngilizce ve Türkçe** konuşur (`--lang tr`, ya da sistem diline göre otomatik).
 
@@ -206,11 +209,11 @@ Sırada, [PLAN.md](./PLAN.md) §11'in koyduğu sırayla:
   lehimlemesi gerekiyor. Bu olana kadar bu sayfadaki her iddia, çalışan bir devre
   hakkında değil, yazılım hakkında bir iddiadır. Bu liste içinde bir yabancının proje
   için yapabileceği tek şey de bu — [bunun için bir issue şablonu var](./.github/ISSUE_TEMPLATE/board_i_could_not_build.yml).
-- **İlk etiketli sürüm.** Workflow üç paketi de üretip duman testinden geçiriyor; eksik
-  olan, bir sürümün yayınlanmaya değer olduğuna karar vermek.
+- **Otomatik güncelleme.** [PLAN.md](./PLAN.md) §14 istiyor, kurulum paketlerinde yok:
+  bugün güncellemek, bir sonraki sürümü elle indirmek demek.
 - **Kod imzalama.** Windows EV sertifikası ~$300/yıl, Apple notarization $99/yıl; o zamana
-  kadar kurulum paketleri ilk açılışta uyarı verecek ve release notları bunun nasıl
-  aşılacağını yazacak.
+  kadar kurulum paketleri ilk açılışta uyarı veriyor ve release notları bunun nasıl
+  aşılacağını yazıyor.
 
 ## Katkı
 
