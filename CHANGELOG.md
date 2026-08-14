@@ -89,38 +89,6 @@ closed without a bump.
     want to see it plainly. On is the default because the default has to be the reading that
     cannot mislead.
 
-### Changed
-
-- **A routing style is now a commitment, not a weighting.** Picking `Solder trace where
-  possible` used to mean "solder where solder happens to be cheapest", and the difference
-  showed: on the NE555 fixture the default table turned a clean five-pad trace into a
-  10 mm bare wire because *one* pad sat next to another net. `RouterOptions.prefer` makes
-  the menu item mean what it says — every strategy in the family the builder committed to
-  outranks every strategy outside it, whatever the two cost, and cost only decides within
-  the family. Wire is reached when a trace physically cannot make the connection, not when
-  it scores badly.
-  - **Two numbers in the default cost table are why this was needed**, and they are worth
-    writing down because they are not obvious: `proximity_risk` is 12 a hole while
-    `bare_wire_fixed` is 8, so a single risky pad costs more than an entire wire; and
-    `bare_wire_per_mm` at 0.15 works out to 0.38 per pad against `solder_trace_step`'s
-    1.0, so wire is 2.6× cheaper per unit distance and wins every long run outright. The
-    table is unchanged — the commitment sits above it — so all the golden routes stand.
-  - NE555 with `solder`: all 14 connections are traces (7 plain, 6 hopped over a crossing,
-    1 spined) and not one is a wire. Nothing is left unrouted, and LVS and DRC still pass
-    for every style.
-  - **A hopped trace counts as solder.** It is a solder run with a two-hole jumper where it
-    had to cross something; classing it as wire would make a preference for solder reject
-    the one mechanism that gets solder past an obstacle, leaving the whole connection to be
-    a wire — more wire, not less.
-  - **A rail is a solder concept**, so committing to wire no longer comes back with solder
-    rails in it. This is the one place a commitment has to be honoured outside
-    `route_connection`'s candidate sort, because `_rail_net` reaches past `result.best` to
-    pick a strategy that contacts every pad it passes.
-  - `balanced` alone makes no commitment, and that is what balanced means. It is also what
-    every golden route is produced with, so that branch stays a no-op.
-
-### Added
-
 - **The router can try every style and keep the best.** `Route ▸ Preferred Connection ▸
   Try each and keep the best`, `style: "best"` over MCP. Picking a routing style meant
   guessing — before seeing a single route — whether this particular board comes out better
@@ -629,6 +597,34 @@ closed without a bump.
     load, MCP reports `step_images: 0` and writes every word of it anyway.
 
 ### Changed
+
+- **A routing style is now a commitment, not a weighting.** Picking `Solder trace where
+  possible` used to mean "solder where solder happens to be cheapest", and the difference
+  showed: on the NE555 fixture the default table turned a clean five-pad trace into a
+  10 mm bare wire because *one* pad sat next to another net. `RouterOptions.prefer` makes
+  the menu item mean what it says — every strategy in the family the builder committed to
+  outranks every strategy outside it, whatever the two cost, and cost only decides within
+  the family. Wire is reached when a trace physically cannot make the connection, not when
+  it scores badly.
+  - **Two numbers in the default cost table are why this was needed**, and they are worth
+    writing down because they are not obvious: `proximity_risk` is 12 a hole while
+    `bare_wire_fixed` is 8, so a single risky pad costs more than an entire wire; and
+    `bare_wire_per_mm` at 0.15 works out to 0.38 per pad against `solder_trace_step`'s
+    1.0, so wire is 2.6× cheaper per unit distance and wins every long run outright. The
+    table is unchanged — the commitment sits above it — so all the golden routes stand.
+  - NE555 with `solder`: all 14 connections are traces (7 plain, 6 hopped over a crossing,
+    1 spined) and not one is a wire. Nothing is left unrouted, and LVS and DRC still pass
+    for every style.
+  - **A hopped trace counts as solder.** It is a solder run with a two-hole jumper where it
+    had to cross something; classing it as wire would make a preference for solder reject
+    the one mechanism that gets solder past an obstacle, leaving the whole connection to be
+    a wire — more wire, not less.
+  - **A rail is a solder concept**, so committing to wire no longer comes back with solder
+    rails in it. This is the one place a commitment has to be honoured outside
+    `route_connection`'s candidate sort, because `_rail_net` reaches past `result.best` to
+    pick a strategy that contacts every pad it passes.
+  - `balanced` alone makes no commitment, and that is what balanced means. It is also what
+    every golden route is produced with, so that branch stays a no-op.
 
 - **The document format version stays at 1**, and that is a deliberate call rather than
   an oversight. Every field above is omitted from the JSON when it holds its default, so

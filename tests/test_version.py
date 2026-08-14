@@ -48,12 +48,15 @@ RELEASE_HEADING_RE = re.compile(r"^## \[(\d+\.\d+\.\d+)\] - (\d{4}-\d{2}-\d{2})$
 
 UNRELEASED_HEADING = "## [Unreleased]"
 
-#: Keep a Changelog 1.1.0. Restricted deliberately: "Notes" is ours and is for things
-#: that are neither a change to the software nor invisible, such as a recorded
-#: divergence from the reference engine.
-ALLOWED_SUBSECTIONS = frozenset(
-    {"Added", "Changed", "Deprecated", "Removed", "Fixed", "Security", "Notes"}
-)
+#: Keep a Changelog 1.1.0, in the order that specification lists them. Restricted
+#: deliberately: "Notes" is ours and is for things that are neither a change to the
+#: software nor invisible, such as a recorded divergence from the reference engine.
+#:
+#: A tuple rather than a set because the order is checked as well as the membership --
+#: see test_subsections_are_in_keep_a_changelog_order.
+SUBSECTION_ORDER = ("Added", "Changed", "Deprecated", "Removed", "Fixed", "Security", "Notes")
+
+ALLOWED_SUBSECTIONS = frozenset(SUBSECTION_ORDER)
 
 
 @dataclass(frozen=True)
@@ -97,6 +100,19 @@ def _unreleased_body() -> list[str]:
         if collecting:
             body.append(line)
     return body
+
+
+def _subsections() -> dict[str, list[str]]:
+    """Each ``## `` heading mapped to the ``### `` headings beneath it, in file order."""
+    sections: dict[str, list[str]] = {}
+    current: str | None = None
+    for line in _changelog_lines():
+        if line.startswith("## "):
+            current = line[3:].strip()
+            sections[current] = []
+        elif line.startswith("### ") and current is not None:
+            sections[current].append(line[4:].strip())
+    return sections
 
 
 def _has_content(body: list[str]) -> bool:
@@ -218,6 +234,29 @@ def test_subsection_headings_are_from_the_agreed_set() -> None:
             assert name in ALLOWED_SUBSECTIONS, (
                 f"unknown changelog subsection {name!r}; allowed: {sorted(ALLOWED_SUBSECTIONS)}"
             )
+
+
+def test_no_section_repeats_a_subsection() -> None:
+    """A version's section is published verbatim as that release's notes.
+
+    ``release.yml`` cuts the section for the tag being built out of this file and hands
+    it to ``gh release create``, so a section carrying two ``### Added`` blocks with a
+    ``### Changed`` between them ships a release page that reads as though its notes were
+    assembled by accident. Entries accumulate here over weeks, which is exactly how that
+    happens -- so it is checked rather than noticed at the tag.
+    """
+    for section, names in _subsections().items():
+        duplicates = sorted({name for name in names if names.count(name) > 1})
+        assert not duplicates, f"[{section}] repeats {duplicates}; its headings are {names}"
+
+
+def test_subsections_are_in_keep_a_changelog_order() -> None:
+    """Added before Changed before Fixed, as the format this file claims to follow says."""
+    for section, names in _subsections().items():
+        ranked = [SUBSECTION_ORDER.index(name) for name in names if name in SUBSECTION_ORDER]
+        assert ranked == sorted(ranked), (
+            f"[{section}] lists {names}; expected them in the order {list(SUBSECTION_ORDER)}"
+        )
 
 
 def test_every_referenced_section_has_a_link_definition() -> None:
