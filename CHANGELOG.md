@@ -22,6 +22,52 @@ closed without a bump.
 
 ### Added
 
+- **A part can be given a value** (double-click it, or `F2`). This was the one field on
+  the document no human could reach: every part the window placed was created with
+  `value=""` and nothing could change it afterwards, while an agent on the MCP server has
+  been able to pass one to `place_component` since that server existed. `guide._bom`
+  groups on exactly this field, so the tool's own build guide printed "Resistor × 4"
+  where it meant "10k × 4".
+  - The dialog carries **only what `component.update` carries** — reference, value, lock.
+    Rotation is a command of its own, and putting it here would make one press of OK into
+    two entries on the undo stack for what the user experienced as one edit.
+  - The **Parts panel has a value box** as well, applied to each part as it is placed. A
+    board is populated in runs — five 10k resistors, then three 100nF — and naming each
+    one afterwards through its own dialog is the same work done once per part instead of
+    once per run.
+- **Right-click menus** on the board, the Nets panel and the findings panel. There were
+  none anywhere: everything a part can be told to do lived in the menu bar at the top of a
+  window a metre wide, while the part itself was under the pointer in the middle of the
+  board. Every menu is built from the **same `QAction` objects the menu bar holds**, so an
+  action greyed out in one place is greyed out in the other. Right-click already means
+  "finish" inside a board mode, and the guards for that are described in
+  `BoardView.contextMenuEvent`.
+- **The window remembers its layout** — geometry, dock sizes and positions, board colour,
+  the ratsnest, ruler and hatch toggles, and the preferred connection style. All of it
+  reset on every launch, and the cost was paid by whoever used the tool most. The 3D panel
+  deliberately still starts closed: restoring it open would build VTK's whole pipeline
+  during startup to show a board nobody has looked at yet.
+- **The build guide, in the window** (`Ctrl+4`). The soldering order is the thing this
+  application is *for*, and the only way to see one was to export four files and go and
+  find them — so the order the tool had worked out was invisible while the board was being
+  designed, which is when it is worth knowing. Picking a step selects its parts on the 2D
+  board, brings its holes into view, and moves the 3D assembly slider with it. Closed by
+  default and rebuilt only while open, because building a guide runs DRC and LVS.
+- **The export offers to open what it wrote**, rather than ending at a line in the status
+  bar naming a file in a directory the user then has to go and find.
+- **A language menu** (View ▸ Language). The Turkish catalogue has existed the whole time
+  and could be selected only by an environment variable or a command-line flag. Applied at
+  the next start, and it says so: every label is translated once as the window is built,
+  and the widgets a live rebuild missed would be exactly the ones nobody would notice had
+  stayed English.
+- **Files can be dropped on the window** — a `.perf` to open it (through the same
+  unsaved-work guard the Open menu item uses) or a `.net` to import it. Nothing happened
+  before, which reads as the application refusing that kind of file rather than refusing
+  drops.
+- **The findings panel has a filter box**, like the parts and nets panels. A board
+  mid-layout carries a hundred proximity warnings, and "show me the errors" is how anybody
+  reads a list that long.
+
 - **Copy, paste and duplicate a block of board** (`Ctrl+C` / `Ctrl+V` / `Ctrl+D`). A
   perfboard project repeats itself in a way a PCB does not — eight identical channels,
   the same RC pair at every op-amp — and until now the only way to build the second one
@@ -146,6 +192,25 @@ closed without a bump.
 
 ### Changed
 
+- **The Turkish translation is complete.** 216 strings were wrapped in `t()` and roughly
+  67 were not — including *every* tooltip and all the tree headers, so `--lang tr` gave
+  Turkish menu items with English explanations under them, which is the half a user stops
+  to read. `tests/test_i18n.py` now checks the direction it could not see before: a
+  user-facing string never wrapped in `t()` is not a missing translation, it is not in the
+  system at all, so it moved no number and nothing reported it.
+  - The catalogue scanner understands **adjacent string literals** as one key, because a
+    tooltip lives in the source as three quoted fragments on three lines. Without that,
+    wrapping a tooltip both failed the coverage check *and* reported its own catalogue key
+    as stale — which is why the tooltips stayed English.
+- **The findings panel keeps your place across an edit.** It rebuilt from `clear()` on
+  every command, throwing away the expanded groups and the selected row — so working
+  through a rule meant re-expanding it after every attempt to fix what the rule was
+  complaining about. Groups are restored **by name**, since a rule that gained a violation
+  moves down the tree and one that lost its last disappears. Severity now colours the row
+  too, in the colours the status bar already uses for the same counts.
+- The Nets panel's **"Left" column is now "To route"**. One English key cannot carry two
+  meanings in a catalogue whose keys *are* the English strings, and Board Features already
+  has an edge called Left. Saying what the number counts is better English anyway.
 - **Autorouting a big board is a third faster**, and the interesting part is which third.
   A 100 × 60 board with 60 parts took **6.8 s**; it takes **4.5 s**. Every golden route
   reproduces byte for byte, which is the only reason to believe the change was safe.

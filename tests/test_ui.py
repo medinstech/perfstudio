@@ -27,7 +27,7 @@ import sys
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
-from PySide6.QtCore import QPointF, QRectF
+from PySide6.QtCore import QEvent, QPoint, QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QImage, QPainter
 from PySide6.QtWidgets import QApplication
 
@@ -76,19 +76,21 @@ def qapp():
 
 
 @pytest.fixture(autouse=True)
-def _recent_files_in_a_temp_file(tmp_path, monkeypatch):
-    """Keep the recent-file list out of the real user store.
+def _settings_in_a_temp_file(tmp_path, monkeypatch):
+    """Keep the recent-file list AND the saved session out of the real user store.
 
     A test suite has no business writing into somebody's registry, and one that did would
     also make these tests depend on whatever ran before them -- including on the developer
-    having opened a board that morning.
+    having opened a board that morning. Since the window now saves its layout on close,
+    and every test here closes a window, this fixture is what stands between the suite and
+    the developer's own window geometry.
     """
     from PySide6.QtCore import QSettings
 
     from perfstudio.ui import main as main_module
 
     store = QSettings(str(tmp_path / "recent.ini"), QSettings.Format.IniFormat)
-    monkeypatch.setattr(main_module, "recent_files_settings", lambda: store)
+    monkeypatch.setattr(main_module, "app_settings", lambda: store)
     yield store
 
 
@@ -717,6 +719,159 @@ def test_a_placement_off_the_board_is_refused_by_the_bus() -> None:
     assert result.code == "off-board"
 
 
+# ---------------------------------------------------------------------------
+# A part's value: the one document field no human could reach
+# ---------------------------------------------------------------------------
+
+
+def test_a_part_is_placed_with_the_value_the_parts_panel_carries() -> None:
+    """Every placement used to hard-code value="", so a board built in the window produced
+    a bill of materials that said "Resistor x 4" where it meant "10k x 4"."""
+    bus = _blank_bus()
+    scene = BoardScene(bus.document, footprint_lookup(), side="top", bus=bus)
+    scene.placement_value = "10k"
+    scene.arm_placement("r-axial-3")
+
+    scene.place_armed(HoleCoord(3, 3))
+
+    assert bus.document.components[0].value == "10k"
+
+
+def test_the_placement_value_outlives_one_placement() -> None:
+    """Five resistors of the same value is the case; retyping it between each is not."""
+    bus = _blank_bus()
+    scene = BoardScene(bus.document, footprint_lookup(), side="top", bus=bus)
+    scene.placement_value = "100nF"
+    scene.arm_placement("c-disc-p2")
+
+    scene.place_armed(HoleCoord(1, 1))
+    scene.set_document(bus.document)
+    scene.place_armed(HoleCoord(1, 5))
+
+    assert [c.value for c in bus.document.components] == ["100nF", "100nF"]
+
+
+def test_double_clicking_a_part_asks_the_host_to_open_it() -> None:
+    bus = _blank_bus()
+    scene = BoardScene(bus.document, footprint_lookup(), side="top", bus=bus)
+    scene.arm_placement("dip-8")
+    scene.place_armed(HoleCoord(4, 4))
+    scene.arm_placement(None)
+    scene.set_document(bus.document)
+    placed = bus.document.components[0]
+    seen: list[str] = []
+    scene.componentActivated.connect(seen.append)
+
+    item = scene.component_items[placed.id]
+    assert scene.component_at(item.pos()) is item
+    scene.mouseDoubleClickEvent(_double_click_at(item.pos()))
+
+    assert seen == [placed.id]
+
+
+def test_a_double_click_while_a_mode_is_armed_opens_nothing() -> None:
+    """Every mode gives the first click of the pair a meaning of its own, so a dialog on
+    top of it would interrupt the tool with a window nobody asked for."""
+    bus = _blank_bus()
+    scene = BoardScene(bus.document, footprint_lookup(), side="top", bus=bus)
+    scene.arm_placement("dip-8")
+    scene.place_armed(HoleCoord(4, 4))
+    scene.set_document(bus.document)
+    seen: list[str] = []
+    scene.componentActivated.connect(seen.append)
+
+    scene.arm_drawing("bare-wire")
+    item = scene.component_items[bus.document.components[0].id]
+    scene.mouseDoubleClickEvent(_double_click_at(item.pos()))
+
+    assert seen == []
+
+
+def _double_click_at(pos: QPointF):
+    """A left double-click at a scene position, as Qt would deliver it."""
+    from PySide6.QtWidgets import QGraphicsSceneMouseEvent
+
+    event = QGraphicsSceneMouseEvent(QEvent.Type.GraphicsSceneMouseDoubleClick)
+    event.setScenePos(pos)
+    event.setButton(Qt.MouseButton.LeftButton)
+    return event
+
+
+def test_properties_edits_ref_value_and_lock_in_one_undo_step(monkeypatch) -> None:
+    """One press of OK is one edit, however many fields it changed."""
+    from perfstudio.ui import main as main_module
+
+    window = _window_on(_load_dense())
+    component = window.bus.document.components[0]
+    before = len(window.bus.history())
+
+    monkeypatch.setattr(
+        main_module.ComponentDialog, "exec", lambda self: main_module.QDialog.DialogCode.Accepted
+    )
+    monkeypatch.setattr(main_module.ComponentDialog, "values", lambda self: ("RENAMED", "4k7", True))
+    window.on_component_properties(component.id)
+
+    edited = next(c for c in window.bus.document.components if c.id == component.id)
+    assert (edited.ref, edited.value, edited.locked) == ("RENAMED", "4k7", True)
+    assert len(window.bus.history()) == before + 1
+    _close(window)
+
+
+def test_properties_that_changed_nothing_writes_no_history(monkeypatch) -> None:
+    """An undo entry for a dialog somebody opened and closed is an undo entry that lies."""
+    from perfstudio.ui import main as main_module
+
+    window = _window_on(_load_dense())
+    component = window.bus.document.components[0]
+    before = len(window.bus.history())
+
+    monkeypatch.setattr(
+        main_module.ComponentDialog, "exec", lambda self: main_module.QDialog.DialogCode.Accepted
+    )
+    monkeypatch.setattr(
+        main_module.ComponentDialog,
+        "values",
+        lambda self: (component.ref, component.value, component.locked),
+    )
+    window.on_component_properties(component.id)
+
+    assert len(window.bus.history()) == before
+    _close(window)
+
+
+def test_a_duplicate_reference_is_refused_and_said_out_loud(monkeypatch) -> None:
+    from perfstudio.ui import main as main_module
+
+    window = _window_on(_load_dense())
+    first, second = window.bus.document.components[0], window.bus.document.components[1]
+    warned: list[str] = []
+
+    monkeypatch.setattr(
+        main_module.ComponentDialog, "exec", lambda self: main_module.QDialog.DialogCode.Accepted
+    )
+    monkeypatch.setattr(main_module.ComponentDialog, "values", lambda self: (second.ref, "", False))
+    monkeypatch.setattr(
+        main_module.QMessageBox, "warning", lambda *args, **kwargs: warned.append(args[2])
+    )
+    window.on_component_properties(first.id)
+
+    assert [c.ref for c in window.bus.document.components][:2] == [first.ref, second.ref]
+    assert warned and "duplicate-ref" in warned[0]
+    _close(window)
+
+
+def test_properties_is_offered_for_one_part_and_not_for_three() -> None:
+    window = _window_on(_load_dense())
+    ids = [c.id for c in window.bus.document.components]
+
+    window.scene.select_components(ids[:1])
+    assert window.act_properties.isEnabled() is True
+
+    window.scene.select_components(ids[:3])
+    assert window.act_properties.isEnabled() is False
+    _close(window)
+
+
 @pytest.mark.parametrize(
     ("ref", "pins", "expected"),
     [
@@ -861,12 +1016,18 @@ def test_autoplace_on_an_empty_board_says_so_rather_than_running(monkeypatch) ->
 
 @requires_offscreen_gl  # on_export_guide renders a step image per step
 def test_exporting_the_guide_writes_all_four_files(tmp_path, monkeypatch) -> None:
+    from perfstudio.ui import main as main_module
+
     window = _window_on(_load_dense())
     window.current_path = tmp_path / "board.perf"
 
     monkeypatch.setattr(
         "perfstudio.ui.main.QMessageBox.warning", lambda *args, **kwargs: None
     )
+    # The export ends by offering to open what it wrote, which is a modal dialog: in a
+    # headless run it waits for a click that never comes. Its own behaviour is checked by
+    # test_the_export_offers_to_open_what_it_wrote below.
+    monkeypatch.setattr(main_module.MainWindow, "_offer_to_open", lambda self, written: None)
     window.on_export_guide()
 
     written = sorted(p.name for p in tmp_path.iterdir())
@@ -879,6 +1040,8 @@ def test_exporting_the_guide_writes_all_four_files(tmp_path, monkeypatch) -> Non
 def test_guide_gaps_are_reported_in_a_dialog_not_only_the_status_bar(tmp_path, monkeypatch) -> None:
     """Each warning says the guide describes less than the whole build. A user who misses
     that follows the steps to the end and finds the board does not work."""
+    from perfstudio.ui import main as main_module
+
     window = _window_on(_load_dense())
     window.current_path = tmp_path / "board.perf"
 
@@ -887,10 +1050,104 @@ def test_guide_gaps_are_reported_in_a_dialog_not_only_the_status_bar(tmp_path, m
         "perfstudio.ui.main.QMessageBox.warning",
         lambda parent, title, text, *args, **kwargs: shown.append(text),
     )
+    monkeypatch.setattr(main_module.MainWindow, "_offer_to_open", lambda self, written: None)
     window.on_export_guide()
 
     assert shown and "could not cover" in shown[0]
     window.close()
+
+
+def test_the_export_offers_to_open_what_it_wrote(tmp_path, monkeypatch) -> None:
+    """The export used to end at a line in the status bar naming a file in a directory
+    the user then had to go and find."""
+    from perfstudio.ui import main as main_module
+
+    window = _window_on(_load_dense())
+    guide_html = tmp_path / "board_guide.html"
+    guide_html.write_text("<!doctype html>", encoding="utf-8")
+
+    opened: list[str] = []
+    monkeypatch.setattr(main_module.QDesktopServices, "openUrl", lambda url: opened.append(url.toLocalFile()))
+    # Answer the dialog with its first button, which is "Open the Guide".
+    monkeypatch.setattr(
+        main_module.QMessageBox, "exec", lambda self: self.setDefaultButton(self.buttons()[0])
+    )
+    monkeypatch.setattr(
+        main_module.QMessageBox, "clickedButton", lambda self: self.buttons()[0]
+    )
+    window._offer_to_open([guide_html, tmp_path / "board_bom.csv"])
+
+    assert [pathlib.Path(o) for o in opened] == [guide_html]
+    _close(window)
+
+
+# ---------------------------------------------------------------------------
+# The build guide, in the window
+# ---------------------------------------------------------------------------
+
+
+def test_the_guide_panel_lists_every_step_the_slider_counts() -> None:
+    """Two views of one list. Building it twice would let them disagree about how many
+    steps there are while showing the same board."""
+    from perfstudio.ui.main import ROLE_STEP_INDEX
+
+    window = _window_on(_load_dense())
+    window.dock_guide.show()
+    window._refresh_guide_panel()
+
+    listed = []
+    for i in range(window.guide_tree.topLevelItemCount()):
+        phase = window.guide_tree.topLevelItem(i)
+        for j in range(phase.childCount()):
+            index = phase.child(j).data(0, ROLE_STEP_INDEX)
+            if index is not None:
+                listed.append(index)
+
+    assert listed == list(range(len(window._assembly_steps())))
+    _close(window)
+
+
+def test_picking_a_step_shows_it_on_the_board() -> None:
+    """"Fit R7, C7 to C11" is an instruction; the same step with those two pads lit up on
+    the board in front of you is an answer."""
+    from perfstudio.guide import PartStep
+    from perfstudio.ui.main import ROLE_STEP_INDEX
+
+    window = _window_on(_load_dense())
+    window.dock_guide.show()
+    window._refresh_guide_panel()
+    steps = window._assembly_steps()
+    part_index = next(i for i, s in enumerate(steps) if isinstance(s, PartStep))
+
+    leaf = _guide_leaf_for(window, part_index, ROLE_STEP_INDEX)
+    leaf.setSelected(True)
+
+    assert window.scene.selected_component_ids() == (steps[part_index].component_id,)
+    _close(window)
+
+
+def _guide_leaf_for(window, index, role):
+    tree = window.guide_tree
+    for i in range(tree.topLevelItemCount()):
+        phase = tree.topLevelItem(i)
+        for j in range(phase.childCount()):
+            if phase.child(j).data(0, role) == index:
+                return phase.child(j)
+    raise AssertionError(f"no leaf for step {index}")
+
+
+def test_a_closed_guide_panel_costs_nothing() -> None:
+    """Building a guide runs DRC and LVS. Paying for that on every edit to fill a panel
+    nobody has open is the mistake the 3D dock already avoids."""
+    window = _window_on(_load_dense())
+    assert window.dock_guide.isVisible() is False
+    assert window._guide_stale is True
+
+    window.guide_tree.clear()
+    window.on_bus_changed(window.bus.document, None)
+
+    assert window.guide_tree.topLevelItemCount() == 0
+    _close(window)
 
 
 # ---------------------------------------------------------------------------
@@ -2679,6 +2936,351 @@ def test_the_overlays_never_eat_a_click() -> None:
     for overlay in (window.view.mode_banner, window.view.empty_hint):
         assert overlay.testAttribute(QtCore_Qt.WidgetAttribute.WA_TransparentForMouseEvents)
     _close(window)
+
+
+# ---------------------------------------------------------------------------
+# The findings panel
+# ---------------------------------------------------------------------------
+
+
+def _drc_group(window, key):
+    for i in range(window.drc_tree.topLevelItemCount()):
+        root = window.drc_tree.topLevelItem(i)
+        for j in range(root.childCount()):
+            if root.child(j).data(0, _finding_key_role()) == key:
+                return root.child(j)
+    return None
+
+
+def _finding_key_role():
+    from perfstudio.ui.main import ROLE_FINDING_KEY
+
+    return ROLE_FINDING_KEY
+
+
+def test_an_expanded_rule_stays_expanded_across_an_edit() -> None:
+    """The panel rebuilt from clear() on every command, so working through a rule meant
+    re-expanding it after every attempt to fix what the rule was complaining about."""
+    window = _window_on(_load_dense())
+    rule = next(
+        key
+        for key in (
+            f"drc:{v.rule}" for v in window._last_violations
+        )
+    )
+    _drc_group(window, rule).setExpanded(True)
+
+    window.on_bus_changed(window.bus.document, None)
+
+    assert _drc_group(window, rule).isExpanded() is True
+    _close(window)
+
+
+def test_a_rule_that_gained_a_violation_still_restores_by_name() -> None:
+    """Remembering row indices would restore the wrong groups exactly when the list
+    changed, which is the only time it matters."""
+    window = _window_on(_load_dense())
+    keys = [
+        f"drc:{v.rule}" for v in window._last_violations
+    ]
+    last = sorted(set(keys))[-1]
+    _drc_group(window, last).setExpanded(True)
+
+    assert last in window._expanded_drc_keys()
+    _close(window)
+
+
+def test_the_findings_can_be_filtered_down_to_one_rule() -> None:
+    """A board mid-layout carries a hundred proximity warnings, and "show me the errors"
+    is how anybody reads a list that long."""
+    window = _window_on(_load_dense())
+    rules = {v.rule for v in window._last_violations}
+    assert len(rules) > 1, "the fixture needs more than one rule for this to mean anything"
+    wanted = sorted(rules)[0]
+
+    window.drc_filter.setText(wanted)
+
+    shown = {
+        window.drc_tree.topLevelItem(0).child(j).text(0).split(" ")[0]
+        for j in range(window.drc_tree.topLevelItem(0).childCount())
+    }
+    assert shown == {wanted}
+    _close(window)
+
+
+def test_a_severity_has_the_same_colour_in_the_tree_as_on_the_status_bar() -> None:
+    from perfstudio.ui.theme import ERROR, WARNING
+
+    window = _window_on(_load_dense())
+    root = window.drc_tree.topLevelItem(0)
+    by_rule = {v.rule: v.severity for v in window._last_violations}
+
+    for j in range(root.childCount()):
+        item = root.child(j)
+        rule = item.text(0).split(" ")[0]
+        expected = ERROR if by_rule[rule] == "error" else WARNING
+        assert item.foreground(0).color().name() == expected, rule
+    _close(window)
+
+
+# ---------------------------------------------------------------------------
+# Files dropped on the window
+# ---------------------------------------------------------------------------
+
+
+#: Mime payloads the drop events below point at. QDropEvent does NOT take ownership of
+#: its QMimeData, so without a Python reference the object is collected while the event
+#: still holds a pointer to it -- and the handler reads freed memory, which on Windows is
+#: an access violation rather than an exception.
+_DROPPED_MIME: list = []
+
+
+def _drop_of(*paths):
+    from PySide6.QtCore import QMimeData, QUrl
+    from PySide6.QtGui import QDropEvent
+
+    data = QMimeData()
+    data.setUrls([QUrl.fromLocalFile(str(p)) for p in paths])
+    _DROPPED_MIME.append(data)
+    return QDropEvent(
+        QPointF(10, 10), Qt.DropAction.CopyAction, data, Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+
+
+def test_a_board_dropped_on_the_window_opens_it(tmp_path) -> None:
+    """The gesture everyone tries first with a file, and nothing happened -- which reads
+    as the application refusing that kind of file rather than refusing drops."""
+    window = _window_on(_load_dense())
+    board = tmp_path / "dropped.perf"
+    board.write_text(GOLDEN.read_text(encoding="utf-8"), encoding="utf-8")
+    window._saved_document = window.bus.document  # nothing unsaved, so no guard dialog
+
+    window.dropEvent(_drop_of(board))
+
+    assert window.current_path == board
+    _close(window)
+
+
+def test_a_netlist_dropped_on_the_window_is_imported(tmp_path, monkeypatch) -> None:
+    from perfstudio.ui import main as main_module
+
+    window = _window_on(_load_dense())
+    netlist = tmp_path / "circuit.net"
+    netlist.write_text("(export (version D))", encoding="utf-8")
+    imported: list = []
+    monkeypatch.setattr(
+        main_module.MainWindow, "import_netlist_from", lambda self, path: imported.append(path)
+    )
+
+    window.dropEvent(_drop_of(netlist))
+
+    assert imported == [netlist]
+    _close(window)
+
+
+def test_a_drop_this_window_cannot_open_is_declined(tmp_path) -> None:
+    window = _window_on(_load_dense())
+    before = window.current_path
+
+    window.dropEvent(_drop_of(tmp_path / "holiday.jpg"))
+    # ...and five boards at once is an instruction this window cannot carry out; picking
+    # one at random would be a worse answer than declining.
+    window.dropEvent(_drop_of(tmp_path / "a.perf", tmp_path / "b.perf"))
+
+    assert window.current_path == before
+    _close(window)
+
+
+# ---------------------------------------------------------------------------
+# Right-click
+# ---------------------------------------------------------------------------
+
+
+def _menu_labels(menu) -> list[str]:
+    return [a.text().replace("&", "") for a in menu.actions() if not a.isSeparator()]
+
+
+def test_right_clicking_a_part_offers_what_can_be_done_to_it() -> None:
+    window = _window_on(_load_dense())
+    component = window.bus.document.components[0]
+    item = window.scene.component_items[component.id]
+    pos = window.view.mapFromScene(item.pos())
+
+    menu = window.board_menu(pos)
+
+    assert "Properties…" in _menu_labels(menu)
+    assert "Rotate Clockwise" in _menu_labels(menu)
+    # ...and selected it, so the menu is about the part that was clicked.
+    assert window.scene.selected_component_ids() == (component.id,)
+    _close(window)
+
+
+def test_right_clicking_bare_board_offers_what_can_be_done_to_the_board() -> None:
+    window = _window_on(_load_dense())
+    window.scene.select_components([])
+
+    labels = _menu_labels(window.board_menu(QPoint(2, 2)))
+
+    assert "Paste" in labels and "Board Setup…" in labels
+    assert "Rotate Clockwise" not in labels
+    _close(window)
+
+
+def test_the_context_menu_holds_the_same_actions_as_the_menu_bar() -> None:
+    """A second list of what can be done to a part is a second list free to disagree with
+    the first about which of them are available."""
+    window = _window_on(_load_dense())
+    component = window.bus.document.components[0]
+    item = window.scene.component_items[component.id]
+
+    menu = window.board_menu(window.view.mapFromScene(item.pos()))
+
+    assert window.act_properties in menu.actions()
+    assert window.act_delete in menu.actions()
+    _close(window)
+
+
+def test_a_right_click_that_finished_a_trace_does_not_also_open_a_menu() -> None:
+    """Right-click already means "finish" on this board, and Windows delivers the
+    context-menu event after the release -- by which time the mode is gone and a menu
+    built on "is a mode armed" would appear on top of the trace just committed."""
+    bus = _blank_bus()
+    scene = BoardScene(bus.document, footprint_lookup(), side="top", bus=bus)
+    scene.arm_drawing("solder-trace")
+    scene.draw_click(HoleCoord(2, 2))
+    scene.draw_click(HoleCoord(3, 2))
+
+    scene.mousePressEvent(_press_at(QPointF(0, 0), Qt.MouseButton.RightButton))
+
+    assert scene.armed_draw_kind is None, "the right-click should have finished the trace"
+    assert scene.take_consumed_right_click() is True
+    assert scene.take_consumed_right_click() is False, "the answer is spent once read"
+
+
+def _press_at(pos: QPointF, button):
+    from PySide6.QtWidgets import QGraphicsSceneMouseEvent
+
+    event = QGraphicsSceneMouseEvent(QEvent.Type.GraphicsSceneMousePress)
+    event.setScenePos(pos)
+    event.setButton(button)
+    return event
+
+
+def test_the_findings_can_be_copied_out_as_text() -> None:
+    """A DRC message is what somebody pastes into a forum post asking why their board
+    does not work."""
+    from PySide6.QtWidgets import QApplication as QApp
+
+    window = _window_on(_load_dense())
+
+    window._copy_all_findings()
+
+    copied = QApp.clipboard().text()
+    assert copied
+    assert any(v.message in copied for v in window._last_violations)
+    _close(window)
+
+
+# ---------------------------------------------------------------------------
+# What the window remembers between runs
+# ---------------------------------------------------------------------------
+
+
+def test_a_closed_window_hands_its_layout_to_the_next_one() -> None:
+    """Every one of these used to reset on launch, so the people who use the tool most
+    re-arranged it most."""
+    from perfstudio.ui.boardcolors import choose as choose_colour
+    from perfstudio.ui.boardcolors import chosen_key
+    from perfstudio.ui.main import BOARD_COLOUR_KEY, GEOMETRY_KEY, app_settings
+
+    first = _window_on(_load_dense())
+    first.act_ratsnest.setChecked(False)
+    first.act_hatch.setChecked(False)
+    first.on_board_colour("blue")
+    first.on_routing_style("solder")
+    _close(first)
+
+    assert app_settings().value(GEOMETRY_KEY) is not None
+    assert app_settings().value(BOARD_COLOUR_KEY) == "blue"
+
+    # The chosen scheme is module state and would still be blue in this process whatever
+    # the store said, so it is put back first: otherwise this test passes with the restore
+    # deleted, which is the one thing it exists to check.
+    choose_colour(None)
+    second = _window_on(_load_dense())
+    assert second.act_ratsnest.isChecked() is False
+    assert second.scene.show_ratsnest is False
+    assert second.act_hatch.isChecked() is False
+    assert chosen_key() == "blue"
+    assert second._routing_style == "solder"
+    assert second.act_style["solder"].isChecked() is True
+    _close(second)
+    choose_colour(None)
+
+
+def test_a_close_the_user_backed_out_of_records_nothing(monkeypatch) -> None:
+    """A window that is still open has not been left, and its layout is not a decision."""
+    from perfstudio.ui.main import GEOMETRY_KEY, MainWindow, app_settings
+
+    window = _window_on(_load_dense())
+    monkeypatch.setattr(MainWindow, "_offer_to_save", lambda self: False)
+
+    window.close()
+
+    assert app_settings().value(GEOMETRY_KEY) is None
+    monkeypatch.undo()
+    _close(window)
+
+
+def test_the_3d_panel_starts_closed_however_it_was_left() -> None:
+    """Restoring it open would build VTK's whole pipeline during startup to show a board
+    nobody has looked at yet. Its size still comes back with the rest of the layout."""
+    first = _window_on(_load_dense())
+    first.dock_3d.show()
+    _close(first)
+
+    second = _window_on(_load_dense())
+    assert second.dock_3d.isVisible() is False
+    assert second.vtk_widget is None
+    _close(second)
+
+
+def test_choosing_a_language_records_it_for_the_next_start(monkeypatch) -> None:
+    """Applied at the next start rather than live: every label in the window was
+    translated once as it was built, and the widgets a rebuild missed would be exactly
+    the ones nobody would notice had stayed English."""
+    from perfstudio.ui import main as main_module
+    from perfstudio.ui.main import LANGUAGE_KEY, app_settings
+
+    window = _window_on(_load_dense())
+    told: list[str] = []
+    monkeypatch.setattr(
+        main_module.QMessageBox, "information", lambda *args, **kwargs: told.append(args[1])
+    )
+
+    window.on_language("tr")
+
+    assert app_settings().value(LANGUAGE_KEY) == "tr"
+    assert window.act_language["tr"].isChecked() is True
+    assert window.act_language["en"].isChecked() is False
+    assert told, "a change that only happens next time has to say so"
+    _close(window)
+
+
+def test_a_tick_survives_the_ini_backends_idea_of_a_boolean(tmp_path) -> None:
+    """QSettings is not one format: the registry keeps a bool a bool, the INI backend
+    writes the string "true" -- and "false" is truthy, so a plain bool() would restore
+    every toggle to on and the bug would never show on Windows."""
+    from PySide6.QtCore import QSettings
+
+    from perfstudio.ui.main import _stored_bool
+
+    store = QSettings(str(tmp_path / "probe.ini"), QSettings.Format.IniFormat)
+    for written, expected in (("false", False), ("true", True), (False, False), (True, True)):
+        store.setValue("probe", written)
+        assert _stored_bool(store, "probe", True) is expected, written
+    assert _stored_bool(store, "never/written", True) is True
 
 
 # ---------------------------------------------------------------------------

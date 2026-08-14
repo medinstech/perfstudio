@@ -23,6 +23,7 @@ from __future__ import annotations
 import dataclasses
 import datetime
 import math
+import os
 import sys
 import time
 from collections.abc import Callable, Sequence
@@ -32,13 +33,15 @@ from typing import Any, Literal, cast
 from PySide6.QtCore import (
     QEventLoop,
     QFileSystemWatcher,
+    QPoint,
     QSettings,
     QSize,
     Qt,
     QThread,
     QTimer,
+    QUrl,
 )
-from PySide6.QtGui import QAction, QColor, QIcon, QKeySequence
+from PySide6.QtGui import QAction, QColor, QDesktopServices, QIcon, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -56,6 +59,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QProgressDialog,
     QPushButton,
@@ -124,7 +128,15 @@ from perfstudio.geometry import (
     preset_edge_connectors,
     preset_mounting_holes,
 )
-from perfstudio.guide import Guide, GuideStep, all_steps, build_guide, document_at_step, step_focus
+from perfstudio.guide import (
+    Guide,
+    GuideStep,
+    PartStep,
+    all_steps,
+    build_guide,
+    document_at_step,
+    step_focus,
+)
 from perfstudio.guide import describe as describe_guide
 from perfstudio.guide_export import bom_to_csv, cut_list_to_csv, guide_to_html, guide_to_json
 from perfstudio.lvs import LvsIssue, LvsResult, run_lvs, stale_conductor_ids
@@ -172,8 +184,10 @@ from perfstudio.version import describe as describe_version
 from . import icons, view3d
 from .boardcolors import SCHEMES as BOARD_SCHEMES
 from .boardcolors import choose as choose_board_colour
+from .boardcolors import chosen_key as chosen_board_colour
 from .clipboard import block_from_json, block_to_json, paste_payload, paste_position
 from .export_pdf import export_pdf
+from .i18n import language as current_language
 from .i18n import set_language, t
 from .theme import ERROR, OK, STYLESHEET, TEXT_DIM, WARNING
 from .view2d import BoardScene, BoardView, hole_to_screen, next_reference
@@ -184,20 +198,54 @@ from .view2d import BoardScene, BoardView, hole_to_screen, next_reference
 type StylePreference = RoutingStyle | Literal["best"]
 
 
-#: Where the recent-file list is kept between runs. A function rather than a constant so a
-#: test can point it at a temporary file instead of the real user store -- a test suite has
-#: no business writing into somebody's registry, and one that did would also make the
-#: recent-files tests depend on whatever ran before them.
-def recent_files_settings() -> QSettings:
+#: Where everything remembered between runs is kept: the recent-file list, the window
+#: layout, and the view preferences. A function rather than a constant so a test can point
+#: it at a temporary file instead of the real user store -- a test suite has no business
+#: writing into somebody's registry, and one that did would also make these tests depend on
+#: whatever ran before them, including on the developer having opened a board that morning.
+def app_settings() -> QSettings:
     return QSettings("PerfStudio", "PerfStudio")
 
 
 RECENT_FILES_KEY = "recentFiles"
 
+
+def _stored_bool(settings: QSettings, key: str, default: bool) -> bool:
+    """A tick from the store, whichever way the platform round-tripped it.
+
+    QSettings is not one format. On Windows it is the registry, which keeps a bool a
+    bool; the INI backend the tests use writes the string ``"true"``, which is truthy
+    either way it is spelled -- so a plain ``bool(value)`` would restore every toggle to
+    ON and the bug would be invisible on the developer's own machine.
+    """
+    stored = settings.value(key, default)
+    if isinstance(stored, str):
+        return stored.strip().lower() in ("true", "1", "yes")
+    return bool(stored)
+
+
+#: The session: where the window was and what it was showing. Grouped under one prefix so
+#: the whole lot can be cleared by hand without touching the recent-file list.
+#:
+#: What is NOT here is as deliberate as what is. The board SIDE is not remembered -- being
+#: dropped onto the solder side of a board you have just opened, mirrored, with no memory
+#: of asking for it, is disorienting in a way a dock width is not. Nor is the document:
+#: this application opens what it is given.
+GEOMETRY_KEY = "session/geometry"
+WINDOW_STATE_KEY = "session/windowState"
+BOARD_COLOUR_KEY = "session/boardColour"
+RATSNEST_KEY = "session/showRatsnest"
+RULERS_KEY = "session/showRulers"
+HATCH_KEY = "session/hatchFarSide"
+ROUTING_STYLE_KEY = "session/routingStyle"
+LANGUAGE_KEY = "session/language"
+
 ROLE_HOLES = int(Qt.ItemDataRole.UserRole) + 1
 ROLE_COMPONENT_IDS = int(Qt.ItemDataRole.UserRole) + 2
 ROLE_NET_ID = int(Qt.ItemDataRole.UserRole) + 3
 ROLE_FOOTPRINT_ID = int(Qt.ItemDataRole.UserRole) + 4
+ROLE_STEP_INDEX = int(Qt.ItemDataRole.UserRole) + 5
+ROLE_FINDING_KEY = int(Qt.ItemDataRole.UserRole) + 6
 #: (component ref, pin number) on a pin row under a net. The row also carries
 #: ROLE_NET_ID, so selecting a pin highlights its net exactly as selecting the net does.
 ROLE_PIN = int(Qt.ItemDataRole.UserRole) + 5
@@ -850,6 +898,9 @@ class NetDialog(QDialog):
 
         form = QFormLayout()
         self.name = QLineEdit(name)
+        # Not translated, like every other example of the tool's own vocabulary: a net
+        # called GND is called GND in Turkish too, and a catalogue entry mapping the
+        # string to itself is one the tests correctly refuse.
         self.name.setPlaceholderText("GND, +5V, OUT…")
         form.addRow(t("Name"), self.name)
 
@@ -871,8 +922,10 @@ class NetDialog(QDialog):
         self.current.setSpecialValueText(t("not stated"))
         self.current.setValue(current_a if current_a is not None else 0.0)
         self.current.setToolTip(
-            "Wakes DRC's current-capacity rule and picks the wire gauge on the build "
-            "guide's cut list. Nothing else in the application can set it."
+            t(
+                "Wakes DRC's current-capacity rule and picks the wire gauge on the build "
+                "guide's cut list. Nothing else in the application can set it."
+            )
         )
         form.addRow(t("Current"), self.current)
 
@@ -888,8 +941,10 @@ class NetDialog(QDialog):
         self.voltage.setEnabled(voltage_v is not None)
         self.voltage_stated.toggled.connect(self.voltage.setEnabled)
         self.voltage.setToolTip(
-            "Wakes DRC's creepage rule above the mains threshold. A -12 V rail is an "
-            "ordinary value here, which is why it needs its own tick rather than a zero."
+            t(
+                "Wakes DRC's creepage rule above the mains threshold. A -12 V rail is an "
+                "ordinary value here, which is why it needs its own tick rather than a zero."
+            )
         )
         row = QHBoxLayout()
         row.addWidget(self.voltage_stated)
@@ -915,6 +970,95 @@ class NetDialog(QDialog):
             current if current > 0 else None,
             self.voltage.value() if self.voltage_stated.isChecked() else None,
         )
+
+
+class ComponentDialog(QDialog):
+    """What a placed part is called and what it IS.
+
+    The value was the one field on the document no human could reach. Every part the
+    window placed was given ``value=""`` and nothing could change it afterwards, while
+    an agent on the MCP server has been able to pass one to ``place_component`` since
+    that server existed -- so the tool's own build guide printed "Resistor x 4" where it
+    meant "10k x 4", because ``guide._bom`` groups on exactly this field.
+
+    ONLY what ``component.update`` carries: reference, value and lock. Rotation is a
+    command of its own and putting it here would turn one press of OK into two entries
+    on the undo stack for what the user experienced as one edit -- so it stays on R and
+    Shift+R, which is where it can be seen happening anyway.
+
+    Everything else on the part is shown and not editable: a footprint is chosen by
+    placing, and an anchor by dragging.
+    """
+
+    def __init__(
+        self,
+        component: ComponentInstance,
+        footprint: Footprint | None,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(t("Part Properties"))
+        self.setMinimumWidth(380)
+
+        form = QFormLayout()
+        self.ref = QLineEdit(component.ref)
+        self.ref.setPlaceholderText("R1, C3, U2…")
+        self.ref.setToolTip(
+            t(
+                "The designator the schematic uses. Renaming one that a net names takes "
+                "it off that net, so rename before importing a netlist rather than after."
+            )
+        )
+        form.addRow(t("Reference"), self.ref)
+
+        self.value = QLineEdit(component.value)
+        self.value.setPlaceholderText("10k, 100nF, NE555…")
+        self.value.setToolTip(
+            t(
+                "What the part actually is. This is the column the build guide's bill of "
+                "materials groups on, so a blank one becomes a line you cannot order."
+            )
+        )
+        form.addRow(t("Value"), self.value)
+
+        self.locked = QCheckBox(t("locked — auto-placement leaves it where it is"))
+        self.locked.setChecked(component.locked)
+        form.addRow("", self.locked)
+
+        # The facts, so the dialog answers "which part is this" as well as renaming it.
+        # A connector is placed by its pin 1 and named after nothing in particular, and at
+        # this point the user has usually double-clicked to find out which one they hit.
+        name = footprint.name if footprint is not None else component.footprint_id
+        pins = f"{len(footprint.pins)}" if footprint is not None else "?"
+        height = f"{footprint.body_height:.1f} mm" if footprint is not None else "?"
+        for label, fact in (
+            (t("Footprint"), f"{name}  ({component.footprint_id})"),
+            (t("Pins"), pins),
+            (t("Pin 1 at"), f"{format_hole(component.anchor)}  ·  {component.rotation}°"),
+            (t("Height"), height),
+        ):
+            shown = QLabel(fact)
+            shown.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            shown.setStyleSheet(f"color: {TEXT_DIM};")
+            form.addRow(label, shown)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+        layout = QVBoxLayout()
+        layout.addLayout(form)
+        layout.addWidget(buttons)
+        self.setLayout(layout)
+        # The value is what this was opened for in nearly every case -- the reference is
+        # already right, because the application generated it.
+        self.value.setFocus()
+        self.value.selectAll()
+
+    def values(self) -> tuple[str, str, bool]:
+        return self.ref.text().strip(), self.value.text().strip(), self.locked.isChecked()
 
 
 class GoToPartDialog(QDialog):
@@ -1164,6 +1308,9 @@ class MainWindow(QMainWindow):
         #: The document changed while the 3D panel was hidden, so it needs re-actoring
         #: before it is shown again.
         self._3d_stale = False
+        #: The same, for the build-guide panel: building a guide runs DRC and LVS, which
+        #: is not worth paying for to fill a panel nobody has open.
+        self._guide_stale = True
         #: Assembly playback. The slider and its friends do not exist until the 3D panel
         #: is first opened, so everything that reads them checks for None first.
         self.assembly_slider: Any = None
@@ -1202,6 +1349,9 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(window_title(path))
         self.resize(1500, 950)
         self.setStyleSheet(STYLESHEET)
+        # A board and a netlist both arrive as files, and dragging one onto the window is
+        # the first thing anybody tries. See dropEvent.
+        self.setAcceptDrops(True)
 
         self.scene = BoardScene(self.bus.document, self.lookup, side=self.side, bus=self.bus)
         self.view = BoardView(self.scene)
@@ -1219,6 +1369,8 @@ class MainWindow(QMainWindow):
         self.scene.pinsConnected.connect(self._on_pins_connected)
         self.scene.hoveredHole.connect(self._on_hovered_hole)
         self.scene.componentPlaced.connect(self._on_component_placed)
+        self.scene.componentActivated.connect(self.on_component_properties)
+        self.view.contextMenuRequested.connect(self._on_board_context_menu)
         self.scene.measureArmed.connect(self._on_measure_armed)
         self.scene.measured.connect(self._on_measured)
         self.scene.cutArmed.connect(self._on_cut_armed)
@@ -1233,13 +1385,21 @@ class MainWindow(QMainWindow):
         self._build_library_dock()
         self._build_nets_dock()
         self._build_3d_dock()
+        self._build_guide_dock()
         self._build_drc_dock()
+        # Two panels of the same width on the same edge, so they share it as tabs rather
+        # than each getting half. Both start closed; whichever is opened takes the space.
+        self.tabifyDockWidget(self.dock_3d, self.dock_guide)
         self._build_menu()
         self._build_toolbar()
         self._build_status_bar()
 
         self._subscribe_bus()
         self.on_bus_changed(self.bus.document, None)
+        # Last, and after the first repaint: restoring a toggle drives the scene through
+        # the same handler the menu item does, and those handlers expect a window that is
+        # already built.
+        self._restore_session()
 
         # A window opened on a path -- from the command line, or from the recent list --
         # watches that file from the start, and remembers what it said. Without the text,
@@ -1293,7 +1453,7 @@ class MainWindow(QMainWindow):
         """
         self.dock_3d = QDockWidget(t("3D View"), self)
         self.dock_3d.setObjectName("dock3d")
-        self._3d_placeholder = QLabel("Opening the 3D view builds it — this takes a moment.")
+        self._3d_placeholder = QLabel(t("Opening the 3D view builds it — this takes a moment."))
         self._3d_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._3d_placeholder.setWordWrap(True)
         container = QWidget()
@@ -1391,17 +1551,25 @@ class MainWindow(QMainWindow):
         self._sync_assembly_range()
         return bar
 
-    def _assembly_steps(self) -> tuple[GuideStep, ...]:
-        """The build order for the document as it stands, rebuilt when it changes.
+    def current_guide(self) -> Guide:
+        """The build guide for the document as it stands, rebuilt when it changes.
 
         Cached on the document OBJECT, which is free to compare because documents are
         immutable and every edit produces a new one. Building it costs a couple of
         milliseconds -- it runs DRC and LVS -- which is worth paying only once per edit.
+
+        ONE cache for both readers. The assembly slider and the Build Guide panel are two
+        views of the same list, and building it twice would let them disagree about how
+        many steps there are while showing the same board.
         """
-        if self._assembly_doc is not self.bus.document:
+        if self._assembly_doc is not self.bus.document or self._assembly_guide is None:
             self._assembly_doc = self.bus.document
             self._assembly_guide = build_guide(self.bus.document, self.lookup)
             self._assembly_cached = all_steps(self._assembly_guide)
+        return self._assembly_guide
+
+    def _assembly_steps(self) -> tuple[GuideStep, ...]:
+        self.current_guide()
         return self._assembly_cached
 
     def _sync_assembly_range(self) -> None:
@@ -1547,21 +1715,30 @@ class MainWindow(QMainWindow):
         act_reload = file_menu.addAction(t("Re&load from Disk"))
         act_reload.setShortcut(QKeySequence("F5"))
         act_reload.setToolTip(
-            "Load the file again, discarding what is in this window. The board reloads "
-            "itself automatically when it changes on disk and there is nothing unsaved."
+            t(
+                "Load the file again, discarding what is in this window. The board reloads "
+                "itself automatically when it changes on disk and there is nothing unsaved."
+            )
         )
         act_reload.triggered.connect(self.on_reload)
         file_menu.addSeparator()
-        act_board = file_menu.addAction(t("&Board Setup…"))
+        # Held on the window because the board's own context menu offers it: right-clicking
+        # bare board and being told how to change that board is the obvious thing for a
+        # right-click there to do.
+        act_board = self.act_board_setup = file_menu.addAction(t("&Board Setup…"))
         act_board.setToolTip(
-            "Grid size and substrate. The material is not cosmetic: it decides the iron "
-            "temperature the build guide gives and whether the pad-lifting rule applies."
+            t(
+                "Grid size and substrate. The material is not cosmetic: it decides the iron "
+                "temperature the build guide gives and whether the pad-lifting rule applies."
+            )
         )
         act_board.triggered.connect(self.on_board_setup)
         act_features = file_menu.addAction(t("Board &Features…"))
         act_features.setToolTip(
-            "Mounting holes and edge-connector fingers. A mounting bore takes the copper "
-            "off the pads around it, so DRC treats a pin left there as an error."
+            t(
+                "Mounting holes and edge-connector fingers. A mounting bore takes the copper "
+                "off the pads around it, so DRC treats a pin left there as an error."
+            )
         )
         act_features.triggered.connect(self.on_board_features)
         act_import = file_menu.addAction(t("&Import KiCad Netlist…"))
@@ -1573,8 +1750,10 @@ class MainWindow(QMainWindow):
         self.act_guide = act_guide
         act_guide.setShortcut(QKeySequence("Ctrl+B"))
         act_guide.setToolTip(
-            "Write the step-by-step soldering guide: one offline HTML file, the wire cut "
-            "list and BOM as CSV, and the whole thing as JSON."
+            t(
+                "Write the step-by-step soldering guide: one offline HTML file, the wire cut "
+                "list and BOM as CSV, and the whole thing as JSON."
+            )
         )
         act_guide.triggered.connect(self.on_export_guide)
         act_pdf = file_menu.addAction(t("Export 1:1 PDF (component + solder side)…"))
@@ -1609,22 +1788,28 @@ class MainWindow(QMainWindow):
         self.act_copy = edit_menu.addAction(t("Cop&y"))
         self.act_copy.setShortcut(QKeySequence.StandardKey.Copy)
         self.act_copy.setToolTip(
-            "Put the selected parts and copper on the clipboard as text, so a block can "
-            "be pasted into another board, another window, or a bug report."
+            t(
+                "Put the selected parts and copper on the clipboard as text, so a block can "
+                "be pasted into another board, another window, or a bug report."
+            )
         )
         self.act_copy.triggered.connect(self.on_copy)
         self.act_paste = edit_menu.addAction(t("&Paste"))
         self.act_paste.setShortcut(QKeySequence.StandardKey.Paste)
         self.act_paste.setToolTip(
-            "Place the clipboard's block under the pointer. New references, no net "
-            "claim: a copy of R1 is not R1, and its copper is not on R1's net."
+            t(
+                "Place the clipboard's block under the pointer. New references, no net "
+                "claim: a copy of R1 is not R1, and its copper is not on R1's net."
+            )
         )
         self.act_paste.triggered.connect(self.on_paste)
         self.act_duplicate = edit_menu.addAction(t("Dupl&icate"))
         self.act_duplicate.setShortcut(QKeySequence("Ctrl+D"))
         self.act_duplicate.setToolTip(
-            "Copy and paste the selection in one step, beside itself and without "
-            "touching the clipboard."
+            t(
+                "Copy and paste the selection in one step, beside itself and without "
+                "touching the clipboard."
+            )
         )
         self.act_duplicate.triggered.connect(self.on_duplicate)
         edit_menu.addSeparator()
@@ -1648,6 +1833,19 @@ class MainWindow(QMainWindow):
         self.act_delete = edit_menu.addAction(t("&Delete"))
         self.act_delete.setShortcut(QKeySequence.StandardKey.Delete)
         self.act_delete.triggered.connect(self.on_delete_selection)
+        edit_menu.addSeparator()
+        # F2 as well as the double-click, because renaming is what F2 means in every file
+        # manager and half the editors -- and because a part small enough to be fiddly to
+        # double-click is exactly the one whose value nobody has typed yet.
+        self.act_properties = edit_menu.addAction(t("Proper&ties…"))
+        self.act_properties.setShortcut(QKeySequence("F2"))
+        self.act_properties.setToolTip(
+            t(
+                "The part's reference and value. The value is what the build guide's bill "
+                "of materials groups on, and nothing else in the window can set it."
+            )
+        )
+        self.act_properties.triggered.connect(lambda: self.on_component_properties())
 
         #: Actions that act on the selection, so they can be greyed out when there is none.
         #: A menu item that silently does nothing is indistinguishable from a broken one.
@@ -1662,6 +1860,7 @@ class MainWindow(QMainWindow):
             self.act_delete,
             self.act_copy,
             self.act_duplicate,
+            self.act_properties,
         )
         for action in self.selection_actions:
             action.setEnabled(False)
@@ -1702,8 +1901,10 @@ class MainWindow(QMainWindow):
         self.act_cut.setCheckable(True)
         self.act_cut.setShortcut(QKeySequence("X"))
         self.act_cut.setToolTip(
-            "Break the strip at a hole. The cut is drilled through the pad, so that hole "
-            "has nothing to solder to afterwards — click a cut again to take it back."
+            t(
+                "Break the strip at a hole. The cut is drilled through the pad, so that hole "
+                "has nothing to solder to afterwards — click a cut again to take it back."
+            )
         )
         self.act_cut.triggered.connect(self.on_cut_mode)
         draw_menu.addSeparator()
@@ -1712,7 +1913,7 @@ class MainWindow(QMainWindow):
         act_stop_draw = draw_menu.addAction(t("&Stop the Current Tool"))
         act_stop_draw.setShortcut(QKeySequence("Escape"))
         act_stop_draw.setToolTip(
-            "Leave any board mode: placing a part, drawing a conductor, connecting pins."
+            t("Leave any board mode: placing a part, drawing a conductor, connecting pins.")
         )
         act_stop_draw.triggered.connect(self.on_stop_tool)
 
@@ -1720,14 +1921,18 @@ class MainWindow(QMainWindow):
         self.act_autoplace = place_menu.addAction(t("&Auto-place Board"))
         self.act_autoplace.setShortcut(QKeySequence("Ctrl+Shift+A"))
         self.act_autoplace.setToolTip(
-            "Rearrange the unlocked parts to shorten the connections and make them "
-            "solderable as traces rather than wires. Shows the result before applying it."
+            t(
+                "Rearrange the unlocked parts to shorten the connections and make them "
+                "solderable as traces rather than wires. Shows the result before applying it."
+            )
         )
         self.act_autoplace.triggered.connect(lambda: self.on_autoplace())
         act_reroll = place_menu.addAction(t("&Try Another Arrangement"))
         act_reroll.setToolTip(
-            "Search again from a different seed. Annealing is a random walk, so this is "
-            "a real second answer rather than the same one twice."
+            t(
+                "Search again from a different seed. Annealing is a random walk, so this is "
+                "a real second answer rather than the same one twice."
+            )
         )
         act_reroll.triggered.connect(lambda: self.on_autoplace(reroll=True))
 
@@ -1744,8 +1949,10 @@ class MainWindow(QMainWindow):
         self.act_connect.setCheckable(True)
         self.act_connect.setShortcut(QKeySequence("C"))
         self.act_connect.setToolTip(
-            "Click one pin, then another. They end up on the same net: an existing one if "
-            "either pin is already on it, or a new one named for you if neither is."
+            t(
+                "Click one pin, then another. They end up on the same net: an existing one if "
+                "either pin is already on it, or a new one named for you if neither is."
+            )
         )
         self.act_connect.triggered.connect(self.on_connect_tool)
         net_menu.addSeparator()
@@ -1753,14 +1960,16 @@ class MainWindow(QMainWindow):
         self.act_new_net = act_new_net
         act_new_net.setShortcut(QKeySequence("Ctrl+Shift+N"))
         act_new_net.setToolTip(
-            "Name a net, then click its pins on the board. Nothing here needs KiCad."
+            t("Name a net, then click its pins on the board. Nothing here needs KiCad.")
         )
         act_new_net.triggered.connect(self.on_new_net)
         self.act_add_pins = net_menu.addAction(t("&Add Pins to Net"))
         self.act_add_pins.setShortcut(QKeySequence("P"))
         self.act_add_pins.setToolTip(
-            "Click each pin that belongs to the selected net. Right-click or Enter "
-            "finishes, and the whole session goes on the history as one step."
+            t(
+                "Click each pin that belongs to the selected net. Right-click or Enter "
+                "finishes, and the whole session goes on the history as one step."
+            )
         )
         self.act_add_pins.triggered.connect(self.on_add_pins_to_net)
         self.act_finish_pins = net_menu.addAction(t("&Finish Adding Pins"))
@@ -1769,20 +1978,26 @@ class MainWindow(QMainWindow):
         net_menu.addSeparator()
         self.act_edit_net = net_menu.addAction(t("&Edit Net…"))
         self.act_edit_net.setToolTip(
-            "Name, class, and the current and voltage it carries — which nothing else in "
-            "the application can set, and which DRC's capacity and creepage rules need."
+            t(
+                "Name, class, and the current and voltage it carries — which nothing else in "
+                "the application can set, and which DRC's capacity and creepage rules need."
+            )
         )
         self.act_edit_net.triggered.connect(self.on_edit_net)
         self.act_disconnect_pins = net_menu.addAction(t("&Disconnect Selected Pins"))
         self.act_disconnect_pins.setToolTip(
-            "Take the pins selected in the Nets panel off their net. Expand a net to "
-            "see them."
+            t(
+                "Take the pins selected in the Nets panel off their net. Expand a net to "
+                "see them."
+            )
         )
         self.act_disconnect_pins.triggered.connect(self.on_disconnect_pins)
         self.act_delete_net = net_menu.addAction(t("De&lete Net"))
         self.act_delete_net.setToolTip(
-            "Forget what the net was for. Copper already laid for it stays on the board, "
-            "and stops being anything re-route or the stale sweep will touch."
+            t(
+                "Forget what the net was for. Copper already laid for it stays on the board, "
+                "and stops being anything re-route or the stale sweep will touch."
+            )
         )
         self.act_delete_net.triggered.connect(self.on_delete_net)
         #: Everything that needs a net picked in the Nets panel.
@@ -1844,9 +2059,11 @@ class MainWindow(QMainWindow):
         # See autoroute.ReroutePlan for the measurement that made it necessary.
         self.act_reroute_all = route_menu.addAction(t("Re-route &Everything"))
         self.act_reroute_all.setToolTip(
-            "Rip up the existing routing and plan it again from nothing. Use this after "
-            "moving parts: autoroute only adds, so it leaves the copper laid out for "
-            "where things used to be. Hand-drawn copper with no net is never touched."
+            t(
+                "Rip up the existing routing and plan it again from nothing. Use this after "
+                "moving parts: autoroute only adds, so it leaves the copper laid out for "
+                "where things used to be. Hand-drawn copper with no net is never touched."
+            )
         )
         self.act_reroute_all.triggered.connect(lambda: self.on_reroute(None))
         self.act_reroute_selected = route_menu.addAction(t("Re-route Nets of Se&lection"))
@@ -1891,8 +2108,10 @@ class MainWindow(QMainWindow):
         self.act_hatch.setCheckable(True)
         self.act_hatch.setChecked(True)
         self.act_hatch.setToolTip(
-            "Draw conductors on the face you are NOT looking at as hatched, the way a part "
-            "on the far side already is. Turn it off to see them solid."
+            t(
+                "Draw conductors on the face you are NOT looking at as hatched, the way a part "
+                "on the far side already is. Turn it off to see them solid."
+            )
         )
         self.act_hatch.toggled.connect(self.scene.set_hatch_far_side)
 
@@ -1905,17 +2124,21 @@ class MainWindow(QMainWindow):
         self.act_measure.setCheckable(True)
         self.act_measure.setShortcut(QKeySequence("Ctrl+M"))
         self.act_measure.setToolTip(
-            "Click two holes. Says how many holes across they are, how far apart in mm, "
-            "and how many steps of solder trace it would take to join them — three "
-            "different numbers that answer three different questions."
+            t(
+                "Click two holes. Says how many holes across they are, how far apart in mm, "
+                "and how many steps of solder trace it would take to join them — three "
+                "different numbers that answer three different questions."
+            )
         )
         self.act_measure.toggled.connect(self.on_measure_mode)
 
         act_go_to = view_menu.addAction(t("&Go to Part…"))
         act_go_to.setShortcut(QKeySequence("Ctrl+G"))
         act_go_to.setToolTip(
-            "Find a part by reference, value or footprint and centre the view on it. "
-            "On a dense board there is otherwise no way to answer “where is R37”."
+            t(
+                "Find a part by reference, value or footprint and centre the view on it. "
+                "On a dense board there is otherwise no way to answer “where is R37”."
+            )
         )
         act_go_to.triggered.connect(self.on_go_to_part)
         view_menu.addSeparator()
@@ -1923,9 +2146,23 @@ class MainWindow(QMainWindow):
         self.act_3d = self.dock_3d.toggleViewAction()
         self.act_3d.setText(t("Show &3D View"))
         self.act_3d.setShortcut(QKeySequence("Ctrl+3"))
-        self.act_3d.setToolTip("Open the 3D board view (Ctrl+3). Closed by default: it is the "
-                              "most expensive thing in the window to keep up to date.")
+        self.act_3d.setToolTip(
+            t(
+                "Open the 3D board view (Ctrl+3). Closed by default: it is the "
+                "most expensive thing in the window to keep up to date."
+            )
+        )
         view_menu.addAction(self.act_3d)
+        self.act_guide_panel = self.dock_guide.toggleViewAction()
+        self.act_guide_panel.setText(t("Show &Build Guide"))
+        self.act_guide_panel.setShortcut(QKeySequence("Ctrl+4"))
+        self.act_guide_panel.setToolTip(
+            t(
+                "The soldering order, in the window: shortest part first, jumpers before "
+                "whatever stands on them, ICs last. Picking a step shows it on the board."
+            )
+        )
+        view_menu.addAction(self.act_guide_panel)
         self.act_exploded = view_menu.addAction(t("&Exploded View"))
         self.act_exploded.setCheckable(True)
         self.act_exploded.setToolTip(
@@ -1934,6 +2171,19 @@ class MainWindow(QMainWindow):
         self.act_exploded.toggled.connect(self.on_toggle_exploded)
         act_reset_3d = view_menu.addAction(t("Reset 3D &Camera"))
         act_reset_3d.triggered.connect(self.on_reset_3d_camera)
+
+        view_menu.addSeparator()
+        # The interface could be told to speak Turkish only by an environment variable or
+        # a command-line flag -- which is to say, not by anybody running the application
+        # the way applications are run. The catalogue has existed the whole time.
+        language_menu = view_menu.addMenu(t("&Language"))
+        self.act_language: dict[str, QAction] = {}
+        for code, label in (("en", t("English")), ("tr", t("Turkish"))):
+            action = language_menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(code == current_language())
+            action.triggered.connect(lambda _checked, c=code: self.on_language(c))
+            self.act_language[code] = action
 
         view_menu.addSeparator()
         # Solder mask colour changes nothing about the circuit, so it is a view setting
@@ -1945,8 +2195,10 @@ class MainWindow(QMainWindow):
         follow.setCheckable(True)
         follow.setChecked(True)
         follow.setToolTip(
-            "Green for FR-4 and brown for phenolic, which is what those substrates "
-            "actually look like."
+            t(
+                "Green for FR-4 and brown for phenolic, which is what those substrates "
+                "actually look like."
+            )
         )
         follow.triggered.connect(lambda: self.on_board_colour(None))
         self.act_colour[""] = follow
@@ -1966,13 +2218,15 @@ class MainWindow(QMainWindow):
         # shortcut card does, and found a destroyed QMenu on the first attempt.
         self._menus = [
             file_menu, self.menu_recent, edit_menu, draw_menu, place_menu, net_menu,
-            route_menu, style_menu, view_menu, colour_menu, help_menu,
+            route_menu, style_menu, view_menu, language_menu, colour_menu, help_menu,
         ]
         act_keys = help_menu.addAction(t("&Keyboard Shortcuts…"))
         act_keys.setShortcut(QKeySequence("F1"))
         act_keys.setToolTip(
-            "Every binding, read off this menu bar — plus the board gestures, which are "
-            "on no menu and were previously only in the source."
+            t(
+                "Every binding, read off this menu bar — plus the board gestures, which are "
+                "on no menu and were previously only in the source."
+            )
         )
         act_keys.triggered.connect(self.on_shortcuts)
         help_menu.addSeparator()
@@ -1993,6 +2247,9 @@ class MainWindow(QMainWindow):
         runs between the two pads, because that difference IS the application.
         """
         bar = QToolBar("Main")
+        # Named for the same reason the docks are: restoreState puts an unnamed toolbar
+        # back wherever it likes.
+        bar.setObjectName("mainToolbar")
         bar.setMovable(False)
         bar.setIconSize(QSize(icons.SIZE, icons.SIZE))
         bar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
@@ -2096,8 +2353,24 @@ class MainWindow(QMainWindow):
         self.library_filter.textChanged.connect(self._refresh_library)
         layout.addWidget(self.library_filter)
 
+        # Typed once and kept, because a board is placed in runs: five 10k resistors, then
+        # three 100nF. Naming each part afterwards through its own dialog is the same work
+        # done once per part instead of once per run -- and a value nobody types is a bill
+        # of materials nobody can order from.
+        self.library_value = QLineEdit()
+        self.library_value.setPlaceholderText(t("Value for parts placed now…  (10k, 100nF)"))
+        self.library_value.setClearButtonEnabled(True)
+        self.library_value.setToolTip(
+            t(
+                "Given to each part as it is placed. Leave it blank and the part is placed "
+                "without one; F2 sets it afterwards either way."
+            )
+        )
+        self.library_value.textChanged.connect(self._on_placement_value_changed)
+        layout.addWidget(self.library_value)
+
         self.library_tree = QTreeWidget()
-        self.library_tree.setHeaderLabels(["Part", "Pins"])
+        self.library_tree.setHeaderLabels([t("Part"), t("Pins")])
         self.library_tree.setRootIsDecorated(True)
         self.library_tree.setIconSize(QSize(icons.PART_SIZE, icons.PART_SIZE))
         # Tighter than Qt's default, to pay for the icons: a picture and an indent both
@@ -2109,12 +2382,16 @@ class MainWindow(QMainWindow):
         self.library_tree.itemSelectionChanged.connect(self._on_library_selection_changed)
         layout.addWidget(self.library_tree)
 
-        self.label_place_hint = QLabel("Pick a part, then click the board. Esc cancels.")
+        self.label_place_hint = QLabel(t("Pick a part, then click the board. Esc cancels."))
         self.label_place_hint.setWordWrap(True)
         self.label_place_hint.setStyleSheet(f"color: {TEXT_DIM};")
         layout.addWidget(self.label_place_hint)
 
         dock = QDockWidget(t("Parts"), self)
+        # Named because QMainWindow.restoreState matches docks BY objectName and silently
+        # drops the ones with none -- a layout that half restores is worse than one that
+        # does not, because only half of it looks wrong.
+        dock.setObjectName("dockParts")
         dock.setWidget(panel)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
         self.dock_library = dock
@@ -2157,6 +2434,11 @@ class MainWindow(QMainWindow):
             group.setExpanded(bool(needle) or len(by_archetype[archetype]) <= 4)
         tree.blockSignals(False)
 
+    def _on_placement_value_changed(self, text: str) -> None:
+        self.scene.placement_value = text.strip()
+        # The banner names the part about to be placed, and now its value with it.
+        self._refresh_mode_banner()
+
     def _on_library_selection_changed(self) -> None:
         items = self.library_tree.selectedItems()
         footprint_id = items[0].data(0, ROLE_FOOTPRINT_ID) if items else None
@@ -2164,7 +2446,7 @@ class MainWindow(QMainWindow):
 
     def _on_placement_armed(self, footprint_id: str) -> None:
         if not footprint_id:
-            self.label_place_hint.setText("Pick a part, then click the board. Esc cancels.")
+            self.label_place_hint.setText(t("Pick a part, then click the board. Esc cancels."))
             self.view.viewport().unsetCursor()
             self.library_tree.clearSelection()
             self._refresh_mode_banner()
@@ -2172,7 +2454,10 @@ class MainWindow(QMainWindow):
         footprint = self.lookup(footprint_id)
         name = footprint.name if footprint is not None else footprint_id
         ref = next_reference(self.bus.document, footprint_id)
-        self.label_place_hint.setText(f"Click a hole to place <b>{ref}</b> ({name}). Esc cancels.")
+        described = f"{self.scene.placement_value} {name}" if self.scene.placement_value else name
+        self.label_place_hint.setText(
+            f"{t('Click a hole to place')} <b>{ref}</b> ({described}). {t('Esc cancels.')}"
+        )
         self.view.viewport().setCursor(Qt.CursorShape.CrossCursor)
         self._refresh_mode_banner()
 
@@ -2220,7 +2505,9 @@ class MainWindow(QMainWindow):
             footprint = self.lookup(footprint_id)
             name = footprint.name if footprint is not None else footprint_id
             ref = next_reference(self.bus.document, footprint_id)
-            return f"{t('Placing')} {ref} ({name})  ·  {t('click a hole, Esc cancels')}"
+            value = self.scene.placement_value
+            described = f"{value} {name}" if value else name
+            return f"{t('Placing')} {ref} ({described})  ·  {t('click a hole, Esc cancels')}"
 
         kind = self.scene.armed_draw_kind
         if kind:
@@ -2285,7 +2572,7 @@ class MainWindow(QMainWindow):
         """The netlist, with what each net still needs.
 
         This is the board's to-do list, and it did not exist before: the only way to find
-        out whether a net was finished was to read an LVS message. "Left" is the ratsnest's
+        out whether a net was finished was to read an LVS message. "To route" is the ratsnest's
         own count, so it reaches zero exactly when the net is closed.
         """
         panel = QWidget()
@@ -2305,11 +2592,11 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.nets_filter)
 
         self.nets_tree = QTreeWidget()
-        self.nets_tree.setHeaderLabels(["Net", "Class", "Pins", "Left"])
+        self.nets_tree.setHeaderLabels([t("Net"), t("Class"), t("Pins"), t("To route")])
         self.nets_tree.setAlternatingRowColors(True)
         self.nets_tree.setRootIsDecorated(True)
         # The net name absorbs the spare width and the three narrow columns keep their
-        # content. Fixed widths pushed "Left" off the edge of the dock -- which is the one
+        # content. Fixed widths pushed "To route" off the edge of the dock -- which is the one
         # column the panel exists for, so it must never be the one that gets clipped.
         header = self.nets_tree.header()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
@@ -2317,9 +2604,12 @@ class MainWindow(QMainWindow):
             header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
         self.nets_tree.itemSelectionChanged.connect(self._on_net_selection_changed)
         self.nets_tree.itemDoubleClicked.connect(self._on_net_double_clicked)
+        self.nets_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.nets_tree.customContextMenuRequested.connect(self._on_nets_context_menu)
         layout.addWidget(self.nets_tree)
 
         dock = QDockWidget(t("Nets"), self)
+        dock.setObjectName("dockNets")
         dock.setWidget(panel)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
         self.dock_nets = dock
@@ -2327,18 +2617,269 @@ class MainWindow(QMainWindow):
         # left-hand docks share a column.
         self.resizeDocks([dock], [340], Qt.Orientation.Horizontal)
 
+    # -- the build guide, in the window ---------------------------------------
+    #
+    # The guide is what this application is FOR: the board on screen is a means to a
+    # person at a bench with an iron. Until now the only way to see one was to export four
+    # files and go and find them, so the order the tool had worked out -- shortest part
+    # first, jumpers before whatever stands on them, ICs last -- was invisible while the
+    # board was being designed, which is when it is worth knowing.
+    #
+    # Closed by default and rebuilt only while open, for the reason the 3D panel is:
+    # build_guide runs DRC and LVS, and paying for that on every keystroke to fill a
+    # panel nobody has open is the same mistake twice.
+
+    def _build_guide_dock(self) -> None:
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(6)
+
+        self.guide_summary = QLabel()
+        self.guide_summary.setWordWrap(True)
+        self.guide_summary.setStyleSheet(f"color: {TEXT_DIM};")
+        layout.addWidget(self.guide_summary)
+
+        self.guide_tree = QTreeWidget()
+        self.guide_tree.setHeaderLabels([t("Step"), t("Where")])
+        self.guide_tree.setRootIsDecorated(True)
+        header = self.guide_tree.header()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.guide_tree.itemSelectionChanged.connect(self._on_guide_step_selected)
+        layout.addWidget(self.guide_tree)
+
+        export = QPushButton(t("Export the Guide…"))
+        export.clicked.connect(self.on_export_guide)
+        layout.addWidget(export)
+
+        dock = QDockWidget(t("Build Guide"), self)
+        dock.setObjectName("dockGuide")
+        dock.setWidget(panel)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
+        self.dock_guide = dock
+        dock.hide()
+        dock.visibilityChanged.connect(self._on_guide_visibility_changed)
+
+    def _on_guide_visibility_changed(self, visible: bool) -> None:
+        if visible and self._guide_stale:
+            self._refresh_guide_panel()
+
+    def _refresh_guide_panel(self) -> None:
+        """Fill the panel from the guide, or mark it stale and do nothing.
+
+        Deliberately keeps NO selection across a rebuild. Adding a part renumbers every
+        step after it, so the step at the index you were on is a different step -- and a
+        panel that silently moved your place would be worse than one that lost it.
+        """
+        # isHidden(), never isVisible(): a widget is "visible" only once every ancestor
+        # is too, so during construction -- and in any headless run -- a dock that has
+        # been shown is not yet visible, and the panel would refuse to fill itself while
+        # sitting open in front of the user. The same trap as BoardView._place_overlays.
+        if not hasattr(self, "guide_tree") or self.dock_guide.isHidden():
+            self._guide_stale = True
+            return
+        self._guide_stale = False
+        guide = self.current_guide()
+        steps = self._assembly_cached
+        self.guide_summary.setText(describe_guide(guide))
+
+        tree = self.guide_tree
+        blocked = tree.blockSignals(True)
+        tree.clear()
+        index = 0
+        for phase in guide.phases:
+            if phase.is_empty:
+                # The order is physical, not editorial (guide.py), and a board simply may
+                # not need a phase. An empty heading reads as a step somebody forgot.
+                continue
+            head = QTreeWidgetItem([f"{phase.number}. {phase.title}", f"{len(phase.steps)}"])
+            head.setFlags(head.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+            tree.addTopLevelItem(head)
+            for step in phase.steps:
+                leaf = QTreeWidgetItem([step.title, step.span])
+                # The index into the FLAT list, which is what the assembly slider and
+                # document_at_step both count in -- see guide.all_steps.
+                leaf.setData(0, ROLE_STEP_INDEX, index)
+                head.addChild(leaf)
+                index += 1
+            for checkpoint in phase.checkpoints:
+                mark = QTreeWidgetItem([f"✓ {checkpoint.title}", ""])
+                mark.setForeground(0, QColor(OK))
+                mark.setFlags(mark.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+                head.addChild(mark)
+            head.setExpanded(True)
+        tree.blockSignals(blocked)
+        # Every step accounted for, or the panel and the slider are counting different
+        # things and one of them is wrong.
+        assert index == len(steps), f"{index} steps in phases, {len(steps)} in the flat list"
+
+    def _on_guide_step_selected(self) -> None:
+        """Show the step on the board: its parts selected, its holes brought into view.
+
+        This is the whole reason the guide is worth having in the window rather than in a
+        browser. "Fit R7, C7 to C11" is an instruction; the same step with those two pads
+        lit up on the board in front of you is an answer.
+        """
+        items = self.guide_tree.selectedItems()
+        if not items:
+            return
+        index = items[0].data(0, ROLE_STEP_INDEX)
+        if index is None:
+            return
+        steps = self._assembly_cached
+        if not 0 <= index < len(steps):
+            return
+        step = steps[index]
+        board, side = self.bus.document.board, self.side
+        if isinstance(step, PartStep):
+            self.scene.select_components([step.component_id])
+            self.view.reveal_holes([hole for _pin, hole in step.pin_holes], board, side)
+        else:
+            net = next((n for n in self.bus.document.nets if n.name == step.net_name), None)
+            self.scene.set_highlighted_nets([net.id] if net is not None else [])
+            self.view.reveal_holes(step.path, board, side)
+        # The 3D view follows if it is open, so the two panels are one place in the build
+        # rather than two. Only when it exists: the slider is built with the 3D widget.
+        if self.assembly_slider is not None and self.assembly_slider.isEnabled():
+            self.assembly_slider.setValue(index + 1)
+
     def _build_drc_dock(self) -> None:
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(6)
+
+        # The same escape hatch the parts and nets panels have. A board mid-layout can
+        # carry a hundred proximity warnings, and "show me the errors" or "show me R5'"
+        # is how anybody reads a list that long.
+        self.drc_filter = QLineEdit()
+        self.drc_filter.setPlaceholderText(t("Filter findings…  (error, short, R5', C7)"))
+        self.drc_filter.setClearButtonEnabled(True)
+        self.drc_filter.textChanged.connect(self._on_drc_filter_changed)
+        layout.addWidget(self.drc_filter)
+
         self.drc_tree = QTreeWidget()
-        self.drc_tree.setHeaderLabels(["Rule / Kind", "Message"])
+        self.drc_tree.setHeaderLabels([t("Rule / Kind"), t("Message")])
         self.drc_tree.setColumnWidth(0, 260)
         self.drc_tree.itemClicked.connect(self._on_drc_item_clicked)
+        self.drc_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.drc_tree.customContextMenuRequested.connect(self._on_drc_context_menu)
+        layout.addWidget(self.drc_tree)
+
         dock = QDockWidget(t("DRC / LVS"), self)
-        dock.setWidget(self.drc_tree)
+        dock.setObjectName("dockDrc")
+        dock.setWidget(panel)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, dock)
         # A clean board is four rows, and this panel was opening a quarter of the window
         # tall to show them -- taken off the board, which is the thing being worked on.
         self.dock_drc = dock
         self.resizeDocks([dock], [190], Qt.Orientation.Vertical)
+
+    def _on_drc_filter_changed(self, _text: str) -> None:
+        if self._last_lvs is not None:
+            self._refresh_drc_panel(self._last_violations, self._last_lvs)
+
+    # -- right-click ---------------------------------------------------------
+    #
+    # There was no context menu anywhere in this application. Everything a part can be
+    # told to do lived in the menu bar at the top of a window a metre wide, while the part
+    # itself was under the pointer in the middle of the board -- so rotating three parts
+    # meant three round trips to the Edit menu, and the keyboard shortcuts that avoid that
+    # are only discoverable from a card behind F1.
+    #
+    # Every one of these menus is built from the SAME QAction objects the menu bar holds,
+    # never a parallel list. An action greyed out up there is greyed out here, and one
+    # that gains a shortcut gains it in both places, because there is only one of it.
+
+    def _on_board_context_menu(self, pos: QPoint) -> None:
+        self.board_menu(pos).exec(self.view.viewport().mapToGlobal(pos))
+
+    def board_menu(self, pos: QPoint) -> QMenu:
+        """The menu for a right-click on the board, built around what is under it.
+
+        Built and returned rather than shown, so a test can read what a right-click at a
+        position would offer without a modal event loop -- ``exec`` on a menu in a
+        headless run waits for a click that will never come.
+        """
+        item = self.scene.component_at(self.view.mapToScene(pos))
+        if item is not None and item.comp.id not in self.scene.selected_component_ids():
+            # Right-clicking a part nobody selected selects it first, as it does in every
+            # editor -- otherwise the menu offers to rotate something else entirely.
+            self.scene.select_components([item.comp.id])
+
+        menu = QMenu(self)
+        menu.setToolTipsVisible(True)
+        if self.scene.selected_component_ids():
+            menu.addAction(self.act_properties)
+            menu.addSeparator()
+            menu.addAction(self.act_rotate_cw)
+            menu.addAction(self.act_rotate_ccw)
+            menu.addAction(self.act_mirror)
+            menu.addAction(self.act_lock)
+            menu.addSeparator()
+            menu.addAction(self.act_copy)
+            menu.addAction(self.act_duplicate)
+            menu.addAction(self.act_delete)
+            menu.addSeparator()
+            menu.addAction(self.act_route_selected)
+            menu.addAction(self.act_reroute_selected)
+        else:
+            # Bare board. Paste lands under the pointer, which is the reason this entry is
+            # worth having at all: the keyboard version pastes wherever the pointer happens
+            # to be, and here the pointer is demonstrably where the user just clicked.
+            menu.addAction(self.act_paste)
+            menu.addSeparator()
+            menu.addAction(self.act_connect)
+            menu.addAction(self.act_new_net)
+            menu.addSeparator()
+            menu.addAction(self.act_fit)
+            menu.addAction(self.act_flip)
+            menu.addSeparator()
+            menu.addAction(self.act_board_setup)
+        return menu
+
+    def _on_nets_context_menu(self, pos: QPoint) -> None:
+        self.nets_menu().exec(self.nets_tree.viewport().mapToGlobal(pos))
+
+    def nets_menu(self) -> QMenu:
+        menu = QMenu(self)
+        menu.setToolTipsVisible(True)
+        menu.addAction(self.act_new_net)
+        menu.addSeparator()
+        for action in self.net_actions:
+            menu.addAction(action)
+        menu.addSeparator()
+        menu.addAction(self.act_route_selected)
+        return menu
+
+    def _on_drc_context_menu(self, pos: QPoint) -> None:
+        self.drc_menu(pos).exec(self.drc_tree.viewport().mapToGlobal(pos))
+
+    def drc_menu(self, pos: QPoint) -> QMenu:
+        """Copying a finding out is the point: a DRC message is what somebody pastes into
+        a forum post asking why their board does not work."""
+        menu = QMenu(self)
+        item = self.drc_tree.itemAt(pos)
+        if item is not None:
+            copy_one = menu.addAction(t("&Copy This Finding"))
+            copy_one.triggered.connect(
+                lambda: QApplication.clipboard().setText(
+                    " ".join(part for part in (item.text(0), item.text(1)) if part).strip()
+                )
+            )
+        copy_all = menu.addAction(t("Copy &All Findings"))
+        copy_all.triggered.connect(self._copy_all_findings)
+        return menu
+
+    def _copy_all_findings(self) -> None:
+        lines = [f"{v.severity} {v.rule}: {v.message}" for v in self._last_violations]
+        if self._last_lvs is not None:
+            lines += [f"lvs {i.kind}: {i.message}" for i in self._last_lvs.issues]
+        QApplication.clipboard().setText("\n".join(lines))
+        self.statusBar().showMessage(
+            f"{len(lines)} {t('findings copied to the clipboard')}", 4000
+        )
 
     def _build_status_bar(self) -> None:
         """Separate labelled fields rather than one long sentence.
@@ -2396,6 +2937,9 @@ class MainWindow(QMainWindow):
             # than once against the old step order and again against the new one.
             self._sync_assembly_range()
         self._refresh_3d()
+        # Marks itself stale and returns when the panel is shut, so a closed panel costs
+        # nothing -- the guide it would need runs DRC and LVS to build.
+        self._refresh_guide_panel()
 
         self._refresh_title()
         self._refresh_undo_actions()
@@ -2464,9 +3008,9 @@ class MainWindow(QMainWindow):
             readable = self.scene.legend_is_readable()
             self.act_rulers.setEnabled(not readable)
             self.act_rulers.setToolTip(
-                "This board prints its own addresses, so the editor's ruler would repeat them."
+                t("This board prints its own addresses, so the editor's ruler would repeat them.")
                 if readable
-                else "Column letters and row numbers along the edges of the view."
+                else t("Column letters and row numbers along the edges of the view.")
             )
 
         # Cutting a track is meaningless on a board that has none, and the board type can
@@ -2477,7 +3021,7 @@ class MainWindow(QMainWindow):
             self.act_cut.setEnabled(strips)
             if not strips:
                 self.act_cut.setToolTip(
-                    "Only stripboard has tracks to cut. File ▸ Board Setup ▸ Type."
+                    t("Only stripboard has tracks to cut. File ▸ Board Setup ▸ Type.")
                 )
 
         errors = sum(1 for v in self._last_violations if v.severity == "error")
@@ -2524,25 +3068,48 @@ class MainWindow(QMainWindow):
 
     # -- DRC / LVS dock ----------------------------------------------------
 
+    #: LVS issue kinds that mean the board is wired differently from the schematic, as
+    #: opposed to merely incomplete. An unrouted net is work left to do; a short is a
+    #: board that will not work, and the two should not be the same colour.
+    _LVS_WRONG = frozenset({"open", "short", "unplaced-component", "unknown-footprint"})
+
     def _refresh_drc_panel(self, violations: tuple[DrcViolation, ...], lvs: LvsResult) -> None:
+        """Rebuild the findings, keeping the reader's place.
+
+        This ran ``clear()`` and built the whole tree again on EVERY command, which threw
+        away the expanded groups and the selected row each time -- so working through a
+        rule meant re-expanding it after every edit, which is to say after every attempt
+        to fix what the rule was complaining about.
+        """
         tree = self.drc_tree
+        expanded = self._expanded_drc_keys()
+        needle = self.drc_filter.text().strip().lower() if hasattr(self, "drc_filter") else ""
         tree.clear()
 
         drc_root = QTreeWidgetItem(["DRC", f"{len(violations)} violation(s)"])
+        drc_root.setData(0, ROLE_FINDING_KEY, "DRC")
         tree.addTopLevelItem(drc_root)
         by_rule: dict[str, list[DrcViolation]] = {}
         for v in violations:
+            if needle and needle not in f"{v.rule} {v.severity} {v.message}".lower():
+                continue
             by_rule.setdefault(v.rule, []).append(v)
         for rule in sorted(by_rule):
             items = by_rule[rule]
-            rule_item = QTreeWidgetItem([f"{rule} ({items[0].severity})", f"{len(items)}"])
+            severity = items[0].severity
+            rule_item = QTreeWidgetItem([f"{rule} ({severity})", f"{len(items)}"])
+            # The colour the status bar already uses for the same count, so a warning
+            # reads the same whether it is a number on the bar or a row in this tree.
+            rule_item.setForeground(0, QColor(ERROR if severity == "error" else WARNING))
+            rule_item.setData(0, ROLE_FINDING_KEY, f"drc:{rule}")
             drc_root.addChild(rule_item)
             for v in items:
                 leaf = QTreeWidgetItem(["", v.message])
                 leaf.setData(0, ROLE_HOLES, v.holes)
                 leaf.setData(0, ROLE_COMPONENT_IDS, v.component_ids)
                 rule_item.addChild(leaf)
-        drc_root.setExpanded(True)
+            rule_item.setExpanded(f"drc:{rule}" in expanded)
+        drc_root.setExpanded("DRC" in expanded or not expanded)
 
         s = lvs.summary
         lvs_root = QTreeWidgetItem(
@@ -2552,13 +3119,18 @@ class MainWindow(QMainWindow):
                 f"{s.physical_nets} physical nets",
             ]
         )
+        lvs_root.setData(0, ROLE_FINDING_KEY, "LVS")
         tree.addTopLevelItem(lvs_root)
         by_kind: dict[str, list[LvsIssue]] = {}
         for iss in lvs.issues:
+            if needle and needle not in f"{iss.kind} {iss.message}".lower():
+                continue
             by_kind.setdefault(iss.kind, []).append(iss)
         for kind in sorted(by_kind):
             kind_issues = by_kind[kind]
             kind_item = QTreeWidgetItem([kind, f"{len(kind_issues)}"])
+            kind_item.setForeground(0, QColor(ERROR if kind in self._LVS_WRONG else WARNING))
+            kind_item.setData(0, ROLE_FINDING_KEY, f"lvs:{kind}")
             lvs_root.addChild(kind_item)
             for iss in kind_issues:
                 leaf = QTreeWidgetItem(["", iss.message])
@@ -2566,7 +3138,30 @@ class MainWindow(QMainWindow):
                 issue_component_ids = tuple(c.id for c in self.bus.document.components if c.ref in issue_refs)
                 leaf.setData(0, ROLE_COMPONENT_IDS, issue_component_ids)
                 kind_item.addChild(leaf)
-        lvs_root.setExpanded(True)
+            kind_item.setExpanded(f"lvs:{kind}" in expanded)
+        lvs_root.setExpanded("LVS" in expanded or not expanded)
+
+    def _expanded_drc_keys(self) -> set[str]:
+        """Which groups are open, by NAME rather than by position.
+
+        A rule that gained a violation moves down the tree, and one that lost its last
+        one disappears -- so remembering row indices would restore the wrong groups
+        exactly when the list changed, which is the only time it matters.
+        """
+        found: set[str] = set()
+
+        def walk(item: QTreeWidgetItem | None) -> None:
+            if item is None:
+                return
+            key = item.data(0, ROLE_FINDING_KEY)
+            if item.isExpanded() and isinstance(key, str):
+                found.add(key)
+            for index in range(item.childCount()):
+                walk(item.child(index))
+
+        for index in range(self.drc_tree.topLevelItemCount()):
+            walk(self.drc_tree.topLevelItem(index))
+        return found
 
     def _on_drc_item_clicked(self, item: QTreeWidgetItem, _column: int) -> None:
         holes = item.data(0, ROLE_HOLES)
@@ -2732,6 +3327,10 @@ class MainWindow(QMainWindow):
         copyable = bool(components) or bool(self.scene.selected_conductor_ids())
         self.act_copy.setEnabled(copyable)
         self.act_duplicate.setEnabled(copyable)
+        # Properties edits ONE part: a reference is unique by definition, so a dialog over
+        # three of them could only offer the value, and a field that silently overwrites
+        # three values with one is not worth the two it destroys.
+        self.act_properties.setEnabled(len(components) == 1)
 
         if not components:
             self.label_selection.clear()
@@ -2858,7 +3457,7 @@ class MainWindow(QMainWindow):
         for the same circuit -- so "try again" is a real answer and not a placebo.
         """
         if not self.bus.document.components:
-            self.statusBar().showMessage("Nothing to place: the board is empty.", 6000)
+            self.statusBar().showMessage(t("Nothing to place: the board is empty."), 6000)
             return
         if reroll:
             self._place_seed += 1
@@ -2947,8 +3546,7 @@ class MainWindow(QMainWindow):
                 if any(node.component_ref in selected_refs for node in net.nodes)
             )
         if not net_ids:
-            self.statusBar().showMessage(
-                "Select a net in the Nets panel, or a part on the board, then route.", 6000
+            self.statusBar().showMessage(t("Select a net in the Nets panel, or a part on the board, then route."), 6000
             )
             return
         self._route(only_net_ids=net_ids)
@@ -2991,8 +3589,7 @@ class MainWindow(QMainWindow):
                 if any(node.component_ref in selected_refs for node in net.nodes)
             )
         if not net_ids:
-            self.statusBar().showMessage(
-                "Select a net in the Nets panel, or a part on the board, then re-route.", 6000
+            self.statusBar().showMessage(t("Select a net in the Nets panel, or a part on the board, then re-route."), 6000
             )
             return
         self.on_reroute(net_ids)
@@ -3005,7 +3602,7 @@ class MainWindow(QMainWindow):
         conductors become 12" is the only honest way to describe throwing away work.
         """
         if not self.bus.document.nets:
-            self.statusBar().showMessage("No netlist imported, so there is nothing to route.", 6000)
+            self.statusBar().showMessage(t("No netlist imported, so there is nothing to route."), 6000)
             return
 
         document = self.bus.document
@@ -3066,8 +3663,7 @@ class MainWindow(QMainWindow):
         strays = stale_conductor_ids(self.bus.document, self.lookup)
         if not strays:
             if not quiet:
-                self.statusBar().showMessage(
-                    "No stale conductors: every one still connects the net it claims.", 6000
+                self.statusBar().showMessage(t("No stale conductors: every one still connects the net it claims."), 6000
                 )
             return 0
         label = f"Remove {len(strays)} stale conductor(s)"
@@ -3092,7 +3688,7 @@ class MainWindow(QMainWindow):
         mutation in this application, it reaches the document only through the command bus.
         """
         if not self.bus.document.nets:
-            self.statusBar().showMessage("No netlist imported, so there is nothing to route.", 6000)
+            self.statusBar().showMessage(t("No netlist imported, so there is nothing to route."), 6000)
             return
 
         # A stripboard is a different problem and gets a different planner: its copper is
@@ -3116,7 +3712,7 @@ class MainWindow(QMainWindow):
             names = sorted(n.name for n in self.bus.document.nets if n.id in stale_nets)
             answer = QMessageBox.question(
                 self,
-                "Re-route the nets whose parts moved?",
+                t("Re-route the nets whose parts moved?"),
                 f"<b>{', '.join(names)}</b> still carry the copper laid out before a part "
                 f"moved.<p>Autoroute only adds, so routing now leaves that copper in place "
                 f"and puts more beside it. Re-routing them rips it up and plans again.</p>",
@@ -3239,7 +3835,7 @@ class MainWindow(QMainWindow):
             lines.append(f"... and {len(plan.problems) - 12} more.")
         QMessageBox.information(
             self,
-            "Some connections could not be made",
+            t("Some connections could not be made"),
             f"{len(plan.problems)} problem(s):\n\n" + "\n\n".join(lines),
         )
 
@@ -3258,7 +3854,7 @@ class MainWindow(QMainWindow):
             lines.append(f"... and {len(failures) - 12} more.")
         QMessageBox.information(
             self,
-            "Some connections could not be routed",
+            t("Some connections could not be routed"),
             f"{len(failures)} connection(s) were left unrouted:\n\n" + "\n".join(lines),
         )
 
@@ -3357,8 +3953,7 @@ class MainWindow(QMainWindow):
     def on_copy(self) -> None:
         text = self._copied_block()
         if not text:
-            self.statusBar().showMessage(
-                "Select a part or a conductor on the board first, then copy it.", 6000
+            self.statusBar().showMessage(t("Select a part or a conductor on the board first, then copy it."), 6000
             )
             return
         QApplication.clipboard().setText(text)
@@ -3388,8 +3983,7 @@ class MainWindow(QMainWindow):
         """
         text = self._copied_block()
         if not text:
-            self.statusBar().showMessage(
-                "Select a part or a conductor on the board first, then duplicate it.", 6000
+            self.statusBar().showMessage(t("Select a part or a conductor on the board first, then duplicate it."), 6000
             )
             return
         self._paste_text(text, "Duplicate")
@@ -3397,8 +3991,7 @@ class MainWindow(QMainWindow):
     def _paste_text(self, text: str, what: str) -> None:
         block = block_from_json(text)
         if block is None or block.is_empty:
-            self.statusBar().showMessage(
-                "There is no block on the clipboard. Copy a part or some copper first.", 6000
+            self.statusBar().showMessage(t("There is no block on the clipboard. Copy a part or some copper first."), 6000
             )
             return
 
@@ -3409,7 +4002,7 @@ class MainWindow(QMainWindow):
         at = paste_position(self.bus.document, block, near)
         paste = paste_payload(self.bus.document, block, at, label=f"{what} at {format_hole(at)}")
         if paste.is_empty:
-            self.statusBar().showMessage("That block does not fit on this board.", 6000)
+            self.statusBar().showMessage(t("That block does not fit on this board."), 6000)
             return
 
         result = self.bus.dispatch("block.place", paste.payload)
@@ -3437,7 +4030,7 @@ class MainWindow(QMainWindow):
         """Find a part by name, select it, and put the view on it."""
         components = self.bus.document.components
         if not components:
-            self.statusBar().showMessage("There are no parts on this board yet.", 6000)
+            self.statusBar().showMessage(t("There are no parts on this board yet."), 6000)
             return
         dialog = GoToPartDialog(components, self.lookup, self)
         if dialog.exec() != QDialog.DialogCode.Accepted:
@@ -3464,9 +4057,8 @@ class MainWindow(QMainWindow):
         """Arm or disarm cutting tracks."""
         self.scene.arm_cutting(checked)
         if checked:
-            self.statusBar().showMessage(
-                "Click a hole to cut the strip there; click a cut again to take it back. "
-                "Esc ends.",
+            self.statusBar().showMessage(t("Click a hole to cut the strip there; click a cut again to take it back. "
+                "Esc ends."),
                 0,
             )
         else:
@@ -3623,6 +4215,53 @@ class MainWindow(QMainWindow):
         ]
         self._report_refusals(results, f"{'Locked' if locking else 'Unlocked'} {len(results)} part(s)")
 
+    def on_component_properties(self, component_id: str = "") -> None:
+        """Open one part's properties, from a double-click or from the selection.
+
+        Dispatched as a single ``component.update`` even when all three fields changed,
+        so OK is one undo step -- and skipped entirely when nothing changed, because an
+        undo entry for a dialog somebody opened and closed is an undo entry that lies.
+        """
+        if component_id:
+            component = next(
+                (c for c in self.bus.document.components if c.id == component_id), None
+            )
+        else:
+            selected = self._require_selection("edit its properties")
+            component = selected[0] if len(selected) == 1 else None
+            if selected and component is None:
+                self.statusBar().showMessage(
+                    t("Properties edits one part at a time — select a single part."), 6000
+                )
+        if component is None:
+            return
+
+        dialog = ComponentDialog(component, self.lookup(component.footprint_id), self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        ref, value, locked = dialog.values()
+        if not ref:
+            QMessageBox.warning(
+                self,
+                t("A part needs a reference"),
+                t("Every part is identified by its reference, so it cannot be blank."),
+            )
+            return
+        if (ref, value, locked) == (component.ref, component.value, component.locked):
+            return
+        result = self.bus.dispatch(
+            "component.update",
+            UpdateComponentPayload(id=component.id, ref=ref, value=value, locked=locked),
+        )
+        if not result.ok:
+            # A duplicate reference is the refusal this actually meets, and it is worth a
+            # dialog rather than a status line: the edit the user typed is gone otherwise.
+            QMessageBox.warning(self, t("Cannot change this part"), f"[{result.code}] {result.message}")
+            return
+        # Re-selected because the rebuild dropped the selection with the old item, and the
+        # part somebody just named is the one they are still working on.
+        self.scene.select_components([component.id])
+
     def on_flip_board(self) -> None:
         self.side = "bottom" if self.side == "top" else "top"
         self.scene.set_side(self.side)
@@ -3723,7 +4362,7 @@ class MainWindow(QMainWindow):
     RECENT_LIMIT = 8
 
     def _recent_paths(self) -> list[str]:
-        stored = recent_files_settings().value(RECENT_FILES_KEY, [])
+        stored = app_settings().value(RECENT_FILES_KEY, [])
         # QSettings hands back whatever the platform store round-tripped: a list on most
         # of them, a bare string when exactly one entry was saved, None when the key is
         # missing. All three have to become a list here or the menu builder inherits the
@@ -3738,7 +4377,7 @@ class MainWindow(QMainWindow):
         """Put a file at the top of the recent list, dropping any earlier mention of it."""
         resolved = str(path.resolve())
         kept = [entry for entry in self._recent_paths() if entry != resolved]
-        recent_files_settings().setValue(
+        app_settings().setValue(
             RECENT_FILES_KEY, [resolved, *kept][: self.RECENT_LIMIT]
         )
         self._refresh_recent_menu()
@@ -3771,7 +4410,7 @@ class MainWindow(QMainWindow):
         self._load_path(path)
 
     def on_clear_recent(self) -> None:
-        recent_files_settings().setValue(RECENT_FILES_KEY, [])
+        app_settings().setValue(RECENT_FILES_KEY, [])
         self._refresh_recent_menu()
 
     def on_open(self) -> None:
@@ -3843,8 +4482,8 @@ class MainWindow(QMainWindow):
         """Take the version on disk, discarding whatever is in the window."""
         path = self.current_path
         if path is None:
-            self.statusBar().showMessage("This board has never been saved, so there is "
-                                         "nothing on disk to reload.", 6000)
+            self.statusBar().showMessage(t("This board has never been saved, so there is "
+                                         "nothing on disk to reload."), 6000)
             return
         if self.is_modified:
             answer = QMessageBox.question(
@@ -3935,9 +4574,8 @@ class MainWindow(QMainWindow):
         self.act_connect.setChecked(on)
         self._refresh_mode_banner()
         if on:
-            self.statusBar().showMessage(
-                "Click a pin, then the pin it joins. Neither on a net yet? One gets made. "
-                "Esc cancels.",
+            self.statusBar().showMessage(t("Click a pin, then the pin it joins. Neither on a net yet? One gets made. "
+                "Esc cancels."),
                 0,
             )
         else:
@@ -4003,9 +4641,8 @@ class MainWindow(QMainWindow):
         """
         picked = self._selected_pins()
         if not picked:
-            self.statusBar().showMessage(
-                "Select the pins to disconnect in the Nets panel — expand a net to see "
-                "them.",
+            self.statusBar().showMessage(t("Select the pins to disconnect in the Nets panel — expand a net to see "
+                "them."),
                 6000,
             )
             return
@@ -4093,7 +4730,7 @@ class MainWindow(QMainWindow):
     def _one_selected_net(self) -> NetId | None:
         net_ids = self._selected_net_ids()
         if len(net_ids) != 1:
-            self.statusBar().showMessage("Select one net in the Nets panel first.", 6000)
+            self.statusBar().showMessage(t("Select one net in the Nets panel first."), 6000)
             return None
         return net_ids[0]
 
@@ -4123,7 +4760,15 @@ class MainWindow(QMainWindow):
         )
         if not path_str:
             return
-        path = Path(path_str)
+        self.import_netlist_from(Path(path_str))
+
+    def import_netlist_from(self, path: Path) -> None:
+        """The import itself, without the file dialog in front of it.
+
+        Split out because a netlist can arrive two ways -- chosen from the menu, or
+        dropped on the window -- and a drop that imported through a second, similar-looking
+        code path would eventually stop reporting the warnings this one does.
+        """
         text, problem = read_document_text(path)
         if text is None:
             QMessageBox.critical(
@@ -4150,7 +4795,7 @@ class MainWindow(QMainWindow):
             shown = "\n".join(f"  • {w}" for w in imported.warnings[:12])
             more = f"\n  … and {len(imported.warnings) - 12} more" if len(imported.warnings) > 12 else ""
             QMessageBox.information(
-                self, "Imported with warnings", f"{note}, with warnings:\n\n{shown}{more}"
+                self, t("Imported with warnings"), f"{note}, with warnings:\n\n{shown}{more}"
             )
         self.statusBar().showMessage(note, 8000)
         self._offer_to_place_missing_parts()
@@ -4176,7 +4821,7 @@ class MainWindow(QMainWindow):
 
         answer = QMessageBox.question(
             self,
-            "Place the missing parts?",
+            t("Place the missing parts?"),
             f"The netlist names {len(wanted)} part(s) that are not on the board yet:\n"
             f"  {', '.join(sorted(wanted)[:14])}"
             f"{'…' if len(wanted) > 14 else ''}\n\n"
@@ -4299,12 +4944,117 @@ class MainWindow(QMainWindow):
             return self.on_save()
         return answer == QMessageBox.StandardButton.Discard
 
+    # -- files dropped on the window ------------------------------------------
+    #
+    # A board and a netlist both arrive as files, and the gesture everyone tries first
+    # with a file is to drag it onto the window. Nothing happened: the drop was refused
+    # without a word, which reads as the application not accepting that KIND of file
+    # rather than not accepting drops at all.
+
+    #: What a dropped file is taken to be, by extension. `.net` is KiCad's exported
+    #: netlist, which File ▸ Import already reads.
+    DROPPED_DOCUMENTS = (".perf",)
+    DROPPED_NETLISTS = (".net",)
+
+    def _dropped_path(self, event: Any) -> Path | None:
+        """The one local file being dragged, if it is a kind this window can open."""
+        data = event.mimeData()
+        if not data.hasUrls():
+            return None
+        urls = [url for url in data.urls() if url.isLocalFile()]
+        if len(urls) != 1:
+            # Deliberately not "open the first of them": a drop of five boards is an
+            # instruction this window cannot carry out, and picking one at random is a
+            # worse answer than declining.
+            return None
+        path = Path(urls[0].toLocalFile())
+        known = self.DROPPED_DOCUMENTS + self.DROPPED_NETLISTS
+        return path if path.suffix.lower() in known else None
+
+    def dragEnterEvent(self, event: Any) -> None:
+        if self._dropped_path(event) is not None:
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event: Any) -> None:
+        path = self._dropped_path(event)
+        if path is None:
+            event.ignore()
+            return
+        event.acceptProposedAction()
+        if path.suffix.lower() in self.DROPPED_NETLISTS:
+            self.import_netlist_from(path)
+            return
+        # A board REPLACES what is in this window, so it goes through the same unsaved-work
+        # guard the Open menu item does. Losing an hour of layout to a slip of the mouse is
+        # exactly the outcome that guard exists for.
+        if self._offer_to_save():
+            self._load_path(path)
+
     def closeEvent(self, event: Any) -> None:
         """The last thing standing between an hour of layout and the X button."""
         if self._offer_to_save():
+            # AFTER the offer, never before: a close the user backed out of must not
+            # record the layout as if they had left.
+            self._save_session()
             event.accept()
         else:
             event.ignore()
+
+    # -- what the window remembers between runs ------------------------------
+    #
+    # Every one of these was reset on every launch, and the cost is paid by exactly the
+    # people who use the tool most: a maker with a 27" screen re-dragged the DRC panel and
+    # re-opened the 3D view every single time, and somebody who had chosen the blue
+    # solder mask to match the board in their hand got green again the next morning.
+
+    def _save_session(self) -> None:
+        settings = app_settings()
+        settings.setValue(GEOMETRY_KEY, self.saveGeometry())
+        settings.setValue(WINDOW_STATE_KEY, self.saveState())
+        settings.setValue(BOARD_COLOUR_KEY, chosen_board_colour() or "")
+        settings.setValue(RATSNEST_KEY, self.act_ratsnest.isChecked())
+        settings.setValue(RULERS_KEY, self.act_rulers.isChecked())
+        settings.setValue(HATCH_KEY, self.act_hatch.isChecked())
+        settings.setValue(ROUTING_STYLE_KEY, self._routing_style)
+
+    def _restore_session(self) -> None:
+        """Put the window back where it was, quietly.
+
+        Every toggle is applied by setting the action, which emits ``toggled`` and takes
+        the scene with it -- so there is one path from a preference to the board, whether
+        the user ticked the menu item or the store did. The routing style is the exception
+        and goes in by hand: its handler puts a line in the status bar explaining that the
+        change applies to the next route, which is an answer to a question nobody asked
+        while the window was still opening.
+        """
+        settings = app_settings()
+        geometry = settings.value(GEOMETRY_KEY)
+        if geometry is not None:
+            self.restoreGeometry(geometry)
+        state = settings.value(WINDOW_STATE_KEY)
+        if state is not None:
+            self.restoreState(state)
+        # ...and then shut the 3D panel regardless of how it was left. Restoring it open
+        # would build VTK's whole pipeline during startup -- an OpenGL context and a few
+        # thousand actors -- to show a board the user has not looked at yet. Its SIZE and
+        # position come back with the rest of the state, so opening it lands where they
+        # put it. See _build_3d_dock for the three costs this avoids.
+        self.dock_3d.hide()
+
+        colour = settings.value(BOARD_COLOUR_KEY, "")
+        if isinstance(colour, str) and colour in self.act_colour:
+            self.on_board_colour(colour or None)
+        self.act_ratsnest.setChecked(_stored_bool(settings, RATSNEST_KEY, True))
+        self.act_rulers.setChecked(_stored_bool(settings, RULERS_KEY, True))
+        self.act_hatch.setChecked(_stored_bool(settings, HATCH_KEY, True))
+
+        style = settings.value(ROUTING_STYLE_KEY, self._routing_style)
+        if isinstance(style, str) and style in self.act_style:
+            self._routing_style = cast("StylePreference", style)
+            for name, action in self.act_style.items():
+                action.setChecked(name == style)
 
     def _save_to(self, path: Path) -> None:
         # meta.modified is host-stamped, not part of any command (core has no clock --
@@ -4357,6 +5107,28 @@ class MainWindow(QMainWindow):
         self.scene.set_document(self.bus.document)
         self._3d_stale = True
         self._refresh_3d()
+
+    def on_language(self, code: str) -> None:
+        """Record the interface language. It takes effect at the next start.
+
+        Not applied live, and the reason is worth stating rather than apologising for:
+        every label in this window was translated once, as it was built -- menu items,
+        tooltips, dock titles, the shortcut card, the empty-board guidance. Re-translating
+        them would mean rebuilding the menu bar under somebody's pointer, and the widgets
+        a rebuild missed would be exactly the ones nobody would notice had stayed English.
+        Saying "next time" is honest; a half-translated window would not be.
+        """
+        app_settings().setValue(LANGUAGE_KEY, code)
+        for name, action in self.act_language.items():
+            action.setChecked(name == code)
+        QMessageBox.information(
+            self,
+            t("Language changed"),
+            t(
+                "The interface is built in one language when the window opens, so the new "
+                "one appears the next time PerfStudio starts."
+            ),
+        )
 
     def on_export_guide(self) -> None:
         """Write the build guide beside the document, and say what it could not cover.
@@ -4419,6 +5191,35 @@ class MainWindow(QMainWindow):
                 f"Written to {written[0].parent}, with {len(guide.warnings)} thing(s) it "
                 f"could not cover:\n\n{lines}",
             )
+        self._offer_to_open(written)
+
+    def _offer_to_open(self, written: list[Path]) -> None:
+        """Four files, and a way to reach them.
+
+        The export used to end at a line in the status bar naming a file in a directory
+        the user then had to go and find. The guide is the thing this whole application
+        is for -- somebody is standing at a bench about to solder -- so the last step of
+        producing it should not be a file-manager expedition.
+        """
+        box = QMessageBox(self)
+        box.setWindowTitle(t("Build guide written"))
+        box.setText(f"<b>{written[0].name}</b>")
+        box.setInformativeText(
+            t("Written to {folder}, with {count} other files.").format(
+                folder=written[0].parent, count=len(written) - 1
+            )
+        )
+        open_it = box.addButton(t("Open the Guide"), QMessageBox.ButtonRole.AcceptRole)
+        show_it = box.addButton(t("Show the Folder"), QMessageBox.ButtonRole.ActionRole)
+        box.addButton(t("Close"), QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        if box.clickedButton() is open_it:
+            # The HTML, which is the one written to be read: offline, on a phone at the
+            # bench. Handed to the desktop rather than to a browser by name, because
+            # which browser is not this application's business.
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(written[0])))
+        elif box.clickedButton() is show_it:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(written[0].parent)))
 
     def on_shortcuts(self) -> None:
         ShortcutsDialog(self._menus, self).exec()
@@ -4450,6 +5251,24 @@ def _language_argument(argv: list[str]) -> str | None:
         if arg == "--lang" and index + 1 < len(argv):
             return argv[index + 1]
     return None
+
+
+def _preferred_language(argv: list[str]) -> str | None:
+    """The language to start in: the flag, then the variable, then the last choice made.
+
+    Returning None hands the question back to ``set_language``, which reads
+    PERFSTUDIO_LANG and then the system locale. That is why the variable is not read
+    here: one place reads it, so the two cannot end up disagreeing about precedence.
+    The stored choice sits BELOW the variable deliberately -- an environment variable is
+    set for this run, and a menu choice was made for every run.
+    """
+    from_flag = _language_argument(argv)
+    if from_flag:
+        return from_flag
+    if os.environ.get("PERFSTUDIO_LANG"):
+        return None
+    stored = app_settings().value(LANGUAGE_KEY)
+    return stored if isinstance(stored, str) and stored else None
 
 
 def _apply_application_icon(app: QApplication) -> None:
@@ -4486,8 +5305,9 @@ def main() -> int:
         return view3d.probe_offscreen_gl()
 
     # Chosen before the window is built, because every menu label is translated once at
-    # construction. --lang wins over PERFSTUDIO_LANG, which wins over the system locale.
-    set_language(_language_argument(sys.argv))
+    # construction. --lang wins over PERFSTUDIO_LANG, which wins over the View menu's own
+    # choice, which wins over the system locale. See _preferred_language.
+    set_language(_preferred_language(sys.argv))
 
     if "--headless" in sys.argv:
         # Imported here rather than at module scope: the headless run is a program of its

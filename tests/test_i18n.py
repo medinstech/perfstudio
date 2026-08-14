@@ -14,6 +14,7 @@ seen without failing a build over it.
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -31,8 +32,14 @@ UI_DIR = Path(__file__).resolve().parents[1] / "src" / "perfstudio" / "ui"
 #: Both quote styles, because inside an f-string the inner literal has to be the other
 #: one -- and a scanner that only saw double quotes reported those strings as stale
 #: catalogue entries when they were in use two lines away.
+#:
+#: ADJACENT LITERALS COUNT AS ONE, because the interface is full of them: a tooltip is a
+#: sentence or two and lives in the source as three quoted fragments on three lines. A
+#: scanner that only understood a single literal saw every one of those as untranslated
+#: AND reported its catalogue key as stale -- so wrapping a tooltip in t() failed the
+#: build, and the tooltips stayed English.
 _TRANSLATED = re.compile(
-    r"""(?<![\w.])t\(\s*(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)')\s*\)"""
+    r"""(?<![\w.])t\(\s*((?:(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')\s*)+)\)"""
 )
 
 
@@ -41,8 +48,11 @@ def translated_literals() -> set[str]:
     for source in UI_DIR.glob("*.py"):
         if source.name == "i18n.py":
             continue
-        for double, single in _TRANSLATED.findall(source.read_text(encoding="utf-8")):
-            found.add(double or single)
+        for pieces in _TRANSLATED.findall(source.read_text(encoding="utf-8")):
+            # Evaluated rather than sliced out: this is what joins the fragments, and it
+            # is also the only thing that turns a \n in the source into the newline the
+            # catalogue key actually contains.
+            found.add(ast.literal_eval(f"({pieces})"))
     return found
 
 
@@ -100,12 +110,57 @@ def test_the_drawing_tool_labels_are_still_the_ones_the_catalogue_expects() -> N
 
 def test_translation_coverage_is_reported_rather_than_enforced(capsys) -> None:
     """Missing translations fall through to English on purpose, so this measures rather
-    than fails -- but it prints, so the number cannot quietly go to zero."""
+    than fails -- but it prints, so the number cannot quietly go to zero.
+
+    The floor was 0.8 while the catalogue covered the menus and nothing else. It is now
+    what a complete catalogue leaves room for: every string the interface translates has
+    a Turkish entry, and the slack is for the ones that come out the same in both
+    languages -- "Net" is the whole list at the time of writing.
+    """
     literals = translated_literals()
     covered = literals & set(TURKISH)
     ratio = len(covered) / len(literals) if literals else 1.0
+    missing = sorted(literals - covered)
     print(f"\nTurkish covers {len(covered)}/{len(literals)} translated strings ({ratio:.0%})")
-    assert ratio > 0.8, "the Turkish catalogue has fallen behind the interface"
+    assert ratio > 0.97, f"the Turkish catalogue has fallen behind the interface: {missing}"
+
+
+#: A user-facing string handed straight to a widget, with no ``t()`` around it.
+#:
+#: Only the setters whose argument is ALWAYS prose. ``setText`` is deliberately not here:
+#: it is the one every status field and every f-string composed of engine output goes
+#: through, and a rule that flags those is a rule people turn off.
+_UNWRAPPED = re.compile(
+    r"""\.(setToolTip|setPlaceholderText|setStatusTip|setHeaderLabels)\(\s*\[?\s*(("(?:[^"\\]|\\.)*")|('(?:[^'\\]|\\.)*'))"""
+)
+
+#: Prose has a word in it. Four letters, because the strings that are deliberately left
+#: alone are examples of the tool's own vocabulary -- "GND, +5V, OUT…", "R1, C3, U2…",
+#: "10k, 100nF, NE555…" -- and the longest alphabetic run in any of them is two. Derived
+#: rather than listed, because a hand-kept exception list is the drift this file exists
+#: to catch.
+_HAS_A_WORD = re.compile(r"[A-Za-z]{4}")
+
+
+def test_no_tooltip_or_placeholder_is_left_out_of_the_catalogue() -> None:
+    """The direction the coverage number cannot see.
+
+    A string never wrapped in ``t()`` is not a missing translation -- it is not in the
+    system at all, so it moves no number and nothing reports it. Nearly every tooltip in
+    the application was in exactly that state: Turkish menu items with English
+    explanations underneath, which is the half a user stops to read.
+    """
+    offenders: list[str] = []
+    for source in sorted(UI_DIR.glob("*.py")):
+        if source.name == "i18n.py":
+            continue
+        text = source.read_text(encoding="utf-8")
+        for match in _UNWRAPPED.finditer(text):
+            if not _HAS_A_WORD.search(match.group(2)):
+                continue
+            line = text[: match.start()].count("\n") + 1
+            offenders.append(f"{source.name}:{line}: {match.group(2)[:60]}")
+    assert offenders == [], "user-facing strings not wrapped in t():\n" + "\n".join(offenders)
 
 
 def test_every_catalogue_translates_to_something_different() -> None:
@@ -135,7 +190,8 @@ def test_no_two_entries_in_a_menu_claim_the_same_accelerator() -> None:
                  "&Import KiCad Netlist…", "Export &Build Guide…", "&Quit"],
         "help": ["&Keyboard Shortcuts…", "&About PerfStudio"],
         "edit": ["&Undo", "&Redo", "Cop&y", "&Paste", "Dupl&icate", "Rotate &Clockwise",
-                 "Rotate Counter-clock&wise", "&Mirror", "Toggle &Lock", "&Delete"],
+                 "Rotate Counter-clock&wise", "&Mirror", "Toggle &Lock", "&Delete",
+                 "Proper&ties…"],
         "draw": ["&Solder Trace", "Solder Trace with S&pine", "&Bare Wire",
                  "&Insulated Wire", "Top &Jumper", "&Cut Track",
                  "&Stop the Current Tool"],
@@ -214,6 +270,57 @@ def test_the_command_line_flag_is_parsed_both_ways() -> None:
 
 def test_available_lists_exactly_what_can_be_selected() -> None:
     assert set(AVAILABLE) == {"en", *CATALOGUES}
+
+
+# ---------------------------------------------------------------------------
+# Choosing the language from inside the application
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def stored_language(tmp_path, monkeypatch):
+    """A settings store of our own. The real one is the user's registry."""
+    from PySide6.QtCore import QSettings
+
+    from perfstudio.ui import main as main_module
+
+    store = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    monkeypatch.setattr(main_module, "app_settings", lambda: store)
+    return store
+
+
+def test_the_stored_choice_is_used_when_nothing_overrides_it(stored_language, monkeypatch) -> None:
+    """The language could only be chosen by an environment variable or a command-line
+    flag -- which is to say, not by anybody running the application normally."""
+    from perfstudio.ui.main import LANGUAGE_KEY, _preferred_language
+
+    monkeypatch.delenv("PERFSTUDIO_LANG", raising=False)
+    stored_language.setValue(LANGUAGE_KEY, "tr")
+
+    assert _preferred_language(["perfstudio"]) == "tr"
+
+
+def test_the_flag_beats_the_variable_which_beats_the_stored_choice(
+    stored_language, monkeypatch
+) -> None:
+    """An environment variable is set for this run; a menu choice was made for every run."""
+    from perfstudio.ui.main import LANGUAGE_KEY, _preferred_language
+
+    stored_language.setValue(LANGUAGE_KEY, "tr")
+    monkeypatch.setenv("PERFSTUDIO_LANG", "en")
+
+    # None hands the question to set_language, which is the one place that reads the
+    # variable -- so the two cannot disagree about precedence.
+    assert _preferred_language(["perfstudio"]) is None
+    assert _preferred_language(["perfstudio", "--lang", "tr"]) == "tr"
+
+
+def test_nothing_stored_and_nothing_set_asks_the_system(stored_language, monkeypatch) -> None:
+    from perfstudio.ui.main import _preferred_language
+
+    monkeypatch.delenv("PERFSTUDIO_LANG", raising=False)
+
+    assert _preferred_language(["perfstudio"]) is None
 
 
 # ---------------------------------------------------------------------------

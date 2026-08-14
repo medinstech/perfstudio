@@ -25,7 +25,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any, cast
 
-from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, Signal
+from PySide6.QtCore import QEvent, QPoint, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import (
     QBrush,
     QColor,
@@ -2021,10 +2021,18 @@ class BoardScene(QGraphicsScene):
         self._measure_from: HoleCoord | None = None
         self._measure_item: PickedPinsItem | None = None
         self._cut_armed = False
+        #: Set when a mode consumed a right press, read and cleared by the view before it
+        #: decides whether to offer a context menu. See take_consumed_right_click.
+        self._right_click_taken = False
         self._ghost: PlacementGhostItem | None = None
         #: Whether the last placement landed somewhere already occupied. Read by the host to
         #: say so, since the bus allows it and only DRC objects.
         self.last_placement_overlapped = False
+        #: What every part placed from here is given as its value ("10k", "100nF"), set by
+        #: the host from the parts panel. Held across placements rather than cleared with
+        #: the armed footprint: five resistors of the same value is the case, and retyping
+        #: it between each of them is the friction this exists to remove.
+        self.placement_value = ""
         self._build()
         self.selectionChanged.connect(self._on_selection_changed)
 
@@ -2306,6 +2314,9 @@ class BoardScene(QGraphicsScene):
     componentPlaced = Signal(object)
     #: Emitted with the armed footprint id, or an empty string when placement is cancelled.
     placementArmed = Signal(str)
+    #: Emitted with the id of a part that was double-clicked. What the host does about it
+    #: (open its properties) is the host's business; the scene only reports the gesture.
+    componentActivated = Signal(str)
 
     # -- drawing conductors by hand ------------------------------------------
     #
@@ -2915,7 +2926,22 @@ class BoardScene(QGraphicsScene):
         self.hoveredHole.emit(at.col, at.row)
         super().mouseMoveEvent(event)
 
+    def take_consumed_right_click(self) -> bool:
+        """Whether the last right press was a MODE's, and clear the record of it.
+
+        Right-click already means something on this board: it finishes a trace, commits a
+        net, or leaves the tool. Those are handled on the press, and a context menu event
+        follows the release -- by which time the mode has been left, so a menu built on
+        "is a mode armed" would pop up on top of the very gesture that ended it. The press
+        says it took the click; the view asks once and the answer is spent.
+        """
+        taken = self._right_click_taken
+        self._right_click_taken = False
+        return taken
+
     def mousePressEvent(self, event: Any) -> None:
+        if self.in_a_mode and event.button() == Qt.MouseButton.RightButton:
+            self._right_click_taken = True
         if self._cut_armed:
             at = screen_to_hole(event.scenePos(), self.document.board, self.side)
             if event.button() == Qt.MouseButton.LeftButton:
@@ -2990,7 +3016,7 @@ class BoardScene(QGraphicsScene):
                 # hand out a name that is already taken -- and the bus would refuse the second
                 # part of every pair as a duplicate ref.
                 ref=next_reference(self.bus.document, self._armed_id),
-                value="",
+                value=self.placement_value,
                 footprint_id=self._armed_id,
                 anchor=anchor,
             ),
@@ -3001,6 +3027,41 @@ class BoardScene(QGraphicsScene):
     def mouseReleaseEvent(self, event: Any) -> None:
         super().mouseReleaseEvent(event)
         self.commit_pending_moves()
+
+    def component_at(self, pos: QPointF) -> ComponentItem | None:
+        """The topmost part under a scene position, or None.
+
+        Walks this scene's own component table rather than calling ``itemAt``, which
+        answers a different question: it returns the topmost item of ANY kind, so a
+        conductor or a ratsnest line lying over a part -- which is the normal state of a
+        routed board -- would swallow the click and report no part at all. Ties go to the
+        highest z, so two overlapping parts resolve to the one the user can see.
+        """
+        best: ComponentItem | None = None
+        for item in self.component_items.values():
+            if not item.contains(item.mapFromScene(pos)):
+                continue
+            if best is None or item.zValue() >= best.zValue():
+                best = item
+        return best
+
+    def mouseDoubleClickEvent(self, event: Any) -> None:
+        """Double-clicking a part asks the host to open it.
+
+        Ignored outright while a mode is armed. Every mode gives the FIRST click of the
+        pair a meaning of its own -- a double-click while drawing has already laid two
+        steps of a trace -- so opening a dialog on top of that would interrupt the tool
+        with a window the user did not ask for.
+        """
+        if self.in_a_mode or event.button() != Qt.MouseButton.LeftButton:
+            super().mouseDoubleClickEvent(event)
+            return
+        item = self.component_at(event.scenePos())
+        if item is None:
+            super().mouseDoubleClickEvent(event)
+            return
+        self.componentActivated.emit(item.comp.id)
+        event.accept()
 
     #: Hole steps an arrow key moves the selection, plain and with Shift held.
     NUDGE_STEP = 1
@@ -3163,8 +3224,15 @@ class BoardView(QGraphicsView):
     #: Gap between the top of the viewport and the mode banner.
     BANNER_MARGIN_PX = 10
 
+    #: Emitted with the viewport position of a right-click that wants a menu. WHAT is on
+    #: that menu is the host's business -- it owns the actions, and a view that built its
+    #: own would be a second list of what can be done to a part, free to disagree with the
+    #: menu bar about which of them are available.
+    contextMenuRequested = Signal(QPoint)
+
     def __init__(self, scene: BoardScene) -> None:
         super().__init__(scene)
+        self.board_scene = scene
         self.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.TextAntialiasing)
         self.setDragMode(QGraphicsView.DragMode.RubberBandDrag)
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
@@ -3241,6 +3309,21 @@ class BoardView(QGraphicsView):
         if watched is self.viewport() and event.type() == QEvent.Type.Resize:
             self._place_overlays()
         return bool(super().eventFilter(watched, event))
+
+    def contextMenuEvent(self, event: Any) -> None:
+        """Ask the host for a menu, unless a mode has a claim on this click.
+
+        Two guards rather than one, and both are needed. ``in_a_mode`` covers a platform
+        that delivers the context-menu event on the PRESS; ``take_consumed_right_click``
+        covers one that delivers it on the release, after a press that ended the mode --
+        which is Windows, and is exactly where a menu would appear over a trace the user
+        had just finished.
+        """
+        if self.board_scene.in_a_mode or self.board_scene.take_consumed_right_click():
+            event.accept()
+            return
+        self.contextMenuRequested.emit(event.pos())
+        event.accept()
 
     def current_scale(self) -> float:
         return float(self.transform().m11())

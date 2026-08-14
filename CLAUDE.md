@@ -399,6 +399,41 @@ a string the interface no longer has, if a translation loses its `&` accelerator
 two items in one menu claim the same accelerator — so adding a menu item means adding its
 Turkish entry and, if it is in one of the grouped menus, extending that test's group list.
 
+It also fails the **other** direction, which is the one that let every tooltip stay
+English while the menus were translated: `test_no_tooltip_or_placeholder_is_left_out_of_the_catalogue`
+flags a `setToolTip` / `setPlaceholderText` / `setHeaderLabels` argument that is a bare
+literal. A string never wrapped in `t()` is not a missing translation — it is not in the
+system at all, so it moves no coverage number and nothing else would ever mention it. The
+exceptions are derived, not listed: prose has a four-letter word in it, and the strings
+deliberately left alone (`"GND, +5V, OUT…"`, `"R1, C3, U2…"`, `"10k, 100nF, NE555…"`) are
+the tool's own vocabulary, whose longest alphabetic run is two.
+
+The scanner treats **adjacent string literals as one key** (`ast.literal_eval` over the
+lot), because a tooltip lives in the source as three quoted fragments on three lines.
+`setText` is deliberately outside all of this: it is what every status field and every
+f-string of engine output goes through.
+
 Engine-generated text (DRC/LVS messages, rule ids, hole addresses, net and component
 names) is never translated: it is compared byte-for-byte by golden fixtures, and the
 addresses are the tool's vocabulary in every language.
+
+The language is chosen `--lang` → `PERFSTUDIO_LANG` → the View menu's stored choice → the
+system locale (`main._preferred_language`), and applies at the **next start**: every label
+is translated once, as the window is built, so a live re-translation would leave whatever
+a rebuild missed in English.
+
+### What the window remembers
+
+`main.app_settings()` is the one `QSettings` store — recent files and the session
+(geometry, dock state, board colour, the view toggles, routing style, language). A test
+must point it somewhere temporary; `tests/test_ui.py`'s autouse `_settings_in_a_temp_file`
+does, and has to, because every test there closes a window and closing saves.
+
+Two rules it is easy to break: `restoreState` matches docks and toolbars **by
+`objectName`** and silently drops the ones without one, and the **3D panel is forced shut
+after a restore** — reopening it would build VTK's pipeline during startup for a board
+nobody has looked at yet. Its size still comes back with the rest of the layout. The
+build-guide dock (`Ctrl+4`) is the same shape of thing: it fills itself only while open,
+because `build_guide` runs DRC and LVS, and `MainWindow.current_guide()` is the single
+cache both it and the 3D assembly slider read — two views of one list that must not
+disagree about how many steps there are.
