@@ -46,8 +46,10 @@ from PySide6.QtWidgets import (
 from perfstudio.command import CommandBus, DispatchResult
 from perfstudio.commands import (
     AddConductorPayload,
+    AddCutPayload,
     AddNetPayload,
     ConnectPinsPayload,
+    DeleteCutPayload,
     MoveComponentPayload,
     NewConductor,
     NewSolderTraceConductor,
@@ -97,9 +99,11 @@ from perfstudio.model import (
     NetClass,
     NetNode,
     PerfDocument,
+    TrackCut,
     contacts_every_path_hole,
 )
 from perfstudio.ratsnest import RatsnestLink, all_links, ratsnest
+from perfstudio.stripboard import cut_holes, is_stripboard, segments
 
 from .boardcolors import scheme_for
 from .bodies import (
@@ -162,6 +166,9 @@ MOUNT_EDGE = QColor("#0a0b0f")
 MOUNT_KEEPOUT = QColor(229, 116, 61, 150)
 #: A connector finger on the far face of the board.
 FINGER_FAR = QColor(150, 130, 70, 110)
+#: A track cut. The error colour, because a cut in the wrong hole is an error you cannot
+#: see on the finished board from more than arm's length.
+CUT_MARK = QColor("#e5484d")
 
 #: Ratsnest colours by net class -- ground and power read as rails at a glance, which is
 #: the same distinction the router orders its work by.
@@ -703,6 +710,101 @@ class MountingHoleItem(QGraphicsItem):
         painter.setPen(QPen(MOUNT_EDGE, 0.15))
         painter.setBrush(QBrush(MOUNT_BORE))
         painter.drawEllipse(centre, bore_r, bore_r)
+
+
+class StripGridItem(QGraphicsItem):
+    """The copper the board came with: one bar per uncut run of holes.
+
+    Stripboard's whole character is that these are already connected, and a board drawn
+    as a grid of separate pads says the opposite of that. Two pins in one row are joined
+    whether or not anybody drew a conductor, so the strip has to be visible or the screen
+    is lying about the circuit.
+
+    Drawn from ``stripboard.segments`` rather than from rows, so a cut visibly ends a bar
+    -- which is what makes a cut inspectable at a glance, on screen and on the board.
+    """
+
+    def __init__(self, doc: PerfDocument, side: BoardSide) -> None:
+        super().__init__()
+        self.board = doc.board
+        self.side = side
+        self.segments = segments(doc)
+        #: The strips are on the solder side. From the component side they are behind the
+        #: board, so they are drawn faintly for reference rather than as copper in front
+        #: of you -- the same rule the far-side hatching follows.
+        self.far_side = side == "top"
+        self.setZValue(-95)  # Under the pads: the strip is etched, then drilled through.
+
+    @property
+    def has_strips(self) -> bool:
+        return bool(self.segments)
+
+    def boundingRect(self) -> QRectF:
+        return _outline_rect(self.board)
+
+    def paint(self, painter: QPainter, option: Any, widget: Any = None) -> None:
+        if not self.segments:
+            return
+        scheme = scheme_for(self.board.material)
+        colour = QColor(scheme.pad)
+        if self.far_side:
+            colour.setAlpha(70)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(colour))
+
+        extent_x, extent_y = pad_extent_mm(self.board)
+        area = option.exposedRect
+        for segment in self.segments:
+            first = hole_to_screen(segment.holes[0], self.board, self.side)
+            last = hole_to_screen(segment.holes[-1], self.board, self.side)
+            left, right = sorted((first.x(), last.x()))
+            top, bottom = sorted((first.y(), last.y()))
+            rect = QRectF(
+                left - extent_x / 2,
+                top - extent_y / 2,
+                (right - left) + extent_x,
+                (bottom - top) + extent_y,
+            )
+            if not area.intersects(rect):
+                continue
+            radius = min(extent_x, extent_y) / 2
+            painter.drawRoundedRect(rect, radius, radius)
+
+
+class TrackCutItem(QGraphicsItem):
+    """Where the copper has been drilled away.
+
+    A cross rather than a gap, and drawn in the error colour, because a cut is the one
+    feature of a stripboard design that is invisible on the finished board from more than
+    arm's length -- and getting one in the wrong hole is the classic way to spend an
+    evening. The pad is already missing underneath it; this says why.
+    """
+
+    def __init__(self, cut: TrackCut, board: Board, side: BoardSide) -> None:
+        super().__init__()
+        self.cut = cut
+        self.board = board
+        self.side = side
+        self.setZValue(-84)  # Over the pads and the strips, under the parts.
+
+    def boundingRect(self) -> QRectF:
+        centre = hole_to_screen(self.cut.at, self.board, self.side)
+        r = max(pad_extent_mm(self.board)) / 2 + 0.4
+        return QRectF(centre.x() - r, centre.y() - r, 2 * r, 2 * r)
+
+    def paint(self, painter: QPainter, option: Any, widget: Any = None) -> None:
+        centre = hole_to_screen(self.cut.at, self.board, self.side)
+        r = max(pad_extent_mm(self.board)) / 2
+        painter.setBrush(QBrush(SUBSTRATE.get(self.board.material, SUBSTRATE["FR4"]).darker(140)))
+        painter.setPen(QPen(CUT_MARK, 0.14))
+        painter.drawEllipse(centre, r, r)
+        arm = r * 0.55
+        painter.drawLine(
+            QPointF(centre.x() - arm, centre.y() - arm), QPointF(centre.x() + arm, centre.y() + arm)
+        )
+        painter.drawLine(
+            QPointF(centre.x() - arm, centre.y() + arm), QPointF(centre.x() + arm, centre.y() - arm)
+        )
 
 
 class EdgeConnectorItem(QGraphicsItem):
@@ -1867,6 +1969,10 @@ class BoardScene(QGraphicsScene):
     #: (col, row) under the cursor. The whole tool speaks hole addresses, so the status
     #: bar has to be able to say which one the pointer is on -- otherwise you count.
     hoveredHole = Signal(int, int)
+    #: Emitted when the track-cutting tool is armed or disarmed.
+    cutArmed = Signal(bool)
+    #: Emitted with the DispatchResult of a cut made or taken back.
+    cutMade = Signal(object)
     #: Emitted when the measuring tool is armed or disarmed.
     measureArmed = Signal(bool)
     #: The measurement as a sentence, live while the pointer moves, or "" when there is
@@ -1914,6 +2020,7 @@ class BoardScene(QGraphicsScene):
         self._measure_armed = False
         self._measure_from: HoleCoord | None = None
         self._measure_item: PickedPinsItem | None = None
+        self._cut_armed = False
         self._ghost: PlacementGhostItem | None = None
         #: Whether the last placement landed somewhere already occupied. Read by the host to
         #: say so, since the bus allows it and only DRC objects.
@@ -2028,13 +2135,26 @@ class BoardScene(QGraphicsScene):
         # finger has no bore, so its position gets neither a pad NOR a hole, on either
         # face. Without it the component side of a board whose fingers are on the solder
         # side shows a drilled hole where the board is solid.
+        # The board's own copper goes UNDER the pads, because that is the order the
+        # physical board is made in: the strip is etched and the holes are drilled
+        # through it. Cut holes join the no-pad set for the same reason a mounting bore
+        # does -- the copper there was drilled away, and drawing a pad on it would offer
+        # something to solder to that is not there.
+        strips = StripGridItem(self.document, self.side)
+        if strips.has_strips:
+            self.addItem(strips)
         self.pad_grid = PadGridItem(
             board,
             self.side,
-            holes_without_grid_pad(self.document, self.side) | undrilled_holes(self.document),
+            holes_without_grid_pad(self.document, self.side)
+            | undrilled_holes(self.document)
+            | cut_holes(self.document),
             copper=not (board.single_sided and self.side == "top"),
         )
         self.addItem(self.pad_grid)
+        for cut in self.document.cuts:
+            if is_stripboard(board):
+                self.addItem(TrackCutItem(cut, board, self.side))
 
         for connector in self.document.edge_connectors:
             self.addItem(EdgeConnectorItem(connector, board, self.side))
@@ -2208,6 +2328,7 @@ class BoardScene(QGraphicsScene):
             self._disarm_net_pins()
             self._disarm_connect()
             self._disarm_measure()
+            self._disarm_cutting()
             self._draw_preview = DrawPreviewItem(kind, self.document.board, self.side)
             self.addItem(self._draw_preview)
         self.drawArmed.emit(kind or "")
@@ -2332,6 +2453,7 @@ class BoardScene(QGraphicsScene):
             self.arm_drawing(None)
             self._disarm_connect()
             self._disarm_measure()
+            self._disarm_cutting()
         self._clear_net_pins()
         self._net_pin_target = net_id
         if net_id is not None:
@@ -2428,6 +2550,60 @@ class BoardScene(QGraphicsScene):
     # two legs and saying THOSE go together. This is that, and it produces exactly the
     # same documents the long way round does -- one command per pair, on the same bus.
 
+    # -- cutting a track, which is how a stripboard is designed --------------
+    #
+    # On a pad-per-hole board every connection is added. On stripboard the copper is
+    # already there in whole rows and the design is decided by where it is BROKEN, so
+    # this is that board's primary edit -- the counterpart of drawing a solder trace.
+
+    def arm_cutting(self, on: bool) -> None:
+        """Arm (or disarm) cutting tracks. Silently refuses on a board with no tracks."""
+        if on and not is_stripboard(self.document.board):
+            on = False
+        if on:
+            self.arm_placement(None)
+            self.arm_drawing(None)
+            self._disarm_net_pins()
+            self._disarm_connect()
+            self._disarm_measure()
+        self._cut_armed = on
+        self.cutArmed.emit(on)
+
+    @property
+    def cut_armed(self) -> bool:
+        return self._cut_armed
+
+    def _disarm_cutting(self) -> None:
+        if not self._cut_armed:
+            return
+        self._cut_armed = False
+        self.cutArmed.emit(False)
+
+    def cut_at(self, hole: HoleCoord) -> TrackCut | None:
+        return next((c for c in self.document.cuts if c.at == hole), None)
+
+    def cut_click(self, at: HoleCoord) -> DispatchResult | None:
+        """Cut the track at this hole, or take back the cut already there.
+
+        A toggle rather than an add-only tool, because a cut is small, invisible on the
+        finished board and easy to put one hole out -- so the fix has to be the same
+        gesture as the mistake. Each direction is still its own command and its own undo
+        step; nothing here edits the document.
+        """
+        if not self._cut_armed or self.bus is None:
+            return None
+        if not is_inside_board(at, self.document.board):
+            return None
+
+        existing = self.cut_at(at)
+        result = (
+            self.bus.dispatch("cut.delete", DeleteCutPayload(id=existing.id))
+            if existing is not None
+            else self.bus.dispatch("cut.add", AddCutPayload(at=at))
+        )
+        self.cutMade.emit(result)
+        return result
+
     # -- measuring, which is the one tool that changes nothing ---------------
     #
     # Perfboard work is full of distances that have to be right before anything is
@@ -2447,6 +2623,7 @@ class BoardScene(QGraphicsScene):
             self.arm_drawing(None)
             self._disarm_net_pins()
             self._disarm_connect()
+            self._disarm_cutting()
         self._clear_measure()
         self._measure_armed = on
         self.measureArmed.emit(on)
@@ -2509,6 +2686,7 @@ class BoardScene(QGraphicsScene):
             or self._net_pin_target is not None
             or self._connect_armed
             or self._measure_armed
+            or self._cut_armed
         )
 
     def leave_mode(self) -> None:
@@ -2528,6 +2706,7 @@ class BoardScene(QGraphicsScene):
         self.arm_net_pins(None)
         self.arm_connect(False)
         self.arm_measure(False)
+        self.arm_cutting(False)
 
     def arm_connect(self, on: bool) -> None:
         """Arm (or disarm) joining pins by clicking two of them."""
@@ -2536,6 +2715,7 @@ class BoardScene(QGraphicsScene):
             self.arm_drawing(None)
             self._disarm_net_pins()
             self._disarm_measure()
+            self._disarm_cutting()
         self._clear_connect()
         self._connect_armed = on
         self.connectArmed.emit(on)
@@ -2683,6 +2863,7 @@ class BoardScene(QGraphicsScene):
             self._disarm_net_pins()
             self._disarm_connect()
             self._disarm_measure()
+            self._disarm_cutting()
             self._ghost = PlacementGhostItem(self._armed_footprint, self.document.board, self.side)
             self.addItem(self._ghost)
         self.placementArmed.emit(self._armed_id or "")
@@ -2735,6 +2916,14 @@ class BoardScene(QGraphicsScene):
         super().mouseMoveEvent(event)
 
     def mousePressEvent(self, event: Any) -> None:
+        if self._cut_armed:
+            at = screen_to_hole(event.scenePos(), self.document.board, self.side)
+            if event.button() == Qt.MouseButton.LeftButton:
+                self.cut_click(at)
+            elif event.button() == Qt.MouseButton.RightButton:
+                self._disarm_cutting()
+            event.accept()
+            return
         if self._measure_armed:
             at = screen_to_hole(event.scenePos(), self.document.board, self.side)
             if event.button() == Qt.MouseButton.LeftButton:

@@ -129,6 +129,7 @@ from perfstudio.model import (
     BoardLabels,
     BoardMaterial,
     BoardSide,
+    BoardType,
     ComponentInstance,
     DocumentMeta,
     EdgeConnector,
@@ -157,6 +158,9 @@ from perfstudio.placer import (
 )
 from perfstudio.ratsnest import NetRatsnest, ratsnest, summarize
 from perfstudio.router import RoutingStyle, options_for_style
+from perfstudio.stripboard import is_stripboard
+from perfstudio.striproute import StripboardPlan, plan_stripboard
+from perfstudio.striproute import describe_plan as describe_strip_plan
 from perfstudio.version import __version__
 from perfstudio.version import describe as describe_version
 
@@ -296,6 +300,21 @@ class BoardSetupDialog(QDialog):
         ("horizontal", "Along a row"),
     )
 
+    # The kind of board, which is not a display option: on stripboard whole rows of holes
+    # arrive already joined, so connectivity, DRC, the router and the build guide all
+    # answer differently. The description says what it means rather than naming a product,
+    # because "Veroboard" is a brand and "stripboard" is what the rest of the world calls
+    # the same thing.
+    BOARD_TYPES: tuple[tuple[BoardType, str], ...] = (
+        ("pad-per-hole", "Pad per hole — every hole is its own island"),
+        ("stripboard", "Stripboard — whole rows joined; you cut the track to separate"),
+    )
+
+    STRIP_AXES: tuple[tuple[Literal["horizontal", "vertical"], str], ...] = (
+        ("horizontal", "Along a row"),
+        ("vertical", "Down a column"),
+    )
+
     def __init__(self, board: Board, parent: QWidget | None = None, title: str = "New Board") -> None:
         super().__init__(parent)
         self.setWindowTitle(title)
@@ -335,6 +354,17 @@ class BoardSetupDialog(QDialog):
                     continue
                 self.preset.addItem(f"    {entry.name}  ·  {entry.cols} × {entry.rows}", entry.key)
         self.preset.currentIndexChanged.connect(self._on_preset)
+
+        self.board_type = QComboBox()
+        for type_value, type_label in self.BOARD_TYPES:
+            self.board_type.addItem(t(type_label), type_value)
+        self.board_type.setCurrentIndex(max(0, self.board_type.findData(board.type)))
+        self.strip_axis = QComboBox()
+        for strip_value, strip_label in self.STRIP_AXES:
+            self.strip_axis.addItem(t(strip_label), strip_value)
+        self.strip_axis.setCurrentIndex(
+            max(0, self.strip_axis.findData(board.strip_axis or "horizontal"))
+        )
 
         self.cols = QSpinBox()
         self.cols.setRange(2, 400)
@@ -387,6 +417,7 @@ class BoardSetupDialog(QDialog):
         self._size_note = QLabel()
         self.cols.valueChanged.connect(self._update_note)
         self.rows.valueChanged.connect(self._update_note)
+        self.board_type.currentIndexChanged.connect(self._update_enabled)
         self.pad_shape.currentIndexChanged.connect(self._update_enabled)
         self.legend.toggled.connect(self._update_enabled)
         self._pitch = board.pitch
@@ -395,6 +426,8 @@ class BoardSetupDialog(QDialog):
 
         form = QFormLayout()
         form.addRow(t("Board"), self.preset)
+        form.addRow(t("Type"), self.board_type)
+        form.addRow(t("Strips run"), self.strip_axis)
         form.addRow(t("Columns"), self.cols)
         form.addRow(t("Rows"), self.rows)
         form.addRow(t("Material"), self.material)
@@ -440,6 +473,8 @@ class BoardSetupDialog(QDialog):
         self.pad_length.setEnabled(oblong)
         self.pad_axis.setEnabled(oblong)
         self.row_digits.setEnabled(self.legend.isChecked())
+        # Which way the strips run is a question only stripboard has an answer to.
+        self.strip_axis.setEnabled(self.board_type.currentData() == "stripboard")
         self._update_note()
 
     def _update_note(self) -> None:
@@ -490,8 +525,19 @@ class BoardSetupDialog(QDialog):
             # be dismissed by an error message is a worse dialog than one that cannot
             # produce the error.
             length = round(self._pad_diameter + 0.05, 3)
+        # strip_axis is written only on a board that has strips, for the reason pad_length
+        # is written only on an oblong one: a field describing nothing does not belong in
+        # the file, and the format omits its defaults precisely so an unused feature
+        # leaves no trace.
+        board_type = cast(BoardType, self.board_type.currentData())
         return dataclasses.replace(
             self._board,
+            type=board_type,
+            strip_axis=(
+                cast(Literal["horizontal", "vertical"], self.strip_axis.currentData())
+                if board_type == "stripboard"
+                else None
+            ),
             cols=self.cols.value(),
             rows=self.rows.value(),
             material=cast(BoardMaterial, self.material.currentData()),
@@ -1170,6 +1216,8 @@ class MainWindow(QMainWindow):
         self.scene.componentPlaced.connect(self._on_component_placed)
         self.scene.measureArmed.connect(self._on_measure_armed)
         self.scene.measured.connect(self._on_measured)
+        self.scene.cutArmed.connect(self._on_cut_armed)
+        self.scene.cutMade.connect(self._on_cut_made)
 
         # The 2D editor is the application; the 3D view is a panel you open when you want
         # it. See _build_3d_dock for why that is not just a layout preference.
@@ -1622,6 +1670,18 @@ class MainWindow(QMainWindow):
             action.setToolTip(tip)
             action.triggered.connect(lambda checked, k=kind: self.on_draw_mode(k, checked))
             self.act_draw[kind] = action
+        draw_menu.addSeparator()
+        # The stripboard edit. It is in Draw because it is a board mode with the same
+        # shape as the others -- arm it, click holes, Esc leaves -- even though it is the
+        # only one that takes copper away rather than adding it.
+        self.act_cut = draw_menu.addAction(t("&Cut Track"))
+        self.act_cut.setCheckable(True)
+        self.act_cut.setShortcut(QKeySequence("X"))
+        self.act_cut.setToolTip(
+            "Break the strip at a hole. The cut is drilled through the pad, so that hole "
+            "has nothing to solder to afterwards — click a cut again to take it back."
+        )
+        self.act_cut.triggered.connect(self.on_cut_mode)
         draw_menu.addSeparator()
         # Not "stop drawing" any more, because Escape has to leave whichever mode you are
         # in -- and placing a part is the one it silently did not. See on_stop_tool.
@@ -2148,6 +2208,9 @@ class MainWindow(QMainWindow):
             )
             return f"{t('Drawing')} {kind.replace('-', ' ')}  ·  {how}"
 
+        if self.scene.cut_armed:
+            return f"{t('Cutting tracks')}  ·  {t('click a hole, Esc ends')}"
+
         if self.scene.measure_armed:
             from_ = self.scene.measure_from()
             where = (
@@ -2381,6 +2444,17 @@ class MainWindow(QMainWindow):
                 if readable
                 else "Column letters and row numbers along the edges of the view."
             )
+
+        # Cutting a track is meaningless on a board that has none, and the board type can
+        # change under an open window through Board Setup -- so the tool is greyed out
+        # here rather than refusing the click later.
+        if hasattr(self, "act_cut"):
+            strips = is_stripboard(self.bus.document.board)
+            self.act_cut.setEnabled(strips)
+            if not strips:
+                self.act_cut.setToolTip(
+                    "Only stripboard has tracks to cut. File ▸ Board Setup ▸ Type."
+                )
 
         errors = sum(1 for v in self._last_violations if v.severity == "error")
         warns = sum(1 for v in self._last_violations if v.severity == "warning")
@@ -2997,6 +3071,14 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("No netlist imported, so there is nothing to route.", 6000)
             return
 
+        # A stripboard is a different problem and gets a different planner: its copper is
+        # already there, so the work is deciding where to BREAK it and what to link across
+        # afterwards. Running the perfboard router on one would lay solder traces along
+        # tracks that are already joined, and bare wire across a face that is solid copper.
+        if is_stripboard(self.bus.document.board):
+            self._route_stripboard(only_net_ids)
+            return
+
         # Autoroute ADDS. On a net whose parts have moved since it was routed that is the
         # wrong answer and produces a board that grows every time -- so the question is
         # put to the user rather than either behaviour being assumed. See
@@ -3088,6 +3170,54 @@ class MainWindow(QMainWindow):
             f"{describe_plan(plan)}{cleared_note}{style_note}  ({elapsed:.0f} ms)", 0
         )
         self._report_unrouted(plan)
+
+    def _route_stripboard(self, only_net_ids: tuple[NetId, ...] | None) -> None:
+        """Cut the tracks this board needs cutting, and link what is left apart.
+
+        One command for both halves, because they are one decision: a board cut apart
+        with nothing linking it, or linked with nothing cut, is a state nobody designed
+        and either is one Ctrl+Z away if this commits them separately.
+        """
+        document = self.bus.document
+        t0 = time.perf_counter()
+        plan = self._run_planner(
+            "Planning cuts and links…",
+            lambda _should_stop: plan_stripboard(document, self.lookup, only_net_ids),
+        )
+        elapsed = (time.perf_counter() - t0) * 1000
+        if plan is None:
+            return
+
+        if plan.is_empty:
+            self.statusBar().showMessage(
+                f"{describe_strip_plan(plan)} ({elapsed:.0f} ms)", 8000
+            )
+            self._report_strip_problems(plan)
+            return
+
+        result = self.bus.dispatch("stripboard.apply", plan.payload())
+        if not result.ok:
+            QMessageBox.warning(self, t("Routing refused"), f"[{result.code}] {result.message}")
+            return
+
+        self.statusBar().showMessage(
+            f"{describe_strip_plan(plan)}  ({elapsed:.0f} ms)", 0
+        )
+        self._report_strip_problems(plan)
+
+    def _report_strip_problems(self, plan: StripboardPlan) -> None:
+        """What it could not do, named. PLAN.md §13's trap is the planner that leaves a
+        handful of connections undone and does not say which."""
+        if not plan.problems:
+            return
+        lines = [f"{problem.message}" for problem in plan.problems[:12]]
+        if len(plan.problems) > 12:
+            lines.append(f"... and {len(plan.problems) - 12} more.")
+        QMessageBox.information(
+            self,
+            "Some connections could not be made",
+            f"{len(plan.problems)} problem(s):\n\n" + "\n\n".join(lines),
+        )
 
     def _report_unrouted(self, plan: AutoroutePlan) -> None:
         self._report_unrouted_items([item for outcome in plan.nets for item in outcome.unrouted])
@@ -3305,6 +3435,32 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             f"{component.ref} at {format_hole(component.anchor)}", 6000
         )
+
+    def on_cut_mode(self, checked: bool) -> None:
+        """Arm or disarm cutting tracks."""
+        self.scene.arm_cutting(checked)
+        if checked:
+            self.statusBar().showMessage(
+                "Click a hole to cut the strip there; click a cut again to take it back. "
+                "Esc ends.",
+                0,
+            )
+        else:
+            self.statusBar().clearMessage()
+
+    def _on_cut_armed(self, on: bool) -> None:
+        """Keep the menu in step when the scene ends cutting by itself (Esc, right-click,
+        or a board that has no tracks to cut)."""
+        was = self.act_cut.blockSignals(True)
+        self.act_cut.setChecked(on)
+        self.act_cut.blockSignals(was)
+        self._refresh_mode_banner()
+
+    def _on_cut_made(self, result: Any) -> None:
+        if result is None:
+            return
+        message = result.description if result.ok else f"[{result.code}] {result.message}"
+        self.statusBar().showMessage(message, 6000)
 
     def on_measure_mode(self, checked: bool) -> None:
         """Arm or disarm the measuring tool."""

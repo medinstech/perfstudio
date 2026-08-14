@@ -46,6 +46,50 @@ closed without a bump.
   - **Duplicate does not touch the system clipboard.** Duplicating a part is a board
     operation; it has no business throwing away what somebody copied elsewhere.
 
+- **Stripboard is a board type this application can actually design on**, rather than a
+  string the data model accepted and nothing understood. `board.type` and `strip_axis`
+  have been in `model.py`, `persist.py` and the `.perf` format since the first commit, a
+  `cut.add` command has existed the whole time, and **nothing read any of it**: the
+  connectivity engine did not know a strip joins the holes along it, so a stripboard
+  loaded as a pad-per-hole board with a decorative field set.
+  - **A cut destroys the copper AT a hole** (`stripboard.py`). That is how a track is
+    actually broken — a spot-face cutter or a drill bit turned by hand in the hole, which
+    takes the pad with it. The alternative model, a cut *between* two holes, describes a
+    knife scored across the track: a real technique, much harder to do reliably at 2.54 mm
+    and much harder to inspect, and one that would leave a cut without an address in an
+    application where every message is addressed.
+  - **Connectivity gained a fourth rule** beside the three it has always had: on
+    stripboard the BOARD joins holes, and nobody soldered those connections. Only holes
+    something is soldered into take part — a strip physically joins all thirty holes in
+    its row, and registering the twenty-six nobody used would put every empty pad on the
+    board into a net, which is exactly what the module's existing note says not to do.
+    Gated on the board type, which is why fifteen golden fixtures still reproduce byte
+    for byte.
+  - **The autorouter for a stripboard subtracts before it adds** (`striproute.py`). Two
+    pins of different nets on one strip are shorted by the board itself, so the first
+    pass is cuts and the second is links; the links go over the COMPONENT side, because
+    the solder side is one sheet of parallel copper and a wire laid across it there shorts
+    every strip it crosses. Pins it cannot separate — adjacent, with no hole between them
+    to drill — are reported by name rather than routed around, because the fix is to move
+    a part and that is the user's decision.
+  - **The cuts and the links commit as one command** (`stripboard.apply`). Separately,
+    one `Ctrl+Z` leaves a board cut apart with nothing linking it, or linked with nothing
+    cut — which is a short across two nets, and a state nobody designed.
+  - **DRC reports a pin standing in a cut hole** (`cut-track-conflict`), an error for the
+    same reason `mounting-hole-conflict` is: the pad is gone, so the board cannot work
+    rather than probably will not.
+  - **Both renderers draw the strips**, and the 2D view marks each cut. A stripboard drawn
+    as a grid of separate pads is a picture of a different board, on a view whose whole
+    job is to be checked against the real one.
+  - **The build guide cuts first and measures each one.** The cuts are made from the
+    copper side with a drill, and once a part is over a hole there is no way back to it —
+    so they are phase 0, and each gets a blocking isolation probe, because a cut that did
+    not go all the way through looks exactly like one that did.
+  - **Board Setup chooses the type and which way the strips run**, and Draw ▸ Cut Track
+    (`X`) makes and un-makes cuts by clicking. Not done: the placer does not yet reward
+    putting a net's pins on one strip, which on stripboard is most of the design — said
+    here rather than left to be discovered.
+
 - **Measure the distance between two holes** (View ▸ Measure Distance, `Ctrl+M`). It
   reports three numbers because they answer three different questions: **holes across**
   is what a footprint and the build guide are written in, **mm** is what a lead-bending

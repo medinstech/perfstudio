@@ -22,6 +22,11 @@ Connection semantics -- the crux of this module:
     geometry, not electrical contacts -- a wire passing over a pad does not connect to
     it.
 
+ d) On STRIPBOARD, the board itself joins holes: everything on one uncut run of copper
+    is one node. Nobody soldered those connections, which is the whole character of the
+    board -- the design problem there is where to BREAK the copper, not where to add it.
+    See stripboard.py; a cut destroys the copper at a hole and splits its strip in two.
+
 A node exists here only if something makes electrical contact at it: a component pin,
 or a conductor contact point. The pads a wire merely passes over are deliberately NOT
 registered. They are electrically indistinguishable from the thousands of empty pads on
@@ -49,6 +54,7 @@ from .model import (
     PerfDocument,
     contacts_every_path_hole,
 )
+from .stripboard import is_stripboard, segment_of
 
 # ---------------------------------------------------------------------------
 # Public types
@@ -234,6 +240,30 @@ def extract_physical_nets(doc: PerfDocument, lookup: FootprintLookup) -> list[Ph
 
         if contact is not None:
             conductor_contact[conductor.id] = contact
+
+    # --- Pass 3: the board's own copper (stripboard only). ---
+    #
+    # A stripboard arrives with whole rows already joined, so some of this board's
+    # connections were made by whoever manufactured it. A cut breaks a strip into two,
+    # and stripboard.segment_of is the one answer to which run a hole is on.
+    #
+    # Only holes that ALREADY have a node take part. The strip physically joins all
+    # thirty holes in its row, but the twenty-six nobody soldered into are electrically
+    # indistinguishable from the empty pads this module deliberately does not register --
+    # see the note in the docstring. Registering them would put every empty hole on the
+    # board into a net, and every consumer would filter them straight back out.
+    if is_stripboard(doc.board):
+        by_segment: dict[tuple[int, int], list[str]] = {}
+        for key in sorted(node_info):
+            info = node_info[key]
+            if info.side != "bottom":
+                continue
+            segment = segment_of(doc, info.hole)
+            if segment is not None:
+                by_segment.setdefault(segment, []).append(key)
+        for keys in by_segment.values():
+            for a, b in pairwise(keys):
+                ds.union(a, b)
 
     # --- Assemble groups by union-find root. ---
     groups: dict[str, _Group] = {}

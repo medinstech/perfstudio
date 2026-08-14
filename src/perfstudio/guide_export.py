@@ -66,6 +66,7 @@ def guide_to_json(guide: Guide, indent: int = 2) -> str:
             "bom": [_plain(line) for line in guide.bom],
             "cut_list": [_plain(cut) for cut in guide.cut_list],
             "spine_list": [_plain(spine) for spine in guide.spine_list],
+            "track_cuts": [_plain(cut) for cut in guide.track_cuts],
             "phases": [
                 {
                     "number": phase.number,
@@ -362,6 +363,33 @@ def _hole(at: HoleCoord) -> str:
     return f'<span class="hole">{escape(format_hole(at))}</span>'
 
 
+def _html_cuts(guide: Guide) -> str:
+    """The tracks to break, before anything is soldered.
+
+    In phase 0 and nowhere else, because that is when they are physically possible: the
+    cut is drilled through the hole from the copper side, and a part sitting over it puts
+    the hole out of a drill bit's reach for good.
+    """
+    if not guide.track_cuts:
+        return ""
+    rows = "".join(
+        f"<tr><td>{_hole(cut.at)}</td><td>{escape(cut.strip)}</td>"
+        f"<td>{_hole(cut.separates[0])} ↔ {_hole(cut.separates[1])}</td></tr>"
+        if cut.separates is not None
+        else f"<tr><td>{_hole(cut.at)}</td><td>{escape(cut.strip)}</td><td>—</td></tr>"
+        for cut in guide.track_cuts
+    )
+    return (
+        f"<h3>Cut these tracks first</h3>"
+        f"<p>{len(guide.track_cuts)} cut(s), made from the copper side with a spot-face "
+        f"cutter or a 3 mm drill turned by hand. Each one takes the pad with it, so the "
+        f"hole it is made in has nothing to solder to afterwards. Do them all before the "
+        f"first part goes in — once a part is over a hole there is no way back to it.</p>"
+        f'<div class="wrap"><table>'
+        f"<tr><th>Hole</th><th>Strip</th><th>Separates</th></tr>{rows}</table></div>"
+    )
+
+
 def _html_preparation(guide: Guide) -> str:
     phase = guide.phases[0]
     rows = "".join(f"<li>{escape(tool)}</li>" for tool in guide.tools)
@@ -378,7 +406,7 @@ def _html_preparation(guide: Guide) -> str:
         f"{guide.board.rows * guide.board.pitch:.1f} mm) and mark hole "
         f'<span class="hole">A1</span> in the top-left corner on the COMPONENT side. '
         f"Every address below is counted from it, so if it is marked wrong, everything "
-        f"else is.</p>{checks}</section>"
+        f"else is.</p>{_html_cuts(guide)}{checks}</section>"
     )
 
 

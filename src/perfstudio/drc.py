@@ -82,6 +82,7 @@ from .model import (
     is_solder_trace,
 )
 from .occupancy import build_occupancy
+from .stripboard import cut_holes, is_stripboard
 
 # ---------------------------------------------------------------------------
 # Public types
@@ -795,6 +796,67 @@ def _check_mounting_hole_conflicts(
     return violations
 
 
+def _check_cut_track_conflicts(doc: PerfDocument, lookup: FootprintLookup) -> list[DrcViolation]:
+    """Pins and conductors soldered where a track cut has taken the copper away.
+
+    The stripboard twin of ``mounting-hole-conflict``, an error for the same reason: a
+    cut is drilled THROUGH a hole and takes its pad with it, so there is nothing there to
+    solder to. It is the easiest mistake to make on stripboard, because a cut is made
+    early and looks like nothing afterwards -- and because moving a part by one hole is
+    exactly the fix that leaves a pin standing in yesterday's cut.
+    """
+    if not is_stripboard(doc.board):
+        return []
+    cuts = cut_holes(doc)
+    if not cuts:
+        return []
+
+    violations: list[DrcViolation] = []
+    for component in doc.components:
+        footprint = lookup(component.footprint_id)
+        if footprint is None:
+            continue
+        for pin, hole in all_pin_holes(component, footprint):
+            if hole_key(hole) not in cuts:
+                continue
+            violations.append(
+                DrcViolation(
+                    rule="cut-track-conflict",
+                    severity="error",
+                    message=(
+                        f"{component.ref} pin {pin.number} sits at {_safe_hole(hole)}, where the "
+                        f"track has been cut. The cut took the pad with it, so there is nothing "
+                        f"there to solder to — move the part, or move the cut."
+                    ),
+                    holes=(hole,),
+                    component_ids=(component.id,),
+                )
+            )
+
+    for conductor in doc.conductors:
+        contacts = (
+            conductor.path
+            if contacts_every_path_hole(conductor)
+            else conductor.path[:1] + conductor.path[-1:]
+        )
+        for hole in contacts:
+            if hole_key(hole) not in cuts:
+                continue
+            violations.append(
+                DrcViolation(
+                    rule="cut-track-conflict",
+                    severity="error",
+                    message=(
+                        f"Conductor {conductor.id} is soldered at {_safe_hole(hole)}, where the "
+                        f"track has been cut and the pad is gone."
+                    ),
+                    holes=(hole,),
+                    conductor_ids=(conductor.id,),
+                )
+            )
+    return violations
+
+
 def _check_mounting_hole_clearance(
     doc: PerfDocument, lookup: FootprintLookup
 ) -> list[DrcViolation]:
@@ -1371,6 +1433,7 @@ def run_drc(
         *_check_solder_trace_proximity(doc, node_index),
         *_check_mounting_hole_conflicts(doc, lookup),
         *_check_mounting_hole_clearance(doc, lookup),
+        *_check_cut_track_conflicts(doc, lookup),
         *_check_pad_lifting_risk(doc, options),
         *_check_solder_trace_feasibility(doc, options),
         *_check_current_capacity(doc, options),

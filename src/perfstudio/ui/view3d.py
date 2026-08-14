@@ -51,6 +51,7 @@ from perfstudio.model import (
     PerfDocument,
     contacts_every_path_hole,
 )
+from perfstudio.stripboard import cut_holes, segments
 
 from .boardcolors import scheme_for
 from .bodies import (
@@ -304,6 +305,43 @@ def build_pads(
     actor.GetProperty().SetColor(*scheme_for(board.material).pad_rgb)
     actor.GetProperty().SetSpecular(0.4)
     return actor
+
+
+def build_strips(doc: PerfDocument) -> list[vtk.vtkActor]:
+    """The copper a stripboard came with, as one bar per uncut run.
+
+    On the solder side only, because that is the only side it is on. Without it the 3D
+    view of a stripboard shows a grid of separate pads -- which is a picture of a
+    different board, and this view exists to be checked against the real one.
+
+    One thin box per segment rather than per hole: a 30 x 20 board has 20 of them against
+    600 pads, and the strip has to read as one continuous piece of copper anyway.
+    """
+    runs = segments(doc)
+    if not runs:
+        return []
+    board = doc.board
+    extent_x, extent_y = pad_extent_mm(board)
+    z = pad_z(board, "bottom")
+    actors: list[vtk.vtkActor] = []
+    for run in runs:
+        first_x, first_y = _xy(board, run.holes[0])
+        last_x, last_y = _xy(board, run.holes[-1])
+        bar = vtk.vtkCubeSource()
+        bar.SetXLength(abs(last_x - first_x) + extent_x)
+        bar.SetYLength(abs(last_y - first_y) + extent_y)
+        # Thin enough to read as foil rather than as a rail standing off the board, and
+        # thick enough that the renderer does not fight the substrate for the same plane.
+        bar.SetZLength(0.06)
+        actor = vtk.vtkActor()
+        mapper = vtk.vtkPolyDataMapper()
+        mapper.SetInputConnection(bar.GetOutputPort())
+        actor.SetMapper(mapper)
+        actor.SetPosition((first_x + last_x) / 2, (first_y + last_y) / 2, z)
+        actor.GetProperty().SetColor(*scheme_for(board.material).pad_rgb)
+        actor.GetProperty().SetSpecular(0.4)
+        actors.append(actor)
+    return actors
 
 
 def build_mounting_holes(doc: PerfDocument) -> list[vtk.vtkActor]:
@@ -1385,13 +1423,17 @@ def populate_renderer(
     ren.RemoveAllViewProps()
 
     ren.AddActor(build_substrate(board))
+    # The board's own copper goes down before the pads, so a stripboard reads as strips
+    # with holes in them rather than as a grid of islands that happen to line up.
+    for actor in build_strips(doc):
+        ren.AddActor(actor)
     # Copper face by face, because a single-sided board genuinely has none on top: the
     # component side is bare phenolic with drilled holes, which is most of what makes
     # those boards look and solder differently.
     for face in ("top", "bottom"):
         if board.single_sided and face == "top":
             continue
-        ren.AddActor(build_pads(board, face, holes_without_grid_pad(doc, face)))
+        ren.AddActor(build_pads(board, face, holes_without_grid_pad(doc, face) | cut_holes(doc)))
     # A finger has no bore, so it gets no drill cylinder either.
     ren.AddActor(build_drills(board, consumed_holes(doc) | undrilled_holes(doc)))
     for actor in build_legend(doc):

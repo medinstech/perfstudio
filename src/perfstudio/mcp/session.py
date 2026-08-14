@@ -82,6 +82,7 @@ from perfstudio.model import (
     DocumentMeta,
     HoleCoord,
     NetClass,
+    NetId,
     NetNode,
     PerfDocument,
     Rotation,
@@ -91,6 +92,9 @@ from perfstudio.placer import PlacementOptions, plan_placement
 from perfstudio.placer import describe as describe_placement
 from perfstudio.ratsnest import ratsnest, summarize
 from perfstudio.router import RoutingStyle, options_for_style
+from perfstudio.stripboard import is_stripboard
+from perfstudio.striproute import describe_plan as describe_strip_plan
+from perfstudio.striproute import plan_stripboard
 from perfstudio.version import __version__
 
 # ---------------------------------------------------------------------------
@@ -745,6 +749,13 @@ class BoardSession:
         if nets:
             only = tuple(self._net_id_strict(name) for name in nets)
 
+        # A stripboard is a different problem: its copper is already there, so the work
+        # is deciding where to BREAK it. The perfboard router would lay solder traces
+        # along tracks that are already joined and bare wire across a solid copper face,
+        # so the board type picks the planner -- for an agent exactly as for the window.
+        if is_stripboard(self.document.board):
+            return self._autoroute_stripboard(only)
+
         # Cleared BEFORE planning, exactly as the GUI does it, so the plan is made
         # against the board as it will be rather than around copper that is about to go.
         # An agent that moves a part and re-routes must get the same result a user does.
@@ -814,6 +825,52 @@ class BoardSession:
                 for outcome in plan.nets
                 for item in outcome.unrouted
             ],
+        )
+        return result
+
+    def _autoroute_stripboard(self, only: tuple[NetId, ...] | None) -> dict[str, Any]:
+        """Cut the tracks that short two nets, link the islands that are left.
+
+        One command for both, so an agent's undo takes back a whole plan rather than
+        leaving the board cut apart with nothing linking it. Everything the planner could
+        not do comes back in ``problems`` -- an agent that is told only what worked cannot
+        tell a finished board from a half-finished one.
+        """
+        plan = plan_stripboard(self.document, self.lookup, only)
+        problems = [
+            {
+                "code": problem.code,
+                "message": problem.message,
+                "holes": [format_hole(hole) for hole in problem.holes],
+            }
+            for problem in plan.problems
+        ]
+        if plan.is_empty:
+            return _ok(
+                committed=False,
+                summary=describe_strip_plan(plan),
+                cuts=0,
+                links=0,
+                problems=problems,
+            )
+
+        result = self._dispatch("stripboard.apply", plan.payload())
+        if not result["ok"]:
+            return result
+        result.update(
+            committed=True,
+            summary=describe_strip_plan(plan),
+            cuts=[format_hole(cut.at) for cut in plan.cuts],
+            links=[
+                {
+                    "net": link.net_name,
+                    "from": format_hole(link.from_hole),
+                    "to": format_hole(link.to_hole),
+                    "holes": link.holes,
+                }
+                for link in plan.links
+            ],
+            problems=problems,
         )
         return result
 

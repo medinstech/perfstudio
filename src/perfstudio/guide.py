@@ -53,7 +53,15 @@ from typing import Literal
 
 from .connectivity import FootprintLookup, PhysicalPinRef
 from .drc import DEFAULT_DRC_OPTIONS, DrcOptions, DrcViolation, run_drc, trace_electrical
-from .geometry import all_pin_holes, edge_connector_holes, format_hole, path_length_mm
+from .geometry import (
+    all_pin_holes,
+    column_label,
+    edge_connector_holes,
+    format_hole,
+    is_inside_board,
+    path_length_mm,
+    row_label,
+)
 from .lvs import continuity_checks, isolation_checks, run_lvs
 from .model import (
     Board,
@@ -72,6 +80,7 @@ from .model import (
     Rotation,
     SolderTraceConductor,
 )
+from .stripboard import is_stripboard, strip_axis
 
 # ---------------------------------------------------------------------------
 # Phases (PLAN.md Sec 7.1)
@@ -290,6 +299,26 @@ class WireCut:
 
 
 @dataclass(frozen=True, slots=True)
+class TrackCutJob:
+    """One track to break, for a stripboard build.
+
+    These come FIRST, before a single part goes in, and not as a matter of taste: the cut
+    is drilled through the hole from the copper side, and once a part is sitting over that
+    hole there is no way to get a bit to it. A board where three cuts were forgotten is a
+    board that comes apart again.
+
+    ``separates`` names the two holes either side of the cut, which is what the isolation
+    check in phase 0 measures between -- the only way to confirm a cut worked without
+    holding it up to the light.
+    """
+
+    at: HoleCoord
+    #: "row 3" or "column D", in the same words the board's own addresses use.
+    strip: str
+    separates: tuple[HoleCoord, HoleCoord] | None
+
+
+@dataclass(frozen=True, slots=True)
 class SpineCut:
     """One length of tinned wire laid along a solder trace as its spine."""
 
@@ -409,6 +438,9 @@ class Guide:
     bom: tuple[BomLine, ...]
     cut_list: tuple[WireCut, ...]
     spine_list: tuple[SpineCut, ...]
+    #: Stripboard only, and empty on every other board: the tracks to break before
+    #: anything is soldered.
+    track_cuts: tuple[TrackCutJob, ...]
     iron: IronSettings
     tools: tuple[str, ...]
     warnings: tuple[GuideWarning, ...]
@@ -455,6 +487,8 @@ def build_guide(
         by_phase[conductor_phase].append(conductor_step)
 
     checkpoints = _checkpoints(doc, lookup, violations, conductor_steps, options)
+    track_cuts = _track_cuts(doc)
+    checkpoints[0].extend(_cut_checks(track_cuts))
 
     phases = tuple(
         GuidePhase(
@@ -475,6 +509,7 @@ def build_guide(
         bom=_bom(doc, lookup),
         cut_list=tuple(cut_list),
         spine_list=tuple(spine_list),
+        track_cuts=track_cuts,
         iron=IRON_BY_MATERIAL[doc.board.material],
         tools=_tools(doc, cut_list, spine_list),
         warnings=_warnings(doc, lookup, violations),
@@ -1010,6 +1045,71 @@ def _risks_by_conductor(violations: list[DrcViolation]) -> dict[ConductorId, tup
 
 
 # -- checkpoints ------------------------------------------------------------
+
+
+def _track_cuts(doc: PerfDocument) -> tuple[TrackCutJob, ...]:
+    """Every track to break, in reading order.
+
+    Sorted by where they are rather than by when they were made, because they are done in
+    one pass with the board on the bench and a drill bit in hand -- an order that follows
+    the addresses is one that can be checked off without hunting.
+    """
+    if not is_stripboard(doc.board):
+        return ()
+
+    horizontal = strip_axis(doc.board) == "horizontal"
+    jobs: list[TrackCutJob] = []
+    for cut in sorted(doc.cuts, key=lambda c: (c.at.row, c.at.col)):
+        if not is_inside_board(cut.at, doc.board):
+            continue
+        neighbours = (
+            (HoleCoord(cut.at.col - 1, cut.at.row), HoleCoord(cut.at.col + 1, cut.at.row))
+            if horizontal
+            else (HoleCoord(cut.at.col, cut.at.row - 1), HoleCoord(cut.at.col, cut.at.row + 1))
+        )
+        on_board = all(is_inside_board(hole, doc.board) for hole in neighbours)
+        jobs.append(
+            TrackCutJob(
+                at=cut.at,
+                strip=(
+                    f"row {row_label(cut.at.row)}"
+                    if horizontal
+                    else f"column {column_label(cut.at.col)}"
+                ),
+                separates=neighbours if on_board else None,
+            )
+        )
+    return tuple(jobs)
+
+
+def _cut_checks(cuts: tuple[TrackCutJob, ...]) -> list[Checkpoint]:
+    """One isolation probe per cut, before anything is soldered.
+
+    Blocking, and the only checks in this guide that can be made on a bare board. A cut
+    that did not go all the way through looks exactly like one that did -- the copper is
+    0.035 mm thick and the swarf sits in the hole -- so the meter is the only way to know,
+    and it is far cheaper to know now than after forty joints.
+    """
+    checks: list[Checkpoint] = []
+    for cut in cuts:
+        if cut.separates is None:
+            continue
+        left, right = cut.separates
+        checks.append(
+            Checkpoint(
+                kind="isolation",
+                title=f"{format_hole(left)} ↔ {format_hole(right)} must be open",
+                instruction=(
+                    f"After cutting the track at {format_hole(cut.at)}, measure resistance "
+                    f"between {format_hole(left)} and {format_hole(right)}."
+                ),
+                expected="Open circuit. Anything below a few hundred kΩ means copper is "
+                "still bridging the cut — clear it before soldering anything.",
+                holes=(left, right),
+                blocking=True,
+            )
+        )
+    return checks
 
 
 def _checkpoints(

@@ -80,6 +80,7 @@ TURKISH: Mapping[str, str] = {
     "&Bare Wire": "&Çıplak Tel",
     "&Insulated Wire": "İ&zoleli Tel",
     "Top &Jumper": "Üst Yüz &Jumper",
+    "&Cut Track": "Şeridi &Kes",
     "&Stop the Current Tool": "Aracı &Bırak",
     # -- nets ----------------------------------------------------------------
     # "&Net" becomes the plural "Netler": a menu named with the same word in both
@@ -160,6 +161,8 @@ TURKISH: Mapping[str, str] = {
     "click both ends, Esc cancels": "iki ucu da tıkla, Esc iptal eder",
     "click each pad, Enter or right-click finishes, Esc cancels":
         "her pede tıkla, Enter veya sağ tık bitirir, Esc iptal eder",
+    "Cutting tracks": "Şerit kesiliyor",
+    "click a hole, Esc ends": "bir deliğe tıkla, Esc bitirir",
     "Measuring": "Ölçülüyor",
     "click two holes": "iki deliğe tıkla",
     "from": "başlangıç",
@@ -212,6 +215,15 @@ TURKISH: Mapping[str, str] = {
     "Columns": "Sütun",
     "Rows": "Satır",
     "Material": "Malzeme",
+    # -- board setup: which kind of board this is -----------------------------
+    "Type": "Tip",
+    "Strips run": "Şeritler",
+    "Pad per hole — every hole is its own island": (
+        "Delik başına ada — her delik kendi adası"
+    ),
+    "Stripboard — whole rows joined; you cut the track to separate": (
+        "Şeritli plaket — satırlar baştan bağlı; ayırmak için şerit kesilir"
+    ),
     # -- board setup: the sizes you can buy -----------------------------------
     "Board": "Kart",
     "Custom size": "Özel ölçü",

@@ -136,7 +136,8 @@ def test_no_two_entries_in_a_menu_claim_the_same_accelerator() -> None:
         "edit": ["&Undo", "&Redo", "Cop&y", "&Paste", "Dupl&icate", "Rotate &Clockwise",
                  "Rotate Counter-clock&wise", "&Mirror", "Toggle &Lock", "&Delete"],
         "draw": ["&Solder Trace", "Solder Trace with S&pine", "&Bare Wire",
-                 "&Insulated Wire", "Top &Jumper", "&Stop the Current Tool"],
+                 "&Insulated Wire", "Top &Jumper", "&Cut Track",
+                 "&Stop the Current Tool"],
         "net": ["&Connect Two Pins", "&New Net…", "&Add Pins to Net", "&Finish Adding Pins",
                 "&Edit Net…", "&Disconnect Selected Pins", "De&lete Net"],
         # Route ▸ Preferred Connection. Five items in one submenu, and the one place in the

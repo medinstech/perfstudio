@@ -687,6 +687,28 @@ class AddCutPayload:
 
 
 @dataclass(frozen=True, slots=True)
+class ApplyStripboardPlanPayload:
+    """Track cuts AND the links that replace them, as ONE command.
+
+    They are one decision. On stripboard a cut takes away a connection the board was
+    providing and a link puts back the one the circuit wanted; committing them separately
+    would put a state on the undo stack nobody designed -- a board cut apart with nothing
+    linking it, or, one Ctrl+Z the other way, a board linked with nothing cut, which is a
+    short across two nets.
+
+    All-or-nothing like every other batch here: a cut off the board or a link the router
+    should never have produced refuses the whole plan rather than leaving half of it down.
+    """
+
+    cuts: tuple[HoleCoord, ...] = ()
+    conductors: tuple[NewConductor, ...] = ()
+    #: Optional explicit ids, for reproducible replay. Generated when omitted.
+    cut_ids: tuple[str, ...] | None = None
+    conductor_ids: tuple[ConductorId, ...] | None = None
+    label: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class DeleteCutPayload:
     id: str
 
@@ -1563,6 +1585,68 @@ class _AddCut:
         return f"Cut track at {format_hole(p.at)}"
 
 
+class _ApplyStripboardPlan:
+    type = "stripboard.apply"
+
+    def apply(
+        self, doc: PerfDocument, p: ApplyStripboardPlanPayload, ctx: CommandContext
+    ) -> PerfDocument:
+        if doc.board.type != "stripboard":
+            raise CommandError("not-stripboard", "Track cuts only apply to stripboard.")
+        if not p.cuts and not p.conductors:
+            raise CommandError(
+                "nothing-to-apply",
+                "stripboard.apply needs a cut or a link; an empty plan would put a no-op "
+                "on the undo stack.",
+            )
+        if p.cut_ids is not None and len(p.cut_ids) != len(p.cuts):
+            raise CommandError(
+                "id-count-mismatch", f"Got {len(p.cut_ids)} id(s) for {len(p.cuts)} cut(s)."
+            )
+        if p.conductor_ids is not None and len(p.conductor_ids) != len(p.conductors):
+            raise CommandError(
+                "id-count-mismatch",
+                f"Got {len(p.conductor_ids)} id(s) for {len(p.conductors)} conductor(s).",
+            )
+
+        taken_cut_ids = {cut.id for cut in doc.cuts}
+        cut_at = {(cut.at.col, cut.at.row) for cut in doc.cuts}
+        cuts: list[TrackCut] = []
+        for index, at in enumerate(p.cuts):
+            assert_hole_on_board(at, doc.board, "Cut")
+            if (at.col, at.row) in cut_at:
+                # Cutting a hole that is already cut is a no-op the caller did not mean:
+                # the plan was made against a different board than the one in front of it.
+                raise CommandError(
+                    "duplicate-cut", f"The track at {format_hole(at)} is already cut."
+                )
+            cut_at.add((at.col, at.row))
+            id_ = p.cut_ids[index] if p.cut_ids is not None else ctx.next_id("cut")
+            if id_ in taken_cut_ids:
+                raise CommandError("duplicate-id", f'A cut with id "{id_}" already exists.')
+            taken_cut_ids.add(id_)
+            cuts.append(TrackCut(id=id_, at=at))
+
+        # The cuts join the document before the copper is checked against it, so a link
+        # is validated against the board it will actually be soldered to.
+        with_cuts = dataclasses.replace(doc, cuts=doc.cuts + tuple(cuts))
+
+        taken_conductor_ids = _existing_conductor_ids(with_cuts)
+        prepared: list[Conductor] = []
+        for index, spec in enumerate(p.conductors):
+            id_ = p.conductor_ids[index] if p.conductor_ids is not None else ctx.next_id("cond")
+            prepared.append(_prepare_conductor(with_cuts, spec, id_, taken_conductor_ids))
+
+        return dataclasses.replace(
+            with_cuts, conductors=with_cuts.conductors + tuple(prepared)
+        )
+
+    def describe(self, p: ApplyStripboardPlanPayload, doc: PerfDocument) -> str:
+        if p.label:
+            return p.label
+        return f"Cut {len(p.cuts)} track(s) and fit {len(p.conductors)} link(s)"
+
+
 class _DeleteCut:
     type = "cut.delete"
 
@@ -1849,6 +1933,7 @@ delete_net: CommandDefinition[DeleteNetPayload] = _DeleteNet()
 connect_pins: CommandDefinition[ConnectPinsPayload] = _ConnectPins()
 disconnect_pins: CommandDefinition[DisconnectPinsPayload] = _DisconnectPins()
 add_cut: CommandDefinition[AddCutPayload] = _AddCut()
+apply_stripboard_plan: CommandDefinition[ApplyStripboardPlanPayload] = _ApplyStripboardPlan()
 delete_cut: CommandDefinition[DeleteCutPayload] = _DeleteCut()
 add_mounting_hole: CommandDefinition[AddMountingHolePayload] = _AddMountingHole()
 add_mounting_holes: CommandDefinition[AddMountingHolesPayload] = _AddMountingHoles()
@@ -1884,6 +1969,7 @@ STANDARD_COMMANDS: tuple[CommandDefinition[Any], ...] = (
     connect_pins,
     disconnect_pins,
     add_cut,
+    apply_stripboard_plan,
     delete_cut,
     add_mounting_hole,
     add_mounting_holes,
