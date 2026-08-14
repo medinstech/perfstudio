@@ -274,12 +274,23 @@ def test_every_referenced_section_has_a_link_definition() -> None:
 
 
 def test_development_builds_have_an_open_unreleased_section() -> None:
+    """A development version must not be describing a version that already shipped.
+
+    It used to require the Unreleased section to have entries in it as well, which
+    contradicted the ritual the same tests exist to enforce: docs/RELEASING.md step 4
+    opens the next cycle with an EMPTY Unreleased heading, and nothing has accumulated
+    towards it yet by definition. The contradiction survived three releases because it
+    can only be reached by finishing one, and 0.4.0 was the first that was.
+
+    Dropping it costs nothing that matters. The direction worth protecting is that a
+    RELEASE documents itself, and that is held from the other side:
+    `test_no_released_section_is_empty` refuses a closed section with no entries, and
+    `test_released_builds_match_the_newest_changelog_section` refuses a version whose
+    section is not the newest one. Neither can be satisfied by forgetting to write
+    anything down.
+    """
     if not is_development_build():
         pytest.skip("this is a released version; the released-build check covers it")
-    assert _has_content(_unreleased_body()), (
-        f"{__version__} is a development build, so CHANGELOG.md's Unreleased section "
-        "must describe what is accumulating towards it"
-    )
     released = {s.version for s in _released_sections()}
     assert release_version() not in released, (
         f"{release_version()} is already a released section, but version.py still says "

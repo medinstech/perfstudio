@@ -20,6 +20,21 @@ closed without a bump.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The release ritual's own last step failed the tests that enforce it.**
+  [docs/RELEASING.md](./docs/RELEASING.md) step 4 opens the next cycle by putting the
+  `.devN` suffix back on and leaving an **empty** `## [Unreleased]` heading — and
+  `test_development_builds_have_an_open_unreleased_section` then failed the whole suite,
+  because it also demanded that section have entries in it. Nothing has accumulated
+  towards a version opened a minute ago; that is what opening one means. The
+  contradiction stood through three versions because reaching it requires finishing a
+  release, and 0.4.0 is the first release this project has actually completed. The test
+  now checks the half that cannot be satisfied by forgetting to write anything down —
+  that a development version is not describing a version which already shipped — and the
+  release side still refuses a closed section with no entries, and a released build whose
+  section is not the newest.
+
 ## [0.4.0] - 2026-08-14
 
 ### Added
