@@ -76,21 +76,18 @@ jobs:
       # run. Only the console build can be asked anything -- see the spec on why there
       # are two.
       #
-      # The headless run is not held to its exit status here, and only here: this runner
-      # has no usable OpenGL, and VTK aborts the process rather than raising when it asks
-      # for a context (tests/glprobe.py explains it, and the CI workflow does the same).
-      # What that check is for still happens -- the frozen exe starts, opens a document,
-      # renders 2D, writes the 1:1 PDF and runs DRC and LVS, all of which precede the 3D
-      # stage -- and a missing `out_2d.png` still fails the job. The Linux job runs the
-      # identical check under xvfb with its exit status enforced, so the 3D path is
-      # covered on a runner that can actually draw.
+      # The headless run is held to its exit status even though this runner has no GPU.
+      # It is the frozen build that answers `view3d.offscreen_gl_available` here, in the
+      # form a user downloads -- a bundled interpreter probing itself through
+      # `sys.executable` -- so this step is also the only place that mechanism is
+      # exercised as it ships. A crash, a hang, or a bundle that cannot spawn itself all
+      # fail the job rather than being written off as "no GL on the runner".
       - name: Check the bundle
         shell: bash
         run: |
           test -f ./dist/perfstudio/perfstudio.exe
           ./dist/perfstudio/perfstudio-cli.exe --version
-          ./dist/perfstudio/perfstudio-cli.exe --headless examples/ne555-astable.perf \
-            || echo "::warning::headless exited non-zero; this runner has no GL for the 3D stage"
+          ./dist/perfstudio/perfstudio-cli.exe --headless examples/ne555-astable.perf
           test -f ./headless_out/out_2d.png
 
       - name: Install NSIS

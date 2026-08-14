@@ -1,69 +1,36 @@
 """Whether this machine can open the offscreen GL context the 3D renders need.
 
-Asked rather than assumed, and asked in a child process, because the failure being
-detected is not an exception. VTK does not raise when there is no usable OpenGL
-implementation behind an offscreen window -- it takes the interpreter down with it, and
-a crash cannot be caught in the process it happens in.
+The probe itself lives in the application (`ui/view3d.offscreen_gl_available`), not here,
+and that is the point: the suite and the program have to agree about what "this machine
+cannot render" means, or the tests skip on a machine where the application would have
+crashed and pass on one where it would not.
 
-GitHub's Windows runners are exactly that machine. `win.Render()` in
-`view3d.render_step_images` ends the pytest process with an access violation, and the
-tests after it are not reported as failed; they are not reported at all -- a suite of
-1262 tests went quiet after about 900 of them and the summary line never printed. The
-Linux job does not hit it because it runs under xvfb, and Qt's offscreen platform plugin
-is a different thing from a GL context: `QT_QPA_PLATFORM=offscreen` does not supply one.
+WHY IT IS A CHILD PROCESS. VTK does not raise when there is no usable OpenGL behind an
+offscreen window -- it ends the process. On GitHub's Windows runners `win.Render()` in
+`render_step_images` killed pytest with an access violation, and the ~360 tests after it
+were not reported as failed; they were not reported at all, with no summary line. A crash
+cannot be caught where it happens, so it is spent somewhere it costs nothing.
 
-The engine never needs any of this. Only the paths that put a board through VTK do: the
-build guide's step images and the offscreen 3D render.
+Qt's offscreen platform plugin is a different thing from a GL context:
+`QT_QPA_PLATFORM=offscreen` does not supply one, which is why the Linux CI job runs the
+suite under xvfb rather than relying on it.
 
-This module also holds the guard that keeps the list of such tests honest. Marking them
-by hand found three on the first pass and missed two, which cost a full CI round each --
-so `test_every_vtk_touching_test_is_marked` now finds them by reading the sources
-instead.
+This module also holds the guard that keeps the marked list honest. Marking those tests
+by hand found three on the first pass and missed two, at a full CI round each, so
+`test_every_vtk_touching_test_is_marked` finds them by reading the sources instead.
 """
 
 from __future__ import annotations
 
 import ast
-import functools
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
 
-#: The smallest program that fails the way the real renders fail: an offscreen window and
-#: one Render(), which is the call that dies in `render_step_images`. Deliberately raw
-#: VTK -- Qt is not involved in the crash, and importing it here would only make the
-#: probe slower and its answer harder to read.
-_PROBE = """
-import vtkmodules.vtkRenderingOpenGL2  # noqa: F401  -- registers the OpenGL backend
-from vtkmodules.vtkRenderingCore import vtkRenderer, vtkRenderWindow
-
-window = vtkRenderWindow()
-window.SetOffScreenRendering(1)
-window.SetSize(16, 16)
-window.AddRenderer(vtkRenderer())
-window.Render()
-"""
-
-
-@functools.cache
-def offscreen_gl_available() -> bool:
-    """True if a child process can open an offscreen GL context and render one frame.
-
-    A VTK that will not import at all answers False here too, which is the right answer
-    to the question being asked: the tests that consult it cannot run without VTK either.
-    """
-    try:
-        completed = subprocess.run(
-            [sys.executable, "-c", _PROBE],
-            capture_output=True,
-            timeout=180,
-        )
-    except (OSError, subprocess.TimeoutExpired):  # pragma: no cover - environment-specific
-        return False
-    return completed.returncode == 0
-
+from perfstudio.ui.view3d import PROBE_FLAG, offscreen_gl_available
 
 #: Applied to the tests that put a document through VTK. Everything else in the suite,
 #: including every 2D render, runs on any machine.
@@ -71,6 +38,28 @@ requires_offscreen_gl = pytest.mark.skipif(
     not offscreen_gl_available(),
     reason="no offscreen GL context here; VTK would abort the process rather than raise",
 )
+
+
+def test_the_probe_flag_answers_and_does_not_start_the_application() -> None:
+    """The child must exit on its own, whatever the answer is.
+
+    A probe that opened a window, or waited for one, would hang the export it was
+    supposed to protect -- and it would hang it on precisely the machines that cannot
+    render, which are the ones being protected. `main` routes the flag before Qt is
+    touched for that reason, and this is what would notice if it stopped doing so.
+    """
+    started = time.perf_counter()
+    completed = subprocess.run(
+        [sys.executable, "-m", "perfstudio.ui.main", PROBE_FLAG],
+        capture_output=True,
+        timeout=180,
+    )
+    elapsed = time.perf_counter() - started
+
+    assert elapsed < 120, f"the probe took {elapsed:.0f}s; it is meant to be one frame"
+    # Zero where there is a context, anything else where there is not -- including the
+    # abort itself, which is the answer arriving the hard way and is still an answer.
+    assert (completed.returncode == 0) == offscreen_gl_available()
 
 
 # ---------------------------------------------------------------------------
@@ -91,7 +80,7 @@ _MARK = "requires_offscreen_gl"
 
 
 def _called_names(node: ast.AST) -> set[str]:
-    """Every function name called anywhere inside ``node``, however it is qualified."""
+    """Every rendering function called anywhere inside ``node``, however it is qualified."""
     names: set[str] = set()
     for child in ast.walk(node):
         if not isinstance(child, ast.Call):

@@ -14,7 +14,10 @@ orientation instead of mirroring it.
 
 from __future__ import annotations
 
+import functools
 import math
+import subprocess
+import sys
 from dataclasses import dataclass
 from typing import Any
 
@@ -1496,6 +1499,63 @@ def trackball_style() -> vtk.vtkInteractorStyleTrackballCamera:
     to go looking for a setting to change.
     """
     return vtk.vtkInteractorStyleTrackballCamera()
+
+
+# ---------------------------------------------------------------------------
+# Is there anything to render into
+# ---------------------------------------------------------------------------
+
+#: The argv flag that turns a run of this application into the probe below. It is not a
+#: user-facing option and is not documented as one: it exists because a frozen build has
+#: no separate Python to spawn, so the only interpreter available to ask the question in
+#: a *different process* is this application itself.
+PROBE_FLAG = "--probe-offscreen-gl"
+
+
+def probe_offscreen_gl() -> int:
+    """Open an offscreen window, render one frame, and report by exit status.
+
+    Called in the child process; ``main`` routes ``PROBE_FLAG`` here before it touches
+    Qt. The parent never calls this directly, because the failure it is looking for
+    cannot be caught in the process it happens in.
+    """
+    win = vtk.vtkRenderWindow()
+    win.SetOffScreenRendering(1)
+    win.SetSize(16, 16)
+    win.AddRenderer(vtk.vtkRenderer())
+    win.Render()
+    return 0
+
+
+@functools.cache
+def offscreen_gl_available() -> bool:
+    """Whether this machine can render offscreen at all -- asked in a child process.
+
+    VTK DOES NOT RAISE WHEN THERE IS NO USABLE OpenGL BEHIND AN OFFSCREEN WINDOW. It
+    ends the process: on Windows an access violation, elsewhere an abort. So the
+    ``except Exception`` around every render in this application, and the promise it
+    encodes -- that a guide with no pictures is still a complete guide -- is unreachable
+    in exactly the case it was written for. A virtual machine, a remote desktop session
+    or an old driver does not raise; it takes the whole application down mid-export.
+
+    The only way to catch that is to spend the crash somewhere it costs nothing, which
+    means another process, which is what this is. One spawn per run, cached: the answer
+    cannot change while the application is open.
+
+    Timeouts and OSErrors answer False. A machine slow enough to take three minutes over
+    a 16x16 frame is not one to render 29 step images on either.
+    """
+    if getattr(sys, "frozen", False):
+        # A frozen build IS the interpreter, so it probes by running itself. sys.argv[0]
+        # is not usable here -- it is the launcher script under some spawn methods.
+        command = [sys.executable, PROBE_FLAG]
+    else:
+        command = [sys.executable, "-m", "perfstudio.ui.main", PROBE_FLAG]
+    try:
+        completed = subprocess.run(command, capture_output=True, timeout=180)
+    except (OSError, subprocess.TimeoutExpired):  # pragma: no cover - machine-specific
+        return False
+    return completed.returncode == 0
 
 
 def render_offscreen(

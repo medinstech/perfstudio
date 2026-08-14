@@ -32,6 +32,33 @@ closed without a bump.
 
 ### Fixed
 
+- **Exporting a build guide on a machine with no OpenGL killed the application**, and the
+  code that was supposed to prevent it could not run. Both export paths wrap the render in
+  `except Exception` and fall back to a picture-less guide — the promise that a guide
+  without illustrations is still a complete guide — but VTK does not raise when there is
+  no context behind an offscreen window. It ends the process. On a virtual machine, a
+  remote desktop session or an old driver, **File ▸ Export Build Guide** took the window
+  down with every unsaved edit in it, and the handler for exactly that case never
+  executed. 0.4.0 shipped with this; the release notes named it as unfixed.
+  - **A crash cannot be caught where it happens, so it is spent where it costs nothing.**
+    `view3d.offscreen_gl_available()` opens a 16 × 16 offscreen window in a **child
+    process** and reports by exit status. One spawn per run, cached — the answer cannot
+    change while the application is open — and about 0.9 s.
+  - **A frozen build has no separate Python to spawn, so it probes by running itself.**
+    `sys.executable` is the application, and `--probe-offscreen-gl` is answered before Qt
+    is touched. That is not a documented option and is not meant to be used by hand; it
+    exists because the installed build is exactly where this has to keep working, and the
+    Windows release job now runs it that way on a runner with no GPU.
+  - **Three consumers, one answer**: the MCP `generate_guide`, the GUI's export, and
+    `--headless`, which now prints *"3D SKIPPED: no offscreen GL context on this machine"*
+    and writes everything else rather than stopping at the first stage that needs a
+    graphics driver. The suite asks the same function, so a test skips exactly where the
+    application would have declined to render — rather than the two disagreeing about what
+    the machine can do.
+  - Both CI workflows are held to the exit status again. The Windows steps had been
+    allowed to fail while this was outstanding, which meant the one runner most likely to
+    show a real Windows fault was the one whose result was being ignored.
+
 - **A machine-wide installer was putting its shortcuts in one person's profile.** Found
   by installing v0.4.0 on a real desktop, which is a thing that had never been done: CI
   unpacks the bundle and asks the binary its version, and the installer around it had only

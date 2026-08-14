@@ -3780,9 +3780,18 @@ class MainWindow(QMainWindow):
         # feedback worth giving: it is well under a second on a board of this size,
         # because the render window is built once and re-actored per step rather than
         # stood up again for each one.
+        # ...and only where there is something to render into. On a machine with no
+        # offscreen GL -- a VM, a remote session, an old driver -- VTK does not raise,
+        # it ends the process, so exporting a guide would take the application down with
+        # every unsaved edit in it. A guide without pictures is still a complete guide;
+        # losing the board is not recoverable.
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
-            images = view3d.render_step_images(self.bus.document, guide, self.lookup)
+            images = (
+                view3d.render_step_images(self.bus.document, guide, self.lookup)
+                if view3d.offscreen_gl_available()
+                else {}
+            )
         finally:
             QApplication.restoreOverrideCursor()
 
@@ -4008,8 +4017,14 @@ def headless(argv: list[str]) -> int:
     # headless run that renders the board and does not produce it is only testing half
     # the pipeline.
     guide = build_guide(doc, lookup)
+    # Asked once, here, and reused by the 3D stage below. On a machine with no offscreen
+    # GL this run reports what it could not draw and still produces every other output,
+    # rather than dying halfway through with a crash dump: a headless run is what CI and
+    # a bug report both use, and both are worse off if it stops at the first stage that
+    # needs a graphics driver.
+    can_render_3d = view3d.offscreen_gl_available()
     t0 = time.perf_counter()
-    images = view3d.render_step_images(doc, guide, lookup)
+    images = view3d.render_step_images(doc, guide, lookup) if can_render_3d else {}
     t_shots = (time.perf_counter() - t0) * 1000
     html = guide_to_html(guide, images)
     (out_dir / "guide.html").write_text(html, encoding="utf-8")
@@ -4028,6 +4043,16 @@ def headless(argv: list[str]) -> int:
         print(f"  ! {warning.code}: {warning.message}")
 
     # --- 3D render, offscreen: the build-guide image path ---
+    if not can_render_3d:
+        # Said loudly rather than skipped quietly, and NOT an error: nothing is wrong
+        # with the document, and every check this run exists to perform has already run.
+        # A CI job that prints this is telling you its runner has no GPU, which is worth
+        # knowing and is not a regression.
+        print("\n3D SKIPPED: no offscreen GL context on this machine (VTK would abort)")
+        print(f"\noutputs written to {out_dir}")
+        del app
+        return 0 if check.ok else 1
+
     try:
         t0 = time.perf_counter()
         stats = view3d.render_offscreen(doc, lookup, str(out_dir / "out_3d.png"))
@@ -4080,6 +4105,13 @@ def main() -> int:
     if "--version" in sys.argv or "-V" in sys.argv:
         print(describe_version())
         return 0
+
+    # Before Qt, and before anything else: this is the child process of
+    # view3d.offscreen_gl_available, whose entire job is to find out whether VTK can open
+    # an offscreen context here -- by crashing where a crash costs nothing if it cannot.
+    # Not a documented option; see PROBE_FLAG.
+    if view3d.PROBE_FLAG in sys.argv:
+        return view3d.probe_offscreen_gl()
 
     # Chosen before the window is built, because every menu label is translated once at
     # construction. --lang wins over PERFSTUDIO_LANG, which wins over the system locale.
