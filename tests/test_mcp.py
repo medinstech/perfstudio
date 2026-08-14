@@ -37,7 +37,7 @@ import pytest
 from perfstudio.mcp.session import BoardSession, SessionError, new_board
 from perfstudio.model import ComponentInstance, HoleCoord
 
-from .glprobe import requires_offscreen_gl
+from .test_gl import requires_offscreen_gl
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 GOLDEN = REPO_ROOT / "tools" / "diffcheck" / "golden" / "ne555.perf"

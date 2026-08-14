@@ -64,7 +64,7 @@ from perfstudio.ui.view2d import (
 from perfstudio.version import __version__
 from perfstudio.version import describe as describe_version
 
-from .glprobe import requires_offscreen_gl
+from .test_gl import requires_offscreen_gl
 
 GOLDEN = pathlib.Path(__file__).resolve().parent.parent / "tools" / "diffcheck" / "golden" / "dense.perf"
 
@@ -859,6 +859,7 @@ def test_autoplace_on_an_empty_board_says_so_rather_than_running(monkeypatch) ->
 # ---------------------------------------------------------------------------
 
 
+@requires_offscreen_gl  # on_export_guide renders a step image per step
 def test_exporting_the_guide_writes_all_four_files(tmp_path, monkeypatch) -> None:
     window = _window_on(_load_dense())
     window.current_path = tmp_path / "board.perf"
@@ -874,6 +875,7 @@ def test_exporting_the_guide_writes_all_four_files(tmp_path, monkeypatch) -> Non
     window.close()
 
 
+@requires_offscreen_gl  # same export path, so the same step images
 def test_guide_gaps_are_reported_in_a_dialog_not_only_the_status_bar(tmp_path, monkeypatch) -> None:
     """Each warning says the guide describes less than the whole build. A user who misses
     that follows the steps to the end and finds the board does not work."""

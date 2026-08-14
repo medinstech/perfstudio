@@ -719,6 +719,14 @@ closed without a bump.
     the cap above, found the same way, and the reason both are in this release rather
     than in the first bug report from somebody who downloaded nothing.
 
+- **The macOS bundle could not be built at all**, on a line that has never run anywhere
+  else. `perfstudio.spec` builds the `.icns` by scaling the mark to each size Finder
+  wants, and passed the aspect and transformation modes as the bare integers `1` and `1`
+  with the enum names in a comment beside them. PySide6 6.10 refuses an int where an enum
+  is declared — *"QImage.scaled called with wrong argument values"* — and that branch runs
+  on macOS alone, so the machine this was written on could not have executed it. The enums
+  are passed by name now, which is also what the comment said all along.
+
 - **Two footprints failed their golden comparison on macOS arm64, and the bound was
   measuring at the wrong scale.** A circle vertex is `centre + radius * cos(theta)`, and
   the ULP bound the test allows for a trig disagreement was counted on the vertex — which
@@ -735,10 +743,16 @@ closed without a bump.
   decline when there is no context behind an offscreen window — it takes the interpreter
   down, so on GitHub's Windows runners `win.Render()` in `render_step_images` ended the
   pytest process with an access violation and every test after it was not reported at all.
-  `tests/glprobe.py` now asks the question in a child process, where a crash is an answer
-  rather than the end of the session, and the three tests that put a board through VTK
+  `tests/test_gl.py` now asks the question in a child process, where a crash is an answer
+  rather than the end of the session, and the five tests that put a board through VTK
   skip when it says no. Qt's offscreen platform plugin is not a GL context, which is the
   same reason the Linux job runs under xvfb.
+  - **Which five is not left to whoever remembers.** Marking them by hand found three and
+    missed two, at a full CI round each, because a test reaches the renderer through
+    `on_export_guide` or `generate_guide(directory)` without naming it. A test now reads
+    the sources and fails if a test function calls one of those and is not marked — worth
+    a static check rather than a convention, since the cost of missing one is not a red
+    test but a run that stops reporting partway through.
   - The frozen bundle's smoke test on that runner is no longer held to its exit status
     either, and the reason is written into both workflows. Everything the check exists for
     still happens before the 3D stage — the app starts, opens a document, renders 2D,

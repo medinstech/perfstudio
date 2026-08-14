@@ -218,6 +218,11 @@ if sys.platform == "darwin":
         shutil.rmtree(_iconset, ignore_errors=True)
         _iconset.mkdir(parents=True)
 
+        # The enums by name, not the integers they happen to equal: PySide6 6.10 rejects
+        # an int where an enum is declared -- `QImage.scaled called with wrong argument
+        # values` -- and this branch runs on macOS alone, so nothing anywhere else ever
+        # executed the line that says so.
+        from PySide6.QtCore import Qt
         from PySide6.QtGui import QImage
 
         _master = QImage(str(_mark))
@@ -228,8 +233,8 @@ if sys.platform == "darwin":
             _suffix = "" if _scale == 1 else "@2x"
             _scaled = _master.scaled(
                 _pixels, _pixels,
-                aspectMode=1,          # Qt.KeepAspectRatio
-                mode=1,                # Qt.SmoothTransformation
+                aspectMode=Qt.AspectRatioMode.KeepAspectRatio,
+                mode=Qt.TransformationMode.SmoothTransformation,
             )
             _scaled.save(str(_iconset / f"icon_{_points}x{_points}{_suffix}.png"))
 
