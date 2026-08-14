@@ -886,7 +886,7 @@ def test_a_part_the_guide_could_not_describe_is_never_drawn() -> None:
 
 def test_a_step_picture_is_carried_in_the_file_rather_than_linked() -> None:
     """The guide has to open from a USB stick on a phone in five years. A caller hands
-    over PNG BYTES and this module base64s them, so there is no way to give the finished
+    over IMAGE BYTES and this module base64s them, so there is no way to give the finished
     document a dependency on a server or on the folder it was written into."""
     doc = routed_ne555()
     guide = build_guide(doc, REGISTRY)
@@ -921,6 +921,38 @@ def test_only_the_steps_that_were_rendered_get_a_picture() -> None:
     html = guide_to_html(guide, some)
 
     assert html.count("<img") == 3
+
+
+@pytest.mark.parametrize(
+    ("magic", "media"),
+    [
+        (b"\x89PNG\r\n\x1a\n", "image/png"),
+        (b"\xff\xd8\xff\xe0" + b"\x00\x10JFIF", "image/jpeg"),
+        (b"RIFF\x24\x00\x00\x00WEBPVP8 ", "image/webp"),
+    ],
+)
+def test_a_picture_is_announced_as_what_it_actually_is(magic: bytes, media: str) -> None:
+    """A data URI carries its own media type and there is no network behind it to
+    re-fetch from, so a JPEG announced as image/png is a broken picture in the one place
+    it cannot be fixed. The renderer's format is its own decision -- it writes JPEG now
+    and wrote PNG before -- so the type is read off the bytes rather than agreed."""
+    guide = build_guide(routed_ne555(), REGISTRY)
+    first = all_steps(guide)[0]
+
+    html = guide_to_html(guide, {step_focus(first): magic + b"...pretend pixels..."})
+
+    assert f'src="data:{media};base64,' in html
+
+
+def test_bytes_that_are_not_a_picture_are_not_labelled_as_one() -> None:
+    """The failure this rules out is a silent one: label anything image/png and a caller
+    that handed over the wrong thing gets a broken <img> with no clue why."""
+    guide = build_guide(routed_ne555(), REGISTRY)
+    first = all_steps(guide)[0]
+
+    html = guide_to_html(guide, {step_focus(first): b"not a picture at all"})
+
+    assert 'src="data:application/octet-stream;base64,' in html
 
 
 def test_the_picture_is_labelled_with_what_to_do_not_with_what_it_is() -> None:

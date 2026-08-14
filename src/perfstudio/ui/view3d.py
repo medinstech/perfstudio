@@ -1612,6 +1612,23 @@ def step_is_solder_side(doc: PerfDocument, focus: str) -> bool:
     return False
 
 
+#: JPEG quality for the step images, measured on ``dense.perf`` at 560x370 (33 steps):
+#:
+#:     PNG        135.6 KB/image   guide.html 6378 KB
+#:     JPEG q90    61.8 KB/image
+#:     JPEG q82    47.0 KB/image   guide.html 2070 KB
+#:     JPEG q70    35.6 KB/image
+#:
+#: The guide is one self-contained file meant to open on a phone, so its size is a
+#: feature and not a detail -- and these are photographs of a lit 3D scene, the exact
+#: content PNG is worst at. q82 keeps the pin-1 marks and the highlight colour clean;
+#: below about q70 the JPEG rings around the thin leader lines in the exploded shots.
+#: JPEG rather than WebP because this has to survive PyInstaller: vtkJPEGWriter is
+#: linked into VTK, while Qt's WebP writer is an image-format plugin that has to be
+#: collected into the bundle, and a missing plugin fails at the user's machine.
+STEP_IMAGE_JPEG_QUALITY = 82
+
+
 def render_step_images(
     doc: PerfDocument,
     guide: Guide,
@@ -1621,9 +1638,10 @@ def render_step_images(
 ) -> dict[str, bytes]:
     """One picture per build step (PLAN.md §7.2), keyed by ``guide.step_focus``.
 
-    PNG bytes rather than files, because that is what ``guide_export.guide_to_html``
+    JPEG bytes rather than files, because that is what ``guide_export.guide_to_html``
     takes: it base64s them into the document, so the finished guide cannot acquire a
-    dependency on a folder beside it.
+    dependency on a folder beside it. Base64 costs a third on top, which is the other
+    reason the format matters here (see ``STEP_IMAGE_JPEG_QUALITY``).
 
     FROM THE SIDE THE WORK IS DONE ON. Most connections are made on the solder side, and
     photographed from the component side they are behind 1.6 mm of board -- the first
@@ -1666,10 +1684,11 @@ def render_step_images(
         grab = vtk.vtkWindowToImageFilter()
         grab.SetInput(win)
         grab.Update()
-        writer = vtk.vtkPNGWriter()
+        writer = vtk.vtkJPEGWriter()
+        writer.SetQuality(STEP_IMAGE_JPEG_QUALITY)
         writer.WriteToMemoryOn()
         writer.SetInputConnection(grab.GetOutputPort())
         writer.Write()
-        png = numpy_support.vtk_to_numpy(writer.GetResult())  # type: ignore[no-untyped-call]
-        images[focus] = bytes(png.tobytes())
+        jpeg = numpy_support.vtk_to_numpy(writer.GetResult())  # type: ignore[no-untyped-call]
+        images[focus] = bytes(jpeg.tobytes())
     return images

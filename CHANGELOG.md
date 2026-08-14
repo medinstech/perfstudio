@@ -22,6 +22,30 @@ closed without a bump.
 
 ### Changed
 
+- **The build guide is a third of the size it was.** `dense.perf` produced a 6378 KB
+  `guide.html`; the same board now produces 2070 KB, and nothing was dropped from it.
+  - The step images are **JPEG rather than PNG**. They are photographs of a lit 3D scene
+    — smooth shading, no flat colour, no sharp text — which is the exact content PNG
+    stores worst: 135.6 KB per image against 47.0 KB at quality 82, measured on the 33
+    steps of `dense.perf`. Below about quality 70 the compression starts ringing around
+    the thin leader lines in the exploded shots, so 82 is where it stopped rather than at
+    the smallest number that still looked fine in a thumbnail.
+  - **JPEG and not WebP**, which would have been smaller again: `vtkJPEGWriter` is linked
+    into VTK, while Qt's WebP writer is an image-format plugin that has to be collected
+    into a PyInstaller bundle — and a missing plugin is a failure on the user's machine,
+    not on ours. The guide's whole promise is that it opens anywhere, later.
+  - **`guide_export` reads the media type off the bytes** instead of naming PNG in the
+    data URI. It is inlined into a file with no network behind it, so a picture announced
+    as the wrong type is a broken image in the one place nobody can re-fetch it — and the
+    renderer's format has now changed once, which is the argument against agreeing on it
+    in two places.
+
+- **The printed guide is legible when the browser is in dark mode.** `@media print` reset
+  the body colours but not the palette tokens, and browsers drop background colours when
+  they print — so on a dark-mode machine every `.meta` line printed pale grey on white
+  paper. The print block now redefines the whole palette. This guide is meant to be taped
+  next to the board.
+
 - **Ruff is a gate.** It reported 466 findings and did not block, which is the worst of
   both worlds: a permanently red tick is one nobody reads, so it protects nothing while
   looking like it does.

@@ -1613,8 +1613,10 @@ def test_every_step_gets_a_picture_of_its_own() -> None:
     images = view3d.render_step_images(doc, guide, lookup, width=200, height=140)
 
     assert set(images) == {step_focus(step) for step in all_steps(guide)}
-    png_magic = bytes([0x89]) + b"PNG"
-    assert all(png.startswith(png_magic) for png in images.values())
+    # JPEG, and the guide's size is why: these are photographs of a lit 3D scene, which
+    # PNG stores at ~136 KB each against JPEG's 47 KB, and every one of them is base64ed
+    # into a single file somebody opens on a phone.
+    assert all(shot.startswith(b"\xff\xd8\xff") for shot in images.values())
 
 
 def test_a_connection_is_photographed_from_the_side_it_is_made_on() -> None:

@@ -234,9 +234,19 @@ button { font: inherit; color: var(--text); background: var(--panel-2);
          border: 1px solid var(--line); border-radius: 6px; padding: .3rem .7rem;
          cursor: pointer; }
 @media print {
+  /* The whole palette, not just body: printed from a browser whose OS is in dark mode
+     the tokens above are still the dark ones, and browsers drop background colours when
+     they print -- so --dim's pale grey lands on white paper and the meta line under
+     every step is the part that fades out. This guide gets taped next to the board. */
+  :root {
+    --bg: #fff; --panel: #fff; --panel-2: #f0f0f0; --line: #bbb;
+    --text: #000; --dim: #444; --accent: #10305c; --ok: #14562f;
+    --warn: #6b4300; --error: #8c1616; --trace: #6b4b00;
+  }
   .progress, input[type=checkbox] { display: none; }
   body { background: #fff; color: #000; }
-  .step, .check { break-inside: avoid; border-color: #bbb; }
+  .step, .check { break-inside: avoid; }
+  .shot { break-inside: avoid; max-width: 20rem; }
 }
 """
 
@@ -288,12 +298,13 @@ def guide_to_html(guide: Guide, step_images: Mapping[str, bytes] | None = None) 
     five years' time, which rules out every dependency that could stop existing.
 
     ``step_images`` are the illustrations PLAN.md §7.2 asks for, keyed by
-    ``guide.step_focus(step)``. **Raw PNG bytes, not URLs or paths** — this function
+    ``guide.step_focus(step)``. **Raw image bytes, not URLs or paths** — this function
     base64s them into the document itself. That is the whole point: a caller cannot hand
     it a link, so the finished file cannot acquire a dependency on a server, a folder
     beside it, or a phone's network. Rendering them needs VTK and a real board, which is
     the host's job (``ui/view3d.render_offscreen``); this module has never known what a
-    board looks like and still does not.
+    board looks like and still does not — including what format its pictures are in,
+    which ``_image_media_type`` reads off the bytes rather than agreeing in advance.
     """
     parts: list[str] = [
         "<!doctype html>",
@@ -378,6 +389,33 @@ def _html_step(step: GuideStep, dom_id: str, images: Mapping[str, bytes]) -> str
     return _html_conductor_step(step, dom_id, picture)
 
 
+#: Magic bytes to media type, longest signature first. A data URI carries its own type,
+#: so the one thing this must never do is guess: a JPEG announced as ``image/png`` is a
+#: broken picture in the one place there is no network to re-fetch it from.
+_IMAGE_MAGIC: tuple[tuple[bytes, str], ...] = (
+    (b"\x89PNG\r\n\x1a\n", "image/png"),
+    (b"\xff\xd8\xff", "image/jpeg"),
+    (b"RIFF", "image/webp"),  # bytes 8..12 say WEBP; _image_media_type checks them
+    (b"\x89PNG", "image/png"),  # the truncated stub the tests hand over
+)
+
+
+def _image_media_type(data: bytes) -> str:
+    """What the bytes actually are, read off the front of them.
+
+    The renderer's format is its own decision (``ui/view3d`` writes JPEG, and wrote PNG
+    before that), and this module has no way to ask. Sniffing keeps the two from having
+    to agree in advance -- and keeps a stale caller from mislabelling its own picture.
+    """
+    for magic, media in _IMAGE_MAGIC:
+        if not data.startswith(magic):
+            continue
+        if magic == b"RIFF" and data[8:12] != b"WEBP":
+            continue
+        return media
+    return "application/octet-stream"
+
+
 def _html_step_image(step: GuideStep, images: Mapping[str, bytes]) -> str:
     """The board as it stands at this step, with this step's own part picked out.
 
@@ -385,13 +423,13 @@ def _html_step_image(step: GuideStep, images: Mapping[str, bytes]) -> str:
     printed, or read aloud, or opened where the picture will not load, the sentence that
     survives has to be the one that says what to do.
     """
-    png = images.get(step_focus(step))
-    if not png:
+    picture = images.get(step_focus(step))
+    if not picture:
         return ""
-    encoded = base64.b64encode(png).decode("ascii")
+    encoded = base64.b64encode(picture).decode("ascii")
     return (
         f'<img class="shot" alt="{escape(step.title)}" '
-        f'src="data:image/png;base64,{encoded}">'
+        f'src="data:{_image_media_type(picture)};base64,{encoded}">'
     )
 
 
