@@ -29,7 +29,7 @@ from __future__ import annotations
 import dataclasses
 import math
 from dataclasses import dataclass
-from typing import Any, Literal, TypeAlias
+from typing import Any, Literal
 
 from .command import (
     CommandContext,
@@ -390,7 +390,7 @@ class NewStripConductor:
     side: BoardSide = "bottom"
 
 
-NewConductor: TypeAlias = (
+type NewConductor = (
     NewSolderTraceConductor | NewWireConductor | NewLeadBendConductor | NewStripConductor
 )
 
@@ -748,7 +748,7 @@ class _PlaceComponent:
             mirrored=p.mirrored if p.mirrored is not None else False,
             locked=False,
         )
-        return dataclasses.replace(doc, components=doc.components + (component,))
+        return dataclasses.replace(doc, components=(*doc.components, component))
 
     def describe(self, p: PlaceComponentPayload, doc: PerfDocument) -> str:
         return f"Place {p.ref} at {format_hole(p.anchor)}"
@@ -872,11 +872,12 @@ class _UpdateComponent:
         self, doc: PerfDocument, p: UpdateComponentPayload, ctx: CommandContext
     ) -> PerfDocument:
         existing = require_component(doc, p.id)
-        if p.ref is not None and p.ref != existing.ref:
-            if any(c.ref == p.ref for c in doc.components):
-                raise CommandError(
-                    "duplicate-ref", f'A component with ref "{p.ref}" already exists.'
-                )
+        if (
+            p.ref is not None
+            and p.ref != existing.ref
+            and any(c.ref == p.ref for c in doc.components)
+        ):
+            raise CommandError("duplicate-ref", f'A component with ref "{p.ref}" already exists.')
         components = tuple(
             dataclasses.replace(
                 c,
@@ -967,7 +968,7 @@ class _AddConductor:
     def apply(self, doc: PerfDocument, p: AddConductorPayload, ctx: CommandContext) -> PerfDocument:
         id_ = p.id if p.id is not None else ctx.next_id("cond")
         conductor = _prepare_conductor(doc, p.conductor, id_, _existing_conductor_ids(doc))
-        return dataclasses.replace(doc, conductors=doc.conductors + (conductor,))
+        return dataclasses.replace(doc, conductors=(*doc.conductors, conductor))
 
     def describe(self, p: AddConductorPayload, doc: PerfDocument) -> str:
         path = p.conductor.path
@@ -1305,7 +1306,7 @@ class _AddNet:
             current_a=p.current_a,
             voltage_v=p.voltage_v,
         )
-        return dataclasses.replace(doc, nets=doc.nets + (net,))
+        return dataclasses.replace(doc, nets=(*doc.nets, net))
 
     def describe(self, p: AddNetPayload, doc: PerfDocument) -> str:
         pins = f" with {len(p.nodes)} pin(s)" if p.nodes else ""
@@ -1463,7 +1464,7 @@ class _AddCut:
         if any(c.id == id_ for c in doc.cuts):
             raise CommandError("duplicate-id", f'A cut with id "{id_}" already exists.')
         cut = TrackCut(id=id_, at=p.at)
-        return dataclasses.replace(doc, cuts=doc.cuts + (cut,))
+        return dataclasses.replace(doc, cuts=(*doc.cuts, cut))
 
     def describe(self, p: AddCutPayload, doc: PerfDocument) -> str:
         return f"Cut track at {format_hole(p.at)}"
@@ -1525,7 +1526,7 @@ class _AddMountingHole:
             diameter=p.diameter,
             head_diameter=p.head_diameter,
         )
-        return dataclasses.replace(doc, mounting_holes=doc.mounting_holes + (hole,))
+        return dataclasses.replace(doc, mounting_holes=(*doc.mounting_holes, hole))
 
     def describe(self, p: AddMountingHolePayload, doc: PerfDocument) -> str:
         return f"Drill {p.diameter} mm mounting hole at {format_hole(p.at)}"
@@ -1686,7 +1687,7 @@ class _AddEdgeConnector:
                 "overlapping-edge-connector",
                 f"Another edge connector already has a finger at {format_hole(clash)}.",
             )
-        return dataclasses.replace(doc, edge_connectors=doc.edge_connectors + (connector,))
+        return dataclasses.replace(doc, edge_connectors=(*doc.edge_connectors, connector))
 
     def describe(self, p: AddEdgeConnectorPayload, doc: PerfDocument) -> str:
         return f"Add {p.count}-finger edge connector on the {p.edge} edge"

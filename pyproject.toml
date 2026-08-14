@@ -62,3 +62,26 @@ src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+# Two rules are switched off, and each is a decision rather than a surrender. Everything
+# else in the selection above is a gate: the `lint` CI job fails on it.
+ignore = [
+    # E501 fired 235 times, median 105 characters and longest 124, and almost every one is
+    # prose -- an explanatory comment or a message string. A formatter cannot split those
+    # either, which is why ruff's own guidance is to leave line length to the formatter
+    # rather than the linter. `line-length` above stays at 100 as the target to write to;
+    # adopting `ruff format` is the separate deliberate act that would settle the rest,
+    # and it would rewrite 40 of 57 files, so it is not being done as a side effect of
+    # turning the linter on.
+    "E501",
+    # Ambiguous-unicode, 154 times, and wrong here every time. 137 are the dotless "ı" in
+    # the Turkish catalogue, which is not a suspicious lookalike of "i" -- it is a
+    # different letter of the language the interface speaks. The rest are "ρ" for
+    # resistivity in DRC's docstrings and "×" in "5 × 7 cm". The rule exists to catch
+    # homoglyph attacks in source; this project's source is deliberately multilingual and
+    # deliberately typographic, and a rule that flags correct Turkish 137 times is a rule
+    # that teaches people to stop reading the output.
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]

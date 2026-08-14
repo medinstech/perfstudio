@@ -31,7 +31,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from itertools import pairwise
-from typing import Literal, TypeAlias
+from typing import Literal
 
 from .connectivity import FootprintLookup, PhysicalNet, PhysicalPinRef, extract_physical_nets
 
@@ -47,7 +47,7 @@ from .model import ComponentInstance, ConductorId, Net, NetClass, NetId, NetNode
 # Public types
 # ---------------------------------------------------------------------------
 
-LvsIssueKind: TypeAlias = Literal[
+type LvsIssueKind = Literal[
     "open",  # pins the schematic says are one net are split across >1 physical net
     "short",  # pins from >1 schematic net share one physical net
     "floating-conductor",  # a conductor in a physical net containing no pins at all
@@ -111,7 +111,7 @@ class IsolationCheck:
 #: Identity key for a (component_ref, pin) pair. A plain tuple is used rather than a
 #: formatted string (as the original TypeScript does for its Map keys) because Python
 #: tuples are natively hashable -- there is no need to manufacture a string identity.
-_PinKey: TypeAlias = tuple[str, str]
+type _PinKey = tuple[str, str]
 
 
 def _pin_key(component_ref: str, pin: str) -> _PinKey:
@@ -153,7 +153,7 @@ def _physical_net_label(id_: str | None, physical_net_by_id: dict[str, PhysicalN
 # LVS
 # ---------------------------------------------------------------------------
 
-_PinStatus: TypeAlias = Literal["ok", "unplaced", "unknown-footprint"]
+type _PinStatus = Literal["ok", "unplaced", "unknown-footprint"]
 
 
 @dataclass(frozen=True, slots=True)

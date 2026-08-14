@@ -117,15 +117,19 @@ jobs:
           retention-days: 7
 
   lint:
-    name: ruff (not yet a gate)
+    name: ruff
     runs-on: ubuntu-latest
-    # NOT REQUIRED, and stated rather than hidden. `ruff check src tests` currently
-    # reports a few hundred findings -- overwhelmingly E501 on message strings and RUF001
-    # on the Turkish catalogue's dotless i -- and `ruff format` would rewrite 40 of the 57
-    # files. Both are worth settling; neither is worth settling by surprise inside a CI
-    # change, because the answer decides whether every line of blame in this repository
-    # points at a reformat. Until it is settled this job reports and does not block.
-    continue-on-error: true
+    # A GATE, as of the commit that emptied it. It reported 466 findings and did not
+    # block, which is the worst of both: a permanently red tick teaches everyone to stop
+    # reading it. 389 of those were two rules that are simply wrong for this codebase and
+    # are now switched off in pyproject with the reason at the switch -- E501 on prose a
+    # formatter could not split either, and ambiguous-unicode on the Turkish catalogue's
+    # dotless "i". The remaining 77 were fixed, four of them by hand because ruff's own
+    # fix would have inlined a multi-line call onto one 200-character line.
+    #
+    # `ruff format` is still NOT run. It would rewrite 40 of the 57 files and point every
+    # line of blame in this repository at a reformat, which is a decision of its own and
+    # not a side effect of turning the linter on.
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -133,6 +137,13 @@ jobs:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: pyproject.toml
-      - run: pip install ruff
-      - run: ruff check src tests --statistics
+      # Pinned to a minor, and today of all days: an unbounded `mcp>=1.0` picked up a new
+      # major this morning and took the MCP server and all three installers down with it.
+      # A linter is the same hazard in a smaller way -- a new minor adds rules, and rules
+      # added by somebody else's release schedule would fail a gate on a tree nobody
+      # touched. Raise it deliberately, with the fixes in the same commit.
+      - run: pip install "ruff>=0.15,<0.16"
+      # The findings themselves, not a count of them: this fails the build now, and a job
+      # that fails should print the thing to fix.
+      - run: ruff check src tests
       - run: ruff format --check src tests

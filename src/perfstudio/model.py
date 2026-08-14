@@ -26,7 +26,7 @@ from typing import Literal, TypeAlias
 # Units
 # ---------------------------------------------------------------------------
 
-Mm: TypeAlias = float
+type Mm = float
 
 #: Standard perfboard hole pitch.
 STANDARD_PITCH_MM: Mm = 2.54
@@ -51,7 +51,7 @@ class HoleCoord:
 #: Human-facing hole address: column letters plus a 1-indexed row, e.g. "A1", "AC12".
 #: This is the language the soldering guide speaks, so it is a first-class concept
 #: rather than a formatting detail.
-HoleRef: TypeAlias = str
+type HoleRef = str
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,9 +62,9 @@ class Point2:
 
 #: Which physical face of the board something lives on.
 #: 'top' is the component side, 'bottom' the solder side.
-BoardSide: TypeAlias = Literal["top", "bottom"]
+type BoardSide = Literal["top", "bottom"]
 
-Rotation: TypeAlias = Literal[0, 90, 180, 270]
+type Rotation = Literal[0, 90, 180, 270]
 
 VALID_ROTATIONS: tuple[Rotation, ...] = (0, 90, 180, 270)
 
@@ -72,16 +72,21 @@ VALID_ROTATIONS: tuple[Rotation, ...] = (0, 90, 180, 270)
 # Board
 # ---------------------------------------------------------------------------
 
-BoardType: TypeAlias = Literal["pad-per-hole", "stripboard", "plain"]
+type BoardType = Literal["pad-per-hole", "stripboard", "plain"]
 
 #: Substrate material. Not cosmetic: FR-2 phenolic paper (cheap "pertinaks") lifts pads
 #: under sustained heat far more readily than FR-4, which bounds how long a pure solder
 #: trace may be.
-BoardMaterial: TypeAlias = Literal["FR4", "FR2", "FR1"]
+#: Spelled with ``TypeAlias`` rather than PEP 695's ``type``, and it has to be: this name
+#: is READ AT RUN TIME. ``get_args`` of a ``type`` alias returns an empty tuple, and the
+#: tests that check every member of it is handled -- every material offered in the dialog,
+#: every archetype drawable, every conductor kind covered -- would then assert that an
+#: empty set equals an empty set and pass while checking nothing.
+BoardMaterial: TypeAlias = Literal["FR4", "FR2", "FR1"]  # noqa: UP040
 
 #: One face, or both. Distinct from ``BoardSide``, which is always exactly one — a
 #: silkscreen legend or a set of connector fingers is routinely printed on both.
-BoardFace: TypeAlias = Literal["top", "bottom", "both"]
+type BoardFace = Literal["top", "bottom", "both"]
 
 #: Pad outline. NOT cosmetic, for the same reason the pad diameter is not: the R5'
 #: bridging risk that this whole tool is organised around is a function of the gap
@@ -90,11 +95,11 @@ BoardFace: TypeAlias = Literal["top", "bottom", "both"]
 #: oblong pads is therefore easy to run a solder trace along and hard to run one across,
 #: which is a real constraint on how it should be laid out. See
 #: ``geometry.pad_extent_mm``.
-PadShape: TypeAlias = Literal["round", "oblong"]
+type PadShape = Literal["round", "oblong"]
 
 #: Which way an oblong pad's long axis points. "vertical" runs down a column (so
 #: consecutive ROWS are the close pair), "horizontal" runs along a row.
-PadAxis: TypeAlias = Literal["horizontal", "vertical"]
+type PadAxis = Literal["horizontal", "vertical"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,7 +178,7 @@ class Board:
 # ---------------------------------------------------------------------------
 
 #: Which edge of the board something runs along.
-BoardEdge: TypeAlias = Literal["top", "bottom", "left", "right"]
+type BoardEdge = Literal["top", "bottom", "left", "right"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -264,7 +269,12 @@ class FootprintPin:
     name: str | None = None
 
 
-BodyArchetype: TypeAlias = Literal[
+#: Spelled with ``TypeAlias`` rather than PEP 695's ``type``, and it has to be: this name
+#: is READ AT RUN TIME. ``get_args`` of a ``type`` alias returns an empty tuple, and the
+#: tests that check every member of it is handled -- every material offered in the dialog,
+#: every archetype drawable, every conductor kind covered -- would then assert that an
+#: empty set equals an empty set and pass while checking nothing.
+BodyArchetype: TypeAlias = Literal[  # noqa: UP040
     "axial-cylinder",  # resistors, DO-41 diodes
     "radial-electrolytic",
     "disc-ceramic",
@@ -340,7 +350,7 @@ class Footprint:
 # Component instances
 # ---------------------------------------------------------------------------
 
-ComponentId: TypeAlias = str
+type ComponentId = str
 
 
 @dataclass(frozen=True, slots=True)
@@ -361,7 +371,12 @@ class ComponentInstance:
 # Conductors — the heart of the model
 # ---------------------------------------------------------------------------
 
-ConductorKind: TypeAlias = Literal[
+#: Spelled with ``TypeAlias`` rather than PEP 695's ``type``, and it has to be: this name
+#: is READ AT RUN TIME. ``get_args`` of a ``type`` alias returns an empty tuple, and the
+#: tests that check every member of it is handled -- every material offered in the dialog,
+#: every archetype drawable, every conductor kind covered -- would then assert that an
+#: empty set equals an empty set and pass while checking nothing.
+ConductorKind: TypeAlias = Literal[  # noqa: UP040
     "lead-bend",  # a component lead bent to reach a nearby hole; effectively free
     "solder-trace",  # TR "lehim yolu": adjacent pads joined with solder alone
     "solder-trace-wired",  # the same, over a tinned-wire or lead-offcut spine
@@ -371,10 +386,10 @@ ConductorKind: TypeAlias = Literal[
     "strip",  # stripboard's pre-existing copper strip (v2)
 ]
 
-ConductorId: TypeAlias = str
+type ConductorId = str
 
 #: How much solder has been built up, which sets the effective cross-section.
-SolderBuildup: TypeAlias = Literal["light", "normal", "heavy"]
+type SolderBuildup = Literal["light", "normal", "heavy"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -437,7 +452,7 @@ class StripConductor:
     side: BoardSide = "bottom"
 
 
-Conductor: TypeAlias = (
+type Conductor = (
     SolderTraceConductor | WireConductor | LeadBendConductor | StripConductor
 )
 
@@ -454,9 +469,9 @@ class TrackCut:
 # Nets
 # ---------------------------------------------------------------------------
 
-NetId: TypeAlias = str
+type NetId = str
 
-NetClass: TypeAlias = Literal["power", "ground", "signal"]
+type NetClass = Literal["power", "ground", "signal"]
 
 
 @dataclass(frozen=True, slots=True, order=True)

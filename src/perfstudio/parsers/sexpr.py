@@ -49,7 +49,7 @@ def _is_atom_boundary(ch: str) -> bool:
     """True at end-of-input (charAt returns '') or at any character that ends a bare
     atom.
     """
-    return ch == "" or ch == _OPEN or ch == _CLOSE or ch == _QUOTE or _is_whitespace(ch)
+    return ch in (_OPEN, _CLOSE, _QUOTE) or ch == "" or _is_whitespace(ch)
 
 
 def _skip_whitespace(input_: str, pos: int) -> int:

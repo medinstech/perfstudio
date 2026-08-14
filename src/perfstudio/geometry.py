@@ -19,7 +19,7 @@ import dataclasses
 import math
 import re
 from dataclasses import dataclass
-from typing import Literal, TypeAlias
+from typing import Literal
 
 from .model import (
     Board,
@@ -551,7 +551,7 @@ def edge_finger_rect(connector: EdgeConnector, hole: HoleCoord, board: Board) ->
 #: two, whether the board carries a printed legend, and whether its outer rows are the
 #: oblong finger pads. Those three travel together on the shelf, and setting them
 #: separately is three chances to describe a board nobody sells.
-BoardFamily: TypeAlias = Literal["double-sided-fr4", "single-sided-phenolic"]
+type BoardFamily = Literal["double-sided-fr4", "single-sided-phenolic"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -984,11 +984,10 @@ def segments_touch(a1: HoleCoord, a2: HoleCoord, b1: HoleCoord, b2: HoleCoord) -
         (b1.col, b1.row),
         (b2.col, b2.row),
     }
-    if shared_endpoints:
-        # Meeting at a pad is a junction. Two runs sharing BOTH endpoints are duplicates
-        # lying on top of each other, which is a genuine overlap rather than a junction.
-        if len(shared_endpoints) < 2:
-            return False
+    # Meeting at a pad is a junction. Two runs sharing BOTH endpoints are duplicates lying
+    # on top of each other, which is a genuine overlap rather than a junction.
+    if len(shared_endpoints) == 1:
+        return False
 
     o1 = _orientation(a1, a2, b1)
     o2 = _orientation(a1, a2, b2)

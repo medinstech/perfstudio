@@ -119,7 +119,7 @@ def _hole(ref: str) -> HoleCoord:
     """Parse a hole address, or say clearly what was wrong with it."""
     try:
         return hole_ref_to_coord(ref.strip().upper())
-    except Exception as err:  # noqa: BLE001 - the parser's exception type is its own business
+    except Exception as err:
         raise SessionError(
             f"{ref!r} is not a hole address. They look like 'A1', 'C7' or 'AC12': "
             f"column letters then a 1-based row ({err})."

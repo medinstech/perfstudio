@@ -57,6 +57,27 @@ from typing import Any
 
 import pytest
 
+from perfstudio.footprints import (
+    axial_footprint,
+    box_film_capacitor_footprint,
+    crystal_hc49_footprint,
+    dip_footprint,
+    disc_ceramic_footprint,
+    footprint_lookup,
+    get_footprint,
+    led_footprint,
+    pin_header_footprint,
+    potentiometer_footprint,
+    radial_electrolytic_footprint,
+    relay_footprint,
+    screw_terminal_footprint,
+    standard_footprints,
+    tactile_switch_footprint,
+    to92_footprint,
+    to220_footprint,
+)
+from perfstudio.model import STANDARD_PITCH_MM, Footprint
+
 
 def _ulps_apart(a: float, b: float) -> int:
     """Distance between two doubles counted in representable values.
@@ -118,26 +139,6 @@ def assert_coord(
         f"trig rounding artifact — do not widen the bound, find the bug."
     )
 
-from perfstudio.footprints import (
-    axial_footprint,
-    box_film_capacitor_footprint,
-    crystal_hc49_footprint,
-    dip_footprint,
-    disc_ceramic_footprint,
-    footprint_lookup,
-    get_footprint,
-    led_footprint,
-    pin_header_footprint,
-    potentiometer_footprint,
-    radial_electrolytic_footprint,
-    relay_footprint,
-    screw_terminal_footprint,
-    standard_footprints,
-    tactile_switch_footprint,
-    to92_footprint,
-    to220_footprint,
-)
-from perfstudio.model import STANDARD_PITCH_MM, Footprint
 
 GOLDEN_PATH = (
     Path(__file__).resolve().parents[1] / "tools" / "diffcheck" / "golden" / "footprints.expected.json"

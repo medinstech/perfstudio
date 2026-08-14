@@ -32,6 +32,7 @@ this test file should depend on it.
 
 from __future__ import annotations
 
+import itertools
 import json
 from pathlib import Path
 from typing import Any
@@ -740,7 +741,7 @@ def test_run_drc_is_deterministic_and_stably_sorted_across_repeated_runs() -> No
     assert len(first) > 1  # sanity: this fixture exercises multiple rules
 
     # Stably sorted: rule ids must be non-decreasing across the whole output.
-    for prev, cur in zip(first, first[1:]):
+    for prev, cur in itertools.pairwise(first):
         assert prev.rule <= cur.rule
 
     third = run_drc(doc, _FOOTPRINT_LOOKUP)

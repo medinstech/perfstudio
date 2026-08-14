@@ -117,8 +117,8 @@ def verify_scale(scene: Any, board: Board, dpi: float = 300.0, span_holes: int =
     """
     px_per_mm = dpi / MM_PER_INCH
     outline = board_outline_mm(board)
-    img_w = int(round(outline.width * px_per_mm))
-    img_h = int(round(outline.height * px_per_mm))
+    img_w = round(outline.width * px_per_mm)
+    img_h = round(outline.height * px_per_mm)
 
     image = QImage(img_w, img_h, QImage.Format.Format_ARGB32)
     image.fill(QColor("#ffffff"))

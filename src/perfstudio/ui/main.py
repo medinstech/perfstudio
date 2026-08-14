@@ -28,7 +28,7 @@ import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Literal, TypeAlias, cast
+from typing import Any, Literal, cast
 
 from PySide6.QtCore import QEventLoop, QRectF, QSettings, QSize, Qt, QThread, QTimer
 from PySide6.QtGui import QAction, QColor, QIcon, QImage, QKeySequence, QPainter
@@ -153,11 +153,6 @@ from perfstudio.placer import (
 )
 from perfstudio.ratsnest import NetRatsnest, ratsnest, summarize
 from perfstudio.router import RoutingStyle, options_for_style
-
-#: What the Preferred Connection menu can be set to: one of the router's styles, or "best"
-#: to route with every style and keep whichever produces the board that is least work to
-#: build. "best" is a UI concept and stays here -- the engine is given a concrete style.
-StylePreference: TypeAlias = RoutingStyle | Literal["best"]
 from perfstudio.version import __version__
 from perfstudio.version import describe as describe_version
 
@@ -168,6 +163,11 @@ from .export_pdf import export_pdf, verify_scale
 from .i18n import set_language, t
 from .theme import ERROR, OK, STYLESHEET, TEXT_DIM, WARNING
 from .view2d import RULER_MARGIN_MM, BoardScene, BoardView, next_reference
+
+#: What the Preferred Connection menu can be set to: one of the router's styles, or "best"
+#: to route with every style and keep whichever produces the board that is least work to
+#: build. "best" is a UI concept and stays here -- the engine is given a concrete style.
+type StylePreference = RoutingStyle | Literal["best"]
 
 
 #: Where the recent-file list is kept between runs. A function rather than a constant so a
@@ -190,7 +190,7 @@ ROLE_PIN = int(Qt.ItemDataRole.UserRole) + 5
 
 
 def _now_iso() -> str:
-    now = datetime.datetime.now(datetime.timezone.utc)
+    now = datetime.datetime.now(datetime.UTC)
     return now.strftime("%Y-%m-%dT%H:%M:%S.") + f"{now.microsecond // 1000:03d}Z"
 
 
@@ -2536,7 +2536,7 @@ class MainWindow(QMainWindow):
             def run(self) -> None:
                 try:
                     holder["result"] = work(should_stop)
-                except BaseException as exc:  # noqa: BLE001 - re-raised on the UI thread
+                except BaseException as exc:
                     error["exc"] = exc
 
         worker = _Worker(self)
@@ -2560,13 +2560,18 @@ class MainWindow(QMainWindow):
                     progress.setAutoClose(False)
                     progress.setAutoReset(False)
 
-                    def on_cancel() -> None:
+                    # The dialog is bound at definition rather than read out of the
+                    # enclosing scope. It is created once and this closure is made
+                    # immediately after, so the two are the same object either way -- but
+                    # a closure over a name reassigned inside a loop is the shape of a
+                    # real bug, and writing it the safe way costs nothing and takes the
+                    # None-check with it.
+                    def on_cancel(dialog: QProgressDialog = progress) -> None:
                         nonlocal cancelled
                         cancelled = True
-                        if progress is not None:
-                            progress.setLabelText(
-                                f"{label}\nStopping, and keeping the best found so far…"
-                            )
+                        dialog.setLabelText(
+                            f"{label}\nStopping, and keeping the best found so far…"
+                        )
 
                     progress.canceled.connect(on_cancel)
                     progress.show()

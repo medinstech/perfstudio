@@ -22,6 +22,40 @@ closed without a bump.
 
 ### Changed
 
+- **Ruff is a gate.** It reported 466 findings and did not block, which is the worst of
+  both worlds: a permanently red tick is one nobody reads, so it protects nothing while
+  looking like it does.
+  - **389 of the 466 were two rules that are wrong for this codebase**, and they are off
+    in `pyproject.toml` with the argument written at the switch. `E501` fired 235 times at
+    a median of 105 characters, almost all of it prose in a comment or a message string —
+    which a formatter cannot split either, and ruff's own guidance is to leave line length
+    to the formatter. `RUF001`/`2`/`3` fired 154 times and 137 were the dotless **ı** in
+    the Turkish catalogue: not a suspicious lookalike of `i`, but a different letter of the
+    language the interface speaks. The rest were `ρ` for resistivity and `×` in "5 × 7 cm".
+  - **The other 77 were fixed rather than configured away**, including a `zip` that now
+    says `strict=False` where it means it, two nested `if`s that read better as one, and
+    an `int(round(...))` that was rounding an int.
+  - **Four were fixed by hand because the automatic fix made the code worse.** `RUF005`
+    rewrites `[a] + b` as `[*a, *b]`, and on a multi-line constructor call it does that by
+    inlining the whole thing onto one 200-character line — which only looked acceptable
+    because `E501` had just been switched off. The same edit made by hand is an
+    improvement; made by the tool it was vandalism with a green tick.
+  - **`UP040` would have broken the application silently, and the suite caught it.**
+    Rewriting `X: TypeAlias = Literal[...]` as `type X = Literal[...]` is correct for 32
+    of the 33 aliases and wrong for the four that are read at RUN time: `get_args` returns
+    an empty tuple for a PEP 695 alias, so `BoardMaterial`, `BodyArchetype` and
+    `ConductorKind` stopped listing anything and three completeness tests started
+    asserting that an empty set equals an empty set. `RoutingStyle` was worse — MCP
+    validates an agent's requested style against `get_args(RoutingStyle)`, so every style
+    would have been refused, by a check that raises nothing. All four keep the old
+    spelling with the reason written above them.
+  - **The linter is pinned to a minor version.** An unbounded dependency took this project
+    apart twice this morning; a linter is the same hazard in a smaller way, since rules
+    arrive with releases and a gate that fails on a tree nobody touched is a gate people
+    switch off.
+  - `ruff format` is still not run. It would rewrite 40 of the 57 files and point every
+    line of blame in the repository at a reformat, which is a decision of its own.
+
 - **CI runs all three platforms on every push**, which is what `ci.yml`'s own condition
   said to do on going public: standard runners are free on public repositories, so the
   metered-minutes trade-off it encoded stopped applying. The first full matrix that ran

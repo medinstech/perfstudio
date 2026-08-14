@@ -100,7 +100,10 @@ def test_exactly_fifteen_golden_files_present() -> None:
 def _first_diff(original: str, serialized: str) -> str:
     a = original.splitlines()
     b = serialized.splitlines()
-    for i, (la, lb) in enumerate(zip(a, b), start=1):
+    # strict=False on purpose: a length difference is reported below, after the common
+    # prefix has been compared. Raising here would hide the first differing LINE behind
+    # "these are different lengths", which is the less useful of the two answers.
+    for i, (la, lb) in enumerate(zip(a, b, strict=False), start=1):
         if la != lb:
             return f"first differing line {i}:\n  golden:     {la!r}\n  round-trip: {lb!r}"
     if len(a) != len(b):

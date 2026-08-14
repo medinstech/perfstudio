@@ -37,7 +37,7 @@ import itertools
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Literal, TypeAlias
+from typing import Literal
 
 from .connectivity import FootprintLookup, PhysicalNet, PhysicalPinRef, extract_physical_nets
 from .geometry import (
@@ -87,7 +87,7 @@ from .occupancy import build_occupancy
 # Public types
 # ---------------------------------------------------------------------------
 
-DrcSeverity: TypeAlias = Literal["error", "warning"]
+type DrcSeverity = Literal["error", "warning"]
 
 
 @dataclass(frozen=True, slots=True)

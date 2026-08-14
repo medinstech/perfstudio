@@ -152,7 +152,7 @@ DEFAULT_ROUTER_COSTS = RouterCosts()
 #:            For anyone who would rather run one clean wire than solder up to a jumper.
 #:   "refuse" No wire of any kind. Solder traces only, and a connection that needs more is
 #:            reported unrouted rather than made with wire the user did not ask for.
-CrossingPolicy: TypeAlias = Literal["hop", "wire", "refuse"]
+type CrossingPolicy = Literal["hop", "wire", "refuse"]
 
 
 #: How the board is going to be ASSEMBLED, when the builder has decided that in advance.
@@ -176,7 +176,7 @@ CrossingPolicy: TypeAlias = Literal["hop", "wire", "refuse"]
 #:                jumper. Wire only where no trace can be made.
 #:   "wire"       Wire, for someone assembling with wire.
 #:   "lead-bend"  A component's own leg first, then solder, then wire.
-StrategyPreference: TypeAlias = Literal["solder", "wire", "lead-bend"]
+type StrategyPreference = Literal["solder", "wire", "lead-bend"]
 
 #: Which family each strategy belongs to. A hopped trace counts as SOLDER: it is a solder
 #: run with a two-hole jumper where it had to cross something, and calling that "wire"
@@ -272,7 +272,13 @@ DEFAULT_ROUTER_OPTIONS = RouterOptions()
 #: ``RouterOptions.prefer``, and that is what turns each one from a tendency into a
 #: commitment -- see StrategyPreference. Pricing alone left a single awkward pad able to
 #: flip a run to wire, which is precisely the complaint these styles existed to answer.
-RoutingStyle: TypeAlias = Literal["balanced", "solder", "wire", "lead-bend"]
+#:
+#: NOT a PEP 695 ``type`` alias, and it cannot become one. This name is read at RUN TIME:
+#: ``mcp/session.py`` calls ``get_args(RoutingStyle)`` both to list the styles an agent
+#: may ask for and to check the one it did. ``get_args`` of a ``type`` alias returns an
+#: empty tuple, so the modern spelling would leave the list empty and refuse every style
+#: on the surface -- silently, since neither call raises.
+RoutingStyle: TypeAlias = Literal["balanced", "solder", "wire", "lead-bend"]  # noqa: UP040
 
 
 def costs_for_style(style: RoutingStyle) -> RouterCosts:
@@ -339,7 +345,7 @@ def options_for_style(
 # Results
 # ---------------------------------------------------------------------------
 
-RouteStrategy: TypeAlias = Literal[
+type RouteStrategy = Literal[
     "solder-trace",
     "solder-trace-wired",
     "lead-bend",
@@ -971,9 +977,7 @@ def _is_traversable_by_trace(ctx: _RouteContext, hole: HoleCoord) -> bool:
     # the caller has declared part of this same net is the opposite -- running the trace
     # through it is how a rail collects its pins (see RouteRequest.net_holes), and doing so
     # is what makes one long rail cheaper than a fan of separate hops.
-    if pin and hole_key(hole) not in ctx.net_holes:
-        return False
-    return True
+    return not (pin and hole_key(hole) not in ctx.net_holes)
 
 
 def _has_foreign_neighbour(

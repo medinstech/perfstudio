@@ -32,7 +32,7 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass
-from typing import Literal, TypeAlias
+from typing import Literal
 
 from perfstudio.model import BodyArchetype, Footprint
 
@@ -41,7 +41,7 @@ from perfstudio.model import BodyArchetype, Footprint
 # ---------------------------------------------------------------------------
 
 #: 2D silhouette shape. The 3D view builds a solid per archetype and does not use this.
-Silhouette: TypeAlias = Literal["rect", "circle", "dcut", "rounded"]
+type Silhouette = Literal["rect", "circle", "dcut", "rounded"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -482,8 +482,8 @@ def resistance_bands(ohms: float) -> tuple[str, ...] | None:
     """
     if ohms <= 0 or not math.isfinite(ohms):
         return None
-    exponent = int(math.floor(math.log10(ohms))) - 1
-    mantissa = int(round(ohms / (10.0**exponent)))
+    exponent = math.floor(math.log10(ohms)) - 1
+    mantissa = round(ohms / (10.0**exponent))
     if mantissa >= 100:  # 99.6 rounds to 100: carry it rather than emit a third digit.
         mantissa //= 10
         exponent += 1

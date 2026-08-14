@@ -795,8 +795,9 @@ def _disc_pieces(body: _WorldBody) -> list[_Piece]:
             position=(body.x, body.y, diameter / 2 + _LIFT),
             orientation=orientation,
             specular=0.15,
-        )
-    ] + _lead_pieces(body)
+        ),
+        *_lead_pieces(body),
+    ]
 
 
 def _dip_pieces(body: _WorldBody) -> list[_Piece]:
@@ -840,8 +841,9 @@ def _to92_pieces(body: _WorldBody) -> list[_Piece]:
             orientation=_ALONG_Z,
             scale=scale,
             specular=0.15,
-        )
-    ] + _lead_pieces(body)
+        ),
+        *_lead_pieces(body),
+    ]
 
 
 def _to220_pieces(body: _WorldBody) -> list[_Piece]:
@@ -1028,8 +1030,9 @@ def _crystal_pieces(body: _WorldBody) -> list[_Piece]:
             scale=scale,
             specular=surface.specular,
             specular_power=surface.specular_power,
-        )
-    ] + _lead_pieces(body)
+        ),
+        *_lead_pieces(body),
+    ]
 
 
 def _box_pieces(body: _WorldBody) -> list[_Piece]:
@@ -1042,8 +1045,9 @@ def _box_pieces(body: _WorldBody) -> list[_Piece]:
             position=(body.x, body.y, body.height / 2 + _LIFT),
             specular=surface.specular,
             specular_power=surface.specular_power,
-        )
-    ] + _lead_pieces(body)
+        ),
+        *_lead_pieces(body),
+    ]
 
 
 _BUILDERS: dict[str, Any] = {

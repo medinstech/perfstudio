@@ -49,7 +49,7 @@ from __future__ import annotations
 
 import dataclasses
 from dataclasses import dataclass
-from typing import Literal, TypeAlias
+from typing import Literal
 
 from .connectivity import FootprintLookup, PhysicalPinRef
 from .drc import DEFAULT_DRC_OPTIONS, DrcOptions, DrcViolation, run_drc, trace_electrical
@@ -77,7 +77,7 @@ from .model import (
 # Phases (PLAN.md Sec 7.1)
 # ---------------------------------------------------------------------------
 
-PhaseNumber: TypeAlias = Literal[0, 1, 2, 3, 4, 5, 6, 7, 8]
+type PhaseNumber = Literal[0, 1, 2, 3, 4, 5, 6, 7, 8]
 
 PHASE_TITLES: dict[PhaseNumber, str] = {
     0: "Preparation",
@@ -329,14 +329,14 @@ class ConductorStep:
         return f"{self.net_name}: {self.span}"
 
 
-GuideStep: TypeAlias = PartStep | ConductorStep
+type GuideStep = PartStep | ConductorStep
 
 
 # ---------------------------------------------------------------------------
 # Checkpoints -- the differentiator (PLAN.md Sec 7.5)
 # ---------------------------------------------------------------------------
 
-CheckKind: TypeAlias = Literal[
+type CheckKind = Literal[
     "continuity",  # these two points must be joined
     "isolation",  # these two points must NOT be joined
     "resistance",  # this run should measure about this much

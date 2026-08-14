@@ -346,7 +346,21 @@ jobs:
             *) echo "::error::bundle reports '$reported', expected PerfStudio $version"; exit 1 ;;
           esac
           test -L /Volumes/PerfStudio/Applications
-          hdiutil detach /Volumes/PerfStudio -quiet
+
+          # Retried, because the failure is not ours and is not deterministic. macOS
+          # attaches a `diskimages-helper` to a freshly mounted volume and Spotlight
+          # indexes it; either can still hold the mount when the step is done with it, and
+          # `hdiutil detach` answers 16, "resource busy". Observed once here on a run whose
+          # signature check, version check and symlink check had all just passed -- which
+          # on a tag would have thrown away three built installers over a volume that had
+          # nothing to do with them. Force on the last attempt: by then the only thing
+          # holding it is a helper that has outlived what it was helping.
+          for attempt in 1 2 3; do
+            hdiutil detach /Volumes/PerfStudio -quiet && exit 0
+            echo "detach attempt $attempt failed; the volume is still busy"
+            sleep 10
+          done
+          hdiutil detach /Volumes/PerfStudio -force
 
       - uses: actions/upload-artifact@v4
         with:

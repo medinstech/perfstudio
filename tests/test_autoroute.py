@@ -282,8 +282,10 @@ def test_proximity_risk_is_reported_when_a_trace_has_to_run_past_a_foreign_pad()
         component(f"F{col}{row}", "fp1", hole(col, row))
         for row in (3, 5)
         for col in range(1, 6)
-    ) + (component("Fa", "fp1", hole(1, 4)), component("Fb", "fp1", hole(5, 4)))
-    components = wall + (
+    )
+    wall = (*wall, component("Fa", "fp1", hole(1, 4)), component("Fb", "fp1", hole(5, 4)))
+    components = (
+        *wall,
         component("R1", "fp1", hole(2, 4)),
         component("R2", "fp1", hole(4, 4)),
     )
@@ -336,7 +338,8 @@ def test_the_net_routed_first_gets_the_contested_corridor() -> None:
         for row in (3, 5)
         for col in range(4, 10)
     )
-    components = blockers + (
+    components = (
+        *blockers,
         component("G1", "fp1", hole(2, 4)),
         component("G2", "fp1", hole(11, 4)),
         component("S1", "fp1", hole(2, 6)),
@@ -345,9 +348,10 @@ def test_the_net_routed_first_gets_the_contested_corridor() -> None:
     nets = (
         net("n-sig", "SIG", "signal", (("S1", "1"), ("S2", "1"))),
         net("n-gnd", "GND", "ground", (("G1", "1"), ("G2", "1"))),
-    ) + tuple(
-        net(f"nb{i}", f"BLK{i}", "signal", ((blocker.ref, "1"), (blocker.ref, "1")))
-        for i, blocker in enumerate(blockers)
+        *(
+            net(f"nb{i}", f"BLK{i}", "signal", ((blocker.ref, "1"), (blocker.ref, "1")))
+            for i, blocker in enumerate(blockers)
+        ),
     )
     doc = make_doc(components=components, nets=nets)
 
@@ -752,8 +756,10 @@ def test_reroute_leaves_copper_that_claims_no_net_alone() -> None:
     routed = commit(doc, plan_autoroute(doc, LOOKUP).payload())
     with_handmade = dataclasses.replace(
         routed,
-        conductors=routed.conductors
-        + (WireConductor(id="hand-1", path=(hole(4, 8), hole(9, 8)), net_id=None),),
+        conductors=(
+            *routed.conductors,
+            WireConductor(id="hand-1", path=(hole(4, 8), hole(9, 8)), net_id=None),
+        ),
     )
 
     plan = plan_reroute(with_handmade, LOOKUP)

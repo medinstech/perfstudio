@@ -29,12 +29,20 @@ that way. The tests are not and never have been — `--strict` over `tests` repo
 errors, nearly all `no-untyped-def` on UI test helpers. CI gates on `src` alone, and
 deliberately: gating on something already broken teaches everyone to ignore the red tick.
 
-**Ruff is not a gate, and `ruff format` must not be run casually.** `ruff check src
-tests` reports a few hundred findings — overwhelmingly `E501` on message strings and
-`RUF001` on the Turkish catalogue's dotless ı — and `ruff format` would rewrite 40 of the
-57 files, pointing every line of blame in the repository at a reformat. The CI `lint` job
-is `continue-on-error: true` for exactly this reason. Settling it is worth doing;
-settling it as a side effect of an unrelated change is not.
+**Ruff is a gate; `ruff format` still must not be run casually.** `ruff check src tests`
+is clean and CI fails on a finding. Two rules are switched off in `pyproject.toml` with
+the reason at the switch: `E501`, because its 235 hits were prose a formatter could not
+split either, and `RUF001`/`2`/`3`, because 137 of its 154 were the Turkish catalogue's
+dotless ı — a rule that flags correct Turkish is a rule people learn to ignore.
+
+Two suppressions in the source are load-bearing, not noise: `model.py`'s `BoardMaterial`,
+`BodyArchetype` and `ConductorKind`, and `router.py`'s `RoutingStyle`, keep the old
+`TypeAlias` spelling with `# noqa: UP040` because they are read at run time by
+`get_args`, which returns an empty tuple for a PEP 695 `type` alias. Converting them made
+three completeness tests assert that an empty set equals an empty set.
+
+`ruff format` would still rewrite 40 of the 57 files and point every line of blame in the
+repository at a reformat. That is its own decision, not a side effect of another change.
 
 `--headless` renders 2D/3D/PDF into `headless_out/`, runs DRC + LVS and prints timings
 with no display. It is how the visual output is exercised in CI — the only step that

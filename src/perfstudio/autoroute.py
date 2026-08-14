@@ -858,7 +858,7 @@ def _rail_net(
     return _NetPlan(
         document=rest.document,
         conductors=rail.conductors + rest.conductors,
-        routed=(rail_step,) + rest.routed,
+        routed=(rail_step, *rest.routed),
         unrouted=rest.unrouted,
     )
 

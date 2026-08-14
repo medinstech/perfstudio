@@ -372,7 +372,7 @@ class PadGridItem(QGraphicsItem):
         """
         bucket = max(
             self._SIZE_BUCKET_PX,
-            int(round(long_px / self._SIZE_BUCKET_PX)) * self._SIZE_BUCKET_PX,
+            round(long_px / self._SIZE_BUCKET_PX) * self._SIZE_BUCKET_PX,
         )
         # Rendered at twice the on-screen size so the downscale stays crisp when the zoom
         # sits between two buckets, and capped so a deep zoom cannot ask for a huge one.
