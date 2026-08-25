@@ -281,6 +281,16 @@ so it is measured per pair by `geometry.copper_gap_mm`, which also accounts for 
 widened into an edge-connector finger. Never reintroduce a single board-wide
 `pitch - pad_diameter`.
 
+**R5' fires on a run beside a PIN, once per physical pair** — not on a run beside another
+run, and not once per conductor that can see the gap. Both gaps are the same 0.6 mm; the
+difference is attention. A run beside a run is one you are laying yourself, on the face you
+are looking at, in the same phase, and parallel returns are how dense perfboard is built —
+the NE555 routed solder-first produced **51 findings on a board the tool had just routed**,
+30 of them runs beside runs and 20 of them the same gap named from both ends. A run passing
+a pin is a pad from a part soldered three phases ago with a lead for solder to wick up. The
+router still prices the proximity, so it steers around it; it just no longer argues with
+the style it was told to use.
+
 `board.labels` is the `A`..`Z` / `01`..`22` legend printed on the board itself. It is the
 same address space `coord_to_hole_ref` produces; `printed_row_label` only adds zero
 padding for *rendering*, and `hole_ref_to_coord` still rejects `A07`. Silkscreen is
@@ -395,6 +405,18 @@ call sites: `PadGridItem` blits one pre-rasterised pad pixmap per hole (painting
 holes the obvious way took 124 ms/frame; a single even-odd `QPainterPath` took 5.8 s),
 and `ui/scenetext.py` sizes annotation labels in **screen pixels** so they hold their size
 as the board zooms — physical silkscreen scales with the board, annotations do not.
+
+**How high a conductor sits is `occupancy.stacking_layers`, and both views read it.** Two
+crossing wires cannot occupy the same space; a solder trace never leaves the pads, because
+it *is* the copper. The level is computed from what actually crosses what (`paths_cross` —
+the same predicate DRC's `conductor-crossing` uses, so a shared endpoint stays a junction),
+never from position in `doc.conductors`: that was the first answer and it lifted every
+conductor past every earlier one, 4.47 mm off a 1.6 mm board, in 0.08 mm steps that were a
+tenth of what two tubes need to clear — levitation and no clearance. `view3d.STACK_STEP_MM`
+is derived from the tube radii for that reason, and `conductor_z` rests a tube on the *pad
+plane* rather than at a fixed depth, so solder is tangent to the copper it is soldered to.
+2D takes its z-order and its "passes over" outline from the same levels, so the two views
+cannot disagree about which wire is on top.
 
 `ui/view3d.populate_renderer` refreshes actors in an existing renderer and deliberately
 leaves the camera alone; only `apply_default_camera` may move the viewpoint.
