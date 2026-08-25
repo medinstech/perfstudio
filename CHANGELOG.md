@@ -79,6 +79,26 @@ closed without a bump.
 
 ### Fixed
 
+- **The resistance checkpoint asks for a measurement the guide's own tool list can make.**
+  Found by reading a generated guide end to end the way somebody holding an iron would,
+  which is the dogfood test PLAN.md §11 says M5 does not close without. Every resistance
+  checkpoint the four shipped example boards produce lands between **5.1 and 6.4 mΩ** —
+  and the guide asks the reader to bring "a multimeter with a continuity buzzer", which
+  resolves 0.1 Ω. So the tool printed *"about 6.4 mΩ (accept 3.2–9.6 mΩ)"*, a target and a
+  tolerance band both **ten to forty times below one count** of the instrument it had just
+  told you to fetch, and hedged it with "use four-wire mode if your meter has it". A
+  verification step nobody following the guide could carry out — in the list of
+  verification steps that is the entire reason this application exists, and the first thing
+  the README claims makes it different.
+  - The gate was a pad count; the question is whether the person holding the meter can
+    tell a good run from a bad one, so `GuideOptions.meter_resolution_ohm` decides now.
+    Below it, the check becomes the one that cheap meter *can* perform and that catches
+    exactly the failure the check is for: **it must read as a dead short**, because a cold
+    joint or a cracked run reads in ohms — three orders of magnitude away and unmissable
+    on anything. The computed value is still quoted, as the context it always was.
+  - Above it — a long pure-solder run where a wire spine was declined — the number and the
+    band stay, because there the meter can resolve them. Both branches are now tested;
+    before, only the unreachable one was.
 - **A resistor sitting diagonally off an electrolytic is no longer a DRC error.** Rule 1
   (`component-body-overlap`) compared axis-aligned bounding boxes, and the note in the
   source called what was missing "a true rotated-polygon intersection test" — which

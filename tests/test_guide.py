@@ -430,12 +430,81 @@ def test_a_long_trace_gets_a_resistance_expectation_that_matches_drc() -> None:
 
     assert step.resistance_ohm == pytest.approx(expected.resistance_ohm)
     check = next(c for c in all_checkpoints(guide) if c.kind == "resistance")
-    assert f"{expected.resistance_ohm * 1000:.1f}" in check.title
+    # Quoted where it lands: this run is 1.2 milliohms, far under what the meter the
+    # guide asks for can resolve, so the number belongs in the expectation as context
+    # rather than in the title as a target. See test_a_run_below... below.
+    assert f"{expected.resistance_ohm * 1000:.1f}" in check.expected
+
+
+def test_a_run_below_the_meters_resolution_is_asked_for_as_a_short() -> None:
+    """The dogfood finding, and the reason `meter_resolution_ohm` exists.
+
+    Every resistance checkpoint the four shipped example boards produce lands between 5.1
+    and 6.4 milliohms. The guide's own tool list asks the reader for "a multimeter with a
+    continuity buzzer", which resolves 0.1 ohm -- ten to forty times the whole expected
+    value. So the tool printed a target and a tolerance band that were both inside the
+    instrument's noise, in the list of verification steps that is the entire reason this
+    application exists.
+
+    What that meter CAN do is tell a dead short from a joint that is not one, which is
+    exactly the failure the check is for: a cold joint reads in ohms, three orders of
+    magnitude away, and is unmissable on anything.
+    """
+    trace = SolderTraceConductor(
+        id="cond-1",
+        path=tuple(hole(2 + n, 6) for n in range(10)),
+        spine=SpineSpec(material="tinned-copper", gauge=0.6),
+        kind="solder-trace-wired",
+        net_id="n1",
+    )
+    doc = make_doc(
+        components=(component("R1", "r-axial-4", hole(2, 6)),),
+        conductors=(trace,),
+        nets=(net("n1", "GND", "ground", (("R1", "1"), ("R1", "2"))),),
+    )
+
+    guide = build_guide(doc, REGISTRY)
+    step = next(s for s in all_steps(guide) if isinstance(s, ConductorStep))
+    check = next(c for c in all_checkpoints(guide) if c.kind == "resistance")
+
+    assert step.resistance_ohm is not None
+    assert step.resistance_ohm < DEFAULT_GUIDE_OPTIONS.meter_resolution_ohm
+    assert "dead short" in check.title
+    assert "accept" not in check.expected  # no band inside the noise
+    assert "cold joint" in check.expected
+
+
+def test_a_run_the_meter_can_resolve_still_gets_its_number() -> None:
+    """The other branch, and it has to stay reachable: a long PURE solder run -- one where
+    a wire spine was declined -- gets into ohms the meter can read, and then the value is
+    worth quoting because a run reading well over it is one to go back to."""
+    doc = make_doc(
+        components=(component("R1", "r-axial-4", hole(0, 6)),),
+        conductors=(
+            SolderTraceConductor(
+                id="cond-1",
+                path=tuple(hole(n, 6) for n in range(60)),
+                buildup="light",
+                net_id="n1",
+            ),
+        ),
+        nets=(net("n1", "GND", "ground", (("R1", "1"), ("R1", "2"))),),
+        board=dataclasses.replace(BOARD, cols=60),
+    )
+
+    guide = build_guide(doc, REGISTRY)
+    step = next(s for s in all_steps(guide) if isinstance(s, ConductorStep))
+    check = next(c for c in all_checkpoints(guide) if c.kind == "resistance")
+
+    assert step.resistance_ohm is not None
+    assert step.resistance_ohm >= DEFAULT_GUIDE_OPTIONS.meter_resolution_ohm
+    assert "end to end" in check.title
+    assert "accept" in check.expected
 
 
 def test_a_short_trace_is_not_worth_probing() -> None:
-    """The expected value is below what a hand multimeter resolves, so a "measurement"
-    would be a ritual rather than a test."""
+    """Not every run earns a checkpoint at all. A two-pad trace has nothing to go wrong
+    along its length, and a step that always passes is one more thing to read."""
     doc = make_doc(
         components=(component("R1", "r-axial-4", hole(2, 6)),),
         conductors=(

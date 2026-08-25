@@ -228,6 +228,21 @@ class GuideOptions:
     #: the buildup estimate is a fillet-volume guess, and a check nobody can pass is worse
     #: than no check.
     resistance_tolerance: float = 0.5
+    #: One count on the lowest range of the meter this guide asks the reader to bring --
+    #: "a multimeter with a continuity buzzer" (see :func:`_tools`). A hand DMM's 200 ohm
+    #: range resolves 0.1 ohm, and that is the number that decides which of the two
+    #: resistance checks below a run gets.
+    #:
+    #: WHY THIS EXISTS. A pad count alone decided it, and the pad count was the wrong
+    #: question: every resistance checkpoint the four shipped example boards produce comes
+    #: out between 5.1 and 6.4 milliohms, a band ten to forty times BELOW one count of the
+    #: instrument the same guide told the reader to fetch. So the tool printed "about
+    #: 6.4 mohm (accept 3.2-9.6)" and hedged with "use four-wire mode if your meter has
+    #: it" -- a step nobody following the guide could carry out, in the list that is the
+    #: whole reason this application exists. A verification step that cannot be performed
+    #: does not merely fail to help; it is what teaches somebody to stop trusting the
+    #: other thirty-eight.
+    meter_resolution_ohm: float = 0.1
     #: Cap on isolation pairs carried into the guide, matching lvs.isolation_checks.
     isolation_cap: int = 40
     drc: DrcOptions = DEFAULT_DRC_OPTIONS
@@ -1167,29 +1182,67 @@ def _checkpoints(
     for step, phase in conductor_steps:
         if step.resistance_ohm is None or step.pads < options.resistance_check_min_pads:
             continue
-        milliohm = step.resistance_ohm * 1000
-        band = options.resistance_tolerance
-        checks[phase].append(
-            Checkpoint(
-                kind="resistance",
-                title=f"{step.net_name} run {step.span}: about {milliohm:.1f} mΩ end to end",
-                instruction=(
-                    f"Measure between {format_hole(step.path[0])} and "
-                    f"{format_hole(step.path[-1])}. Use four-wire mode if your meter has it; "
-                    "otherwise subtract the reading with the probes touched together."
-                ),
-                expected=(
-                    f"About {milliohm:.1f} mΩ (accept {milliohm * (1 - band):.1f}–"
-                    f"{milliohm * (1 + band):.1f} mΩ). Much higher means a cold joint or a "
-                    "crack in the run."
-                ),
-                holes=(step.path[0], step.path[-1]),
-            )
-        )
+        checks[phase].append(_resistance_check(step, options))
 
     checks[8].extend(_closing_checks(doc, lookup, options))
     del violations
     return checks
+
+
+def _resistance_check(step: ConductorStep, options: GuideOptions) -> Checkpoint:
+    """The end-to-end check on one run, in the form the reader's meter can carry out.
+
+    Two forms, and which one a run gets is decided by ``meter_resolution_ohm`` -- because
+    the useful question is not "how long is this run" but "can the person holding the
+    meter tell a good one from a bad one".
+
+    BELOW the meter's resolution, which is where nearly every real run lands: a number
+    and a tolerance band are both inside the instrument's noise, so quoting them asks for
+    a measurement nobody can make. What the same cheap meter CAN do is tell a dead short
+    from a joint that is not one, and that is exactly the failure this check exists for --
+    a cold joint or a cracked run reads in ohms, three orders of magnitude away, and is
+    unmissable on any meter. So the check becomes the one that discriminates.
+
+    ABOVE it -- a long pure-solder run on a big board, where a wire spine was declined --
+    the number is worth quoting, because now the meter can actually resolve it and a run
+    reading well over is one to go back to.
+
+    ``resistance_ohm`` is unchanged either way and stays in the JSON export at full
+    precision: this is about what to ASK somebody to do, not about what is known.
+    """
+    milliohm = (step.resistance_ohm or 0.0) * 1000
+    span_from, span_to = format_hole(step.path[0]), format_hole(step.path[-1])
+    if (step.resistance_ohm or 0.0) >= options.meter_resolution_ohm:
+        band = options.resistance_tolerance
+        return Checkpoint(
+            kind="resistance",
+            title=f"{step.net_name} run {step.span}: about {milliohm:.1f} mΩ end to end",
+            instruction=(
+                f"Measure between {span_from} and {span_to}. Subtract the reading with the "
+                f"probes touched together, or use four-wire mode if your meter has it."
+            ),
+            expected=(
+                f"About {milliohm:.1f} mΩ (accept {milliohm * (1 - band):.1f}–"
+                f"{milliohm * (1 + band):.1f} mΩ). Much higher means a cold joint or a "
+                "crack in the run."
+            ),
+            holes=(step.path[0], step.path[-1]),
+        )
+    return Checkpoint(
+        kind="resistance",
+        title=f"{step.net_name} run {step.span} must read as a dead short",
+        instruction=(
+            f"Measure between {span_from} and {span_to}, then touch the probes together "
+            f"and compare. A good run adds nothing you can read."
+        ),
+        expected=(
+            f"The same as your probes touched together, give or take one count. This run "
+            f"should be about {milliohm:.1f} mΩ, far below what a hand meter resolves — so "
+            f"any reading you can actually distinguish is a cold joint or a crack, not the "
+            f"copper."
+        ),
+        holes=(step.path[0], step.path[-1]),
+    )
 
 
 def _last_phase_by_net(

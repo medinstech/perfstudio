@@ -1311,9 +1311,9 @@
         },
         {
           "kind": "resistance",
-          "title": "GND run T11 → D11, 21 pads: about 2.7 mΩ end to end",
-          "instruction": "Measure between T11 and D11. Use four-wire mode if your meter has it; otherwise subtract the reading with the probes touched together.",
-          "expected": "About 2.7 mΩ (accept 1.3–4.0 mΩ). Much higher means a cold joint or a crack in the run.",
+          "title": "GND run T11 → D11, 21 pads must read as a dead short",
+          "instruction": "Measure between T11 and D11, then touch the probes together and compare. A good run adds nothing you can read.",
+          "expected": "The same as your probes touched together, give or take one count. This run should be about 2.7 mΩ, far below what a hand meter resolves — so any reading you can actually distinguish is a cold joint or a crack, not the copper.",
           "holes": [
             {
               "col": 19,
