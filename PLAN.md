@@ -469,7 +469,7 @@ Git-diff'lenebilir. Uygulama dosyayı izler ve hot-reload eder →
 | **M3** Router + yerleştirme | 6 hf | A\*/Lee + rip-up&reroute, **lehim yolu primitifi + ray stratejisi**, SA yerleştirme, maliyet modeli ayarı, interaktif yeniden route | Property test: 100 rastgele netlist, autoroute sonrası %100 LVS geçiyor. Sürükleme < 100 ms. GND/V+ otomatik ray olarak çekiliyor |
 | **M4** 3D tam | 4 hf | Montaj animasyonu, patlatılmış görünüm, yükseklik/çarpışma DRC, headless render | Rehber adımları 3D'de oynatılabiliyor, adım görselleri otomatik üretiliyor |
 | **M5** Lehim rehberi | 4 hf | Sıralama motoru, adım kartları, tel kesim listesi, **doğrulama kontrol noktaları**, HTML+PDF+CSV | Gerçek bir devre bu rehberle sıfırdan lehimlenip çalıştırıldı (dogfood testi) |
-| **M6** MCP + CLI sertleştirme | 2 hf | ~25 tool, iki taşıma, dosya izleme, snapshot/restore | Claude Code **ve** Antigravity'den uçtan uca bir kart tasarlanıp rehber üretiliyor |
+| **M6** MCP + CLI sertleştirme | 2 hf | ~25 tool (gerçekleşen: 44 — §13'e bak), iki taşıma, dosya izleme, snapshot/restore | Claude Code **ve** Antigravity'den uçtan uca bir kart tasarlanıp rehber üretiliyor |
 | **M7** Lansman | 3 hf | TR/EN i18n, dokümantasyon, örnek projeler, CI, paketleme, imzalama | GitHub'da yayında |
 
 **Takvim:** paralel şeritlerle ~**5-5.5 ay** part-time. Şeritler serileşirse ~7 ay.
@@ -503,21 +503,32 @@ CC-BY-SA-4.0 yükümlülüğü Apache-2.0 kodu bulaştırmaz ama ayrı lisanslı
 | Linux WebKitGTK'da WebGL yetersiz | Orta | M0'da ölç; platform adaptörü sayesinde Electron'a geçiş günler sürer |
 | Autorouter beklenti tuzağı | **Yüksek** | "Interaktif asistan" konumlandırması; route edilemeyen netler açıkça raporlanır, sessizce bırakılmaz |
 | 3D'de fotogerçekçilik scope creep | Orta | Hedef sabit: "doğru ve anlaşılır". Basit materyal, gölge bütçesi sınırlı |
-| MCP tool sayısı patlaması | Orta | ~25 tool tavanı, her yeni tool gerekçe ister |
+| MCP tool sayısı patlaması | Orta | **Gerçekleşen: 44 tool.** Tavan tutmadı, kural tuttu: her tool `docs/MCP.md`'de bir gruba ve bir gerekçeye bağlı (10 grup). ~25 sayısı yüzey bilinmeden atılmış bir tahmindi; korumaya çalıştığı şey sayı değil gerekçe zorunluluğuydu ve o yürürlükte |
 | Lisans kirlenmesi (GPL'li rakip kod) | **Yüksek** | Clean-room: DIYLC/VeroRoute kaynağına bakılmayacak. Sadece striprouter (MIT) referans alınabilir |
-| Kapsamın 3 kart tipine yayılması | Orta | v1 sadece pad-per-hole. Stripboard v2, veri modeli hazır ama UI/router cilası yok |
+| Kapsamın 3 kart tipine yayılması | Orta | v1 sadece pad-per-hole. Stripboard artık uçtan uca: `stripboard.py` geometri, `striproute.py` router, 2D'de kesme modu, ve `placer.py` strip hizasını skorluyor |
 | **Lehim yolu güvenilirliği**: araç kullanıcıyı kırılgan yapıya teşvik edebilir | **Yüksek** | DRC bilgilendirir, engellemez: uzun saf yolda omurga önerir, FR-2'de ısı uyarısı verir, R5' risklerini test adımına çevirir. Karar kullanıcının, veri aracın |
 
 ---
 
 ## 14. Açık Kaynak Lansman Kontrol Listesi
 
-- [ ] README: ne işe yarar + 30 saniyelik demo GIF + kurulum
-- [ ] Apache-2.0 LICENSE + NOTICE
-- [ ] CONTRIBUTING.md, CODE_OF_CONDUCT.md, issue/PR şablonları
-- [ ] CI: test + lint + 3 platform build + görsel regresyon
-- [ ] Release: imzalı/imzasız installer (Win/macOS/Linux) + otomatik güncelleme
-- [ ] Örnek projeler: 555 flaşör, LM317 güç kaynağı, Arduino shield, gitar pedalı
-- [ ] MCP kurulum dokümanı (Claude Code **ve** Antigravity için ayrı ayrı)
-- [ ] TR + EN dokümantasyon
+Kutular gerçek durumu gösterir; yarısı yapılmış bir madde işaretlenmez, ne kaldığı yazılır.
+
+- [x] README: ne işe yarar + 30 saniyelik demo GIF (`docs/images/assembly.gif`) + kurulum
+- [x] Apache-2.0 LICENSE + NOTICE
+- [x] CONTRIBUTING.md, CODE_OF_CONDUCT.md, issue/PR şablonları (`.github/ISSUE_TEMPLATE/`,
+      "kuramadığım kart" şablonu dahil)
+- [x] CI: test + lint (`ruff`) + tipler (`mypy --strict`) + 3 işletim sistemi matrisi +
+      görsel regresyon (`test_render_golden.py`, suite'in içinde). 3 platform **build**'i
+      `release.yml`'de, etikete basınca
+- [ ] Release: installer üç platformda da var (`release.yml`), Windows imzasız / macOS
+      ad-hoc imzalı ama notarize değil — §12'nin kabul ettiği durum. **Kalan: otomatik
+      güncelleme.** Hiç yazılmadı
+- [x] Örnek projeler: 555 flaşör, LM317 güç kaynağı, Arduino shield, gitar pedalı
+      (`examples/`, dördü de netlist + kart)
+- [x] MCP kurulum dokümanı (`docs/MCP.md`: Claude Code, ve JSON config okuyan her şey —
+      Claude Desktop, Antigravity, Cursor)
+- [ ] TR + EN dokümantasyon: README iki dilde ve arayüzün tam Türkçe kataloğu var.
+      **Kalan:** `docs/` (MCP, RELEASING, prior-art) yalnızca İngilizce
 - [ ] Duyuru: Hackaday, r/diyelectronics, r/AskElectronics, EEVblog, diyAudio, Show HN
+      — M5'in dogfood testi kapanmadan yapılmaz
