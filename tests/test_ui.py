@@ -2197,15 +2197,16 @@ def test_a_solder_run_is_the_size_of_a_solder_run() -> None:
     bead drawn at every pad, so the silhouette came out as balls on a stick.
     """
     from perfstudio.geometry import pad_edge_gap_mm
-    from perfstudio.ui.view3d import BEAD_RATIO_TRACE, TRACE_RADIUS_MM
+    from perfstudio.ui.view3d import TRACE_JOINT_RADIUS_MM, TRACE_WAIST_RATIO
 
     board = _load_dense().board
-    width = 2 * TRACE_RADIUS_MM
+    joint = 2 * TRACE_JOINT_RADIUS_MM
+    bridge = joint * TRACE_WAIST_RATIO
 
-    assert width > pad_edge_gap_mm(board, "horizontal"), "too thin to bridge to the next pad"
-    assert width < board.pad_diameter, "a run this wide hides the pad it is soldered to"
-    assert width * BEAD_RATIO_TRACE <= board.pad_diameter, "the joint spills off its own pad"
-    assert BEAD_RATIO_TRACE < 1.5, "a joint is a swelling in the run, not a ball threaded on it"
+    assert bridge > pad_edge_gap_mm(board, "horizontal"), "too thin to bridge to the next pad"
+    assert joint < board.pad_diameter, "a joint this wide hides the pad it is made on"
+    assert TRACE_WAIST_RATIO < 1.0, "a run with no narrowing has no countable joints"
+    assert TRACE_WAIST_RATIO > 0.4, "a run pinched this hard is beads threaded on a string"
 
 
 def test_one_stacking_step_clears_the_widest_pair_that_can_cross() -> None:
@@ -2215,13 +2216,85 @@ def test_one_stacking_step_clears_the_widest_pair_that_can_cross() -> None:
         BARE_WIRE_RADIUS_MM,
         INSULATED_RADIUS_MM,
         STACK_STEP_MM,
-        TRACE_RADIUS_MM,
+        TRACE_JOINT_RADIUS_MM,
     )
 
-    radii = (TRACE_RADIUS_MM, BARE_WIRE_RADIUS_MM, INSULATED_RADIUS_MM)
+    radii = (TRACE_JOINT_RADIUS_MM, BARE_WIRE_RADIUS_MM, INSULATED_RADIUS_MM)
     widest_pair = sum(sorted(radii)[-2:])
 
     assert widest_pair < STACK_STEP_MM, "a step that leaves two crossing tubes overlapping"
+
+
+def test_a_run_is_in_the_surface_and_a_wire_is_on_it() -> None:
+    """The distinction PLAN.md Sec 8.3 makes a requirement, put into the geometry rather
+    than left to the colour.
+
+    Solder wets the copper: a run stands as a half-round ridge over the pad plane, so its
+    centreline IS that plane and only its outer half shows. A wire lies on the board and
+    touches along one line, so its centreline is a radius clear. Both used to be a radius
+    clear, which is why a joint drawn at the run's own height sat behind the pad it was
+    made on and slid off it from any oblique angle.
+    """
+    from perfstudio.ui.view3d import conductor_radius, conductor_z, pad_z
+
+    board = _load_dense().board
+    run = SolderTraceConductor(id="t1", path=(HoleCoord(2, 2), HoleCoord(6, 2)))
+    wire = WireConductor(id="w1", path=(HoleCoord(2, 4), HoleCoord(9, 4)), kind="bare-wire")
+    copper = pad_z(board, "bottom")
+
+    assert conductor_z(run, board, 0) == pytest.approx(copper)
+    assert conductor_z(wire, board, 0) == pytest.approx(copper - conductor_radius(wire))
+
+
+def test_a_wire_goes_down_into_the_holes_it_is_soldered_into() -> None:
+    """It was a stick floating parallel to the board, stopping in mid-air over each pad --
+    so it neither entered the board nor reached what it was soldered to. Worse once a wire
+    could be lifted over another: at one stacking level its ends hang a millimetre above
+    the copper.
+
+    A run does NOT do this. It is fused to the copper along its whole length, so it goes
+    exactly where the pads are and nowhere else.
+    """
+    from perfstudio.ui.view3d import _conductor_centreline, conductor_z, pad_z
+
+    board = _load_dense().board
+    copper = pad_z(board, "bottom")
+
+    wire = WireConductor(id="w1", path=(HoleCoord(2, 4), HoleCoord(9, 4)), kind="bare-wire")
+    run_z = conductor_z(wire, board, 1)
+    line = _conductor_centreline(wire, board, run_z, copper, is_trace=False)
+    assert line[0][2] == pytest.approx(copper), "the wire has to reach its pad"
+    assert line[-1][2] == pytest.approx(copper)
+    assert any(point[2] == pytest.approx(run_z) for point in line), "and clear it in between"
+    assert len(line) > len(wire.path), "a drop with no run-in is a staple, not a bend"
+
+    trace = SolderTraceConductor(id="t1", path=tuple(HoleCoord(c, 2) for c in range(2, 6)))
+    flat = _conductor_centreline(trace, board, copper, copper, is_trace=True)
+    assert {round(point[2], 9) for point in flat} == {round(copper, 9)}
+
+
+def test_a_run_swells_where_it_is_soldered_and_draws_in_between() -> None:
+    """One surface, not a tube with spheres dropped on it -- those meet in a hard crease
+    all the way round and read as beads threaded on a wire. The swell is what makes the
+    joints countable, and counting joints along a run against the real board is what
+    somebody following the build guide does.
+    """
+    from perfstudio.ui.view3d import _conductor_centreline, _trace_swell, pad_z
+
+    board = _load_dense().board
+    copper = pad_z(board, "bottom")
+    trace = SolderTraceConductor(id="t1", path=tuple(HoleCoord(c, 2) for c in range(2, 6)))
+
+    line = _conductor_centreline(trace, board, copper, copper, is_trace=True)
+    swell = _trace_swell(trace, line)
+
+    assert len(swell) == len(line)
+    assert len(line) == 2 * len(trace.path) - 1, "a point at each pad and one between"
+    # Widest exactly at the pads, narrowest exactly between them.
+    at_pads = swell[0::2]
+    between = swell[1::2]
+    assert len(at_pads) == len(trace.path)
+    assert min(at_pads) > max(between)
 
 
 def test_the_lights_travel_with_the_camera() -> None:

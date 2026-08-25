@@ -79,6 +79,31 @@ closed without a bump.
 
 ### Fixed
 
+- **A solder run is one piece of metal, a wire goes into its holes, and the holes are
+  round.** The second pass over the same view, from a camera put close enough to see what
+  it was actually drawing.
+  - **A run is one surface.** It was a constant tube with a sphere dropped on every pad —
+    two primitives meeting in a hard crease all the way round, which is what read as beads
+    threaded on a stick. The tube's own radius varies now: **1.2 mm across a joint, 0.72 mm
+    across the bridge between two pads**. The narrowing is not decoration — it is what
+    makes the joints countable, and counting joints along a run against the real board is
+    exactly what somebody following the build guide does. The two end pads keep a solid,
+    at precisely the radius the tube already has there, so a tube's flat cap never shows.
+  - **A run is IN the surface; a wire is ON it.** Solder wets copper and stands as a
+    half-round ridge, so a run's centreline is the pad plane itself. Both used to be a
+    radius clear of it, which is why a joint drawn at the run's own height sat behind the
+    pad it was made on and slid off it from every oblique angle — which is every angle
+    this view is used from. The distinction PLAN.md §8.4 makes a requirement is in the
+    geometry now, not only in the colour.
+  - **A wire bends down into its pads.** It was a stick floating parallel to the board and
+    stopping in mid-air above each hole, so it neither entered the board nor reached what
+    it was soldered to — and once a wire could be lifted over another, its ends hung a
+    millimetre above the copper. Each end drops to the pad over a short run-in, long enough
+    to read as a bend and never more than a fraction of the segment it bends within.
+  - **Holes and pads are round.** The bore was a 12-sided cylinder and a perfboard is
+    mostly holes, so that one number set how machine-made the whole board looked. 28 and 40
+    now; both are one glyphed source instanced at every hole, so the cost is per board.
+
 - **Solder in the 3D view stops looking like grey plumbing.** Three things, and the
   lighting was the biggest of them.
   - **The lights travel with the camera.** They were nailed to world positions, one above

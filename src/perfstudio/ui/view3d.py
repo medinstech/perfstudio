@@ -19,6 +19,7 @@ import math
 import subprocess
 import sys
 from dataclasses import dataclass
+from itertools import pairwise
 from typing import Any
 
 import vtk  # type: ignore[import-untyped]
@@ -139,35 +140,42 @@ def pad_z(board: Board, side: BoardSide) -> float:
     return 0.05 if side == "top" else -board.thickness - 0.05
 
 
-#: Tube radius per conductor kind, in mm, at the sizes the real things are.
+#: What a conductor measures on the board, in mm.
 #:
-#: A run of solder along a row of pads is a RIDGE about a millimetre across -- it has to
-#: be, or it would not bridge a 0.6 mm gap between pads -- so it is drawn at one. 24 AWG
-#: hookup wire is 1.1 mm over the insulation, and tinned copper for a spine is 0.6 mm.
+#: A SOLDER RUN is two numbers, because it is not a uniform thing: a mound on each pad it
+#: is soldered to, and a narrower bridge of solder between them. That narrowing is not
+#: decoration -- it is what makes the joints countable, and counting joints along a run
+#: against the real board is exactly what somebody following the build guide does.
+#: 1.2 mm across a joint sits inside a 1.9 mm pad and leaves the copper ring showing;
+#: 0.72 mm across the bridge still spans the 0.64 mm gap to the next pad, which is what a
+#: run is for.
 #:
-#: These were 0.34 / 0.42 / 0.30, which was under half a real run and left the tube
-#: THINNER THAN THE BEAD AT EACH PAD (below): the silhouette came out as balls on a stick,
-#: a molecular model rather than a length of copper soldered down. See BEAD_RATIO.
-TRACE_RADIUS_MM = 0.50
+#: The tube was 0.34 mm at a constant radius with a 1.9x SPHERE dropped on every pad. Under
+#: half a real run, thinner than its own joints, and two primitives meeting in a hard
+#: crease all the way round -- so it read as balls threaded on a stick, a molecular model
+#: rather than a length of solder. It is one varying-radius surface now; see
+#: ``_trace_swell``.
+TRACE_JOINT_RADIUS_MM = 0.60
+TRACE_WAIST_RATIO = 0.60
+
+#: 24 AWG hookup wire over the sleeve, and tinned copper for a bare link or a spine.
 BARE_WIRE_RADIUS_MM = 0.30
 INSULATED_RADIUS_MM = 0.55
 
-#: How much a joint swells above the run it sits on.
-#:
-#: 1.9 was too much and it was measured against a tube half the size, so each pad grew a
-#: ball twice the width of the run and the run pinched to a waist between them. A solder
-#: joint is a FILLET: a bulge you can count, not a bead threaded on a wire. At 1.3 against
-#: a 0.50 mm run that is 1.3 mm across, which sits inside a 1.9 mm pad and still reads as
-#: a swelling from any angle.
-#:
-#: A wire's two ends get less again: there is a fillet where it is soldered, and nothing
-#: along its length, which is the distinction ``contacts_every_path_hole`` draws and the
-#: single most important thing this view says.
-BEAD_RATIO_TRACE = 1.30
-BEAD_RATIO_WIRE = 1.15
+#: A wire's two ends get a solder fillet and its length gets none, which is the distinction
+#: ``contacts_every_path_hole`` draws and the single most important thing this view says.
+#: Modest, because a joint on the end of a wire is a fillet around it, not a bead on it.
+BEAD_RATIO_WIRE = 1.20
 
-#: Facets round a tube and round a bead. Ten and twelve are enough at the whole-board
-#: zoom the default camera gives and visibly polygonal as soon as anyone looks closely at
+#: Facets round a drilled hole and round a pad's outline. Twelve made every hole on the
+#: board a visible dodecagon as soon as anyone looked closely -- and a perfboard is mostly
+#: holes, so that one number set how machine-made the whole thing looked. Both are ONE
+#: glyphed source instanced at every hole, so the cost is per board and not per hole.
+BORE_SIDES = 28
+PAD_SEGMENTS = 40
+
+#: Facets round a tube and round a fillet. Ten and twelve were enough at the whole-board
+#: zoom the default camera gives and visibly polygonal as soon as anyone looked closely at
 #: a joint -- which is the thing they are most likely to want to look closely at.
 TUBE_SIDES = 20
 BEAD_RESOLUTION = 20
@@ -183,7 +191,7 @@ BEAD_RESOLUTION = 20
 #: off a board 1.6 mm thick. It bought levitation and no clearance.
 #: ``occupancy.stacking_layers`` now lifts only what actually crosses something, which is
 #: what makes a step this size affordable.
-STACK_STEP_MM = INSULATED_RADIUS_MM + TRACE_RADIUS_MM + 0.15
+STACK_STEP_MM = INSULATED_RADIUS_MM + TRACE_JOINT_RADIUS_MM + 0.15
 
 
 def conductor_radius(cond: Conductor) -> float:
@@ -191,7 +199,7 @@ def conductor_radius(cond: Conductor) -> float:
     :func:`conductor_z`, which needs it to rest the tube ON the copper rather than near
     it."""
     if contacts_every_path_hole(cond):
-        return TRACE_RADIUS_MM
+        return TRACE_JOINT_RADIUS_MM  # the widest it gets, which is what has to clear
     if cond.kind in ("insulated-wire", "top-jumper"):
         return INSULATED_RADIUS_MM
     return BARE_WIRE_RADIUS_MM
@@ -227,11 +235,18 @@ def conductor_z(cond: Conductor, board: Board, stack: int = 0) -> float:
     # 0.4 mm for the first and 0.94 for the second would mean a wire a user deliberately
     # lifted still buried in the one below it.
     lift = STACK_STEP_MM * (cond.layer_z + stack)
+    # A RUN IS IN THE SURFACE; A WIRE IS ON IT. Solder wets the copper and stands as a
+    # half-round ridge over it, so a run's centreline is the pad plane itself and only its
+    # outer half shows -- which is also why a joint swells concentrically out of it instead
+    # of hanging off its back. A wire lies on top of the board and touches it along one
+    # line, so its centreline is a radius clear.
+    #
+    # The distinction is the one this view exists to make (PLAN.md Sec 8.3), and it is now
+    # in the geometry rather than only in the colour.
+    standoff = 0.0 if contacts_every_path_hole(cond) else conductor_radius(cond)
     if cond.side == "bottom":
-        # Down from the solder-side copper. The substrate spans z = -thickness .. 0, and
-        # a tube tangent to a pad at -thickness - 0.05 cannot reach into it.
-        return pad_z(board, "bottom") - conductor_radius(cond) - lift
-    return pad_z(board, "top") + conductor_radius(cond) + lift
+        return pad_z(board, "bottom") - standoff - lift
+    return pad_z(board, "top") + standoff + lift
 
 
 def _stadium_contour(extent_x: float, extent_y: float, count: int) -> list[tuple[float, float]]:
@@ -270,8 +285,7 @@ def _pad_annulus(board: Board) -> vtk.vtkPolyData:
     unaffected.
     """
     extent_x, extent_y = pad_extent_mm(board)
-    segments = 24
-    outer = _stadium_contour(extent_x, extent_y, segments)
+    outer = _stadium_contour(extent_x, extent_y, PAD_SEGMENTS)
     n = len(outer)
     drill_r = board.drill_diameter / 2
 
@@ -327,7 +341,7 @@ def build_drills(board: Board, consumed: frozenset[str] = frozenset()) -> vtk.vt
     # Slightly longer than the board so its caps never z-fight with the pads at either
     # face, which shows up as a flickering speckle across the whole grid.
     bore.SetHeight(board.thickness + 0.3)
-    bore.SetResolution(12)
+    bore.SetResolution(BORE_SIDES)
     # vtkCylinderSource stands along Y; the board's thickness is along Z.
     upright = vtk.vtkTransform()
     upright.RotateX(90)
@@ -1243,6 +1257,76 @@ def _actor_for(piece: _Piece) -> vtk.vtkActor:
     return actor
 
 
+def _conductor_centreline(
+    cond: Conductor,
+    board: Board,
+    run_z: float,
+    joint_z: float,
+    is_trace: bool,
+) -> list[tuple[float, float, float]]:
+    """The path a conductor's tube actually follows, in board mm.
+
+    A SOLDER RUN LIES FLAT. It is fused to the copper along its whole length, so its
+    centreline is the hole centres at one height and nothing else.
+
+    A WIRE GOES INTO ITS HOLES. It was drawn as a stick floating parallel to the board and
+    stopping in mid-air above each pad, with the fillet drawn at the stick's height rather
+    than at the pad -- so a wire neither entered the board nor touched what it was soldered
+    to. Real wire is bent down at each end and the joint is made where it meets the copper.
+    So each end drops from the run height to the pad, over a short horizontal run-in: long
+    enough to read as a bend rather than a staple, and never more than a fraction of the
+    segment it is bending within, so a two-hole link does not turn into a V.
+
+    This is also what keeps a wire lifted over an obstacle attached to the board at all --
+    at one stacking level its ends are more than a bead's width above the pads.
+    """
+    flat = [(*_xy(board, hole), run_z) for hole in cond.path]
+    if is_trace:
+        # A point at every pad and one between each pair, so `_trace_swell` has somewhere
+        # to bring the radius back down. Nothing else about a run's path moves: it is fused
+        # to the copper along its whole length and goes exactly where the pads are.
+        if len(flat) < 2:
+            return flat
+        woven: list[tuple[float, float, float]] = [flat[0]]
+        for previous, point in pairwise(flat):
+            woven.append(((previous[0] + point[0]) / 2, (previous[1] + point[1]) / 2, run_z))
+            woven.append(point)
+        return woven
+    if len(flat) < 2:
+        return flat
+
+    drop = abs(run_z - joint_z)
+    out: list[tuple[float, float, float]] = []
+    for end, inward in ((0, 1), (-1, -2)):
+        x, y, _ = flat[end]
+        ix, iy, _ = flat[inward]
+        span = math.hypot(ix - x, iy - y)
+        # A bend about as long as it is deep, clipped so it stays inside its own segment.
+        run_in = min(drop * 1.2, span * 0.4)
+        t = (run_in / span) if span else 0.0
+        elbow = (x + (ix - x) * t, y + (iy - y) * t, run_z)
+        out = (
+            [(x, y, joint_z), elbow, *flat[1:-1]]
+            if end == 0
+            else [*out, elbow, (x, y, joint_z)]
+        )
+    return out
+
+
+def _trace_swell(cond: Conductor, centreline: list[tuple[float, float, float]]) -> list[float]:
+    """How wide the run is at each point of its centreline, as a multiple of the ridge.
+
+    ``_conductor_centreline`` gives a solder run one point per pad, and a tube through
+    those is a constant ridge with no joints in it. The midpoints inserted here are what
+    lets the radius come back DOWN between pads: full width where it is soldered, drawn in
+    between, which is the silhouette of a run of solder along a row of pads and the reason
+    somebody can count the joints on one.
+    """
+    del cond
+    joint = 1.0 / TRACE_WAIST_RATIO
+    return [joint if index % 2 == 0 else 1.0 for index in range(len(centreline))]
+
+
 def build_conductor(
     cond: Conductor,
     board: Board,
@@ -1258,31 +1342,53 @@ def build_conductor(
     error because it was one. A small per-conductor offset makes one pass over the other,
     which is what the board actually looks like.
     """
+    is_trace = contacts_every_path_hole(cond)
     z = conductor_z(cond, board, stack)
+    joint_z = pad_z(board, cond.side)
+    centreline = _conductor_centreline(cond, board, z, joint_z, is_trace)
+    swell = _trace_swell(cond, centreline) if is_trace else None
+
     points = vtk.vtkPoints()
     line = vtk.vtkPolyLine()
-    line.GetPointIds().SetNumberOfIds(len(cond.path))
-    for i, hole in enumerate(cond.path):
-        x, y = _xy(board, hole)
-        points.InsertNextPoint(x, y, z)
+    line.GetPointIds().SetNumberOfIds(len(centreline))
+    for i, (x, y, pz) in enumerate(centreline):
+        points.InsertNextPoint(x, y, pz)
         line.GetPointIds().SetId(i, i)
     cells = vtk.vtkCellArray()
     cells.InsertNextCell(line)
     poly = vtk.vtkPolyData()
     poly.SetPoints(points)
     poly.SetLines(cells)
+    if swell is not None:
+        widths = vtk.vtkDoubleArray()
+        widths.SetName("swell")
+        for value in swell:
+            widths.InsertNextValue(value)
+        poly.GetPointData().SetScalars(widths)
 
-    is_trace = contacts_every_path_hole(cond)
     insulated = cond.kind in ("insulated-wire", "top-jumper")
     radius = conductor_radius(cond)
     tube = vtk.vtkTubeFilter()
     tube.SetInputData(poly)
-    tube.SetRadius(radius)
+    # VTK scales the radius by scalar/min(scalar), so the radius set here is the value at
+    # the NARROWEST point -- the bridge between two pads, for a run.
+    tube.SetRadius(radius * TRACE_WAIST_RATIO if swell is not None else radius)
     tube.SetNumberOfSides(TUBE_SIDES)
     tube.CappingOn()
+    if swell is not None:
+        # ONE SURFACE for a solder run, swelling at each pad and drawing in between it.
+        # The joints used to be spheres dropped on top of a constant tube, which meets it
+        # in a hard crease all the way round and reads as a bead threaded on a wire -- two
+        # objects where the board has one. A run of solder is a single fillet, and varying
+        # the tube's own radius is what says so.
+        tube.SetVaryRadiusToVaryRadiusByScalar()
+        tube.SetRadiusFactor(1.0 / TRACE_WAIST_RATIO)
 
     mapper = vtk.vtkPolyDataMapper()
     mapper.SetInputConnection(tube.GetOutputPort())
+    # The swell scalars are geometry, not data. Left visible, VTK colour-maps them and a
+    # run of solder comes out as a blue-to-cyan rainbow.
+    mapper.ScalarVisibilityOff()
     actor = vtk.vtkActor()
     actor.SetMapper(mapper)
     if is_trace:
@@ -1317,18 +1423,27 @@ def build_conductor(
     # The distinction that matters: a trace is soldered at EVERY pad it crosses, a wire
     # only at its two ends. Render exactly that -- driven by the same
     # `contacts_every_path_hole` predicate the connectivity engine itself uses.
-    bead_at = cond.path if is_trace else (cond.path[0], cond.path[-1])
+    #
+    # A run's joints ALONG its length are in the tube above, because a run of solder is one
+    # piece of metal and spheres dropped on it meet it in a crease. Its two ENDS still need
+    # a solid: a tube's cap is a flat disc, which at a corner shows as a sliced-off face.
+    # At exactly the radius the tube already has there, a sphere is tangent to it and the
+    # seam does not exist.
+    #
+    # A wire's two are proud of it, and have to be: they are SOLDER, on the ends of
+    # something that is not, and a silver fillet at each end of a coloured sleeve is how
+    # you see where a wire is actually attached.
     bead_pts = vtk.vtkPoints()
-    for hole in bead_at:
+    for hole in (cond.path[0], cond.path[-1]):
         x, y = _xy(board, hole)
-        bead_pts.InsertNextPoint(x, y, z)
+        # AT THE PAD, not at the conductor. A fillet is centred on the copper and wicks
+        # into the hole; drawn at a lifted wire's own height it would hang in the air above
+        # the pad it is supposedly made on.
+        bead_pts.InsertNextPoint(x, y, joint_z)
     bead_data = vtk.vtkPolyData()
     bead_data.SetPoints(bead_pts)
     sphere = vtk.vtkSphereSource()
-    # A run swells at every pad it is soldered to, and a wire has a fillet at each of its
-    # two ends: the whole distinction `contacts_every_path_hole` draws, drawn. A SWELLING,
-    # though -- see BEAD_RATIO_TRACE for why it used to be a ball on a stick.
-    sphere.SetRadius(radius * (BEAD_RATIO_TRACE if is_trace else BEAD_RATIO_WIRE))
+    sphere.SetRadius(radius if is_trace else radius * BEAD_RATIO_WIRE)
     sphere.SetThetaResolution(BEAD_RESOLUTION)
     sphere.SetPhiResolution(BEAD_RESOLUTION)
     bead_glyph = vtk.vtkGlyph3DMapper()
@@ -1339,8 +1454,8 @@ def build_conductor(
     beads = vtk.vtkActor()
     beads.SetMapper(bead_glyph)
     beads.GetProperty().SetColor(*SOLDER_RGB)
-    # The same material as the run it swells out of -- a joint and the copper leading into
-    # it are one piece of solder, and two finishes would draw a seam that is not there.
+    # The same material as the run it swells out of -- a joint and the solder leading into
+    # it are one piece of metal, and two finishes would draw a seam that is not there.
     beads.GetProperty().SetSpecular(0.42)
     beads.GetProperty().SetSpecularPower(16.0)
     beads.GetProperty().SetDiffuse(0.8)
@@ -1389,8 +1504,8 @@ def build_drop_lines(
     different apparent meanings, decided by nothing but where the part happens to be.
 
     Lines fix it at any lift, and they are what the view is for (PLAN.md D7): the question
-    an exploded view answers is not "what is on this board" — the assembled view answers
-    that — but "which holes does THIS go in", and a leader line is the answer drawn.
+    an exploded view answers is not "what is on this board" â€” the assembled view answers
+    that â€” but "which holes does THIS go in", and a leader line is the answer drawn.
 
     One actor for every line on the board. A part with no known footprint contributes
     nothing, as everywhere else.
@@ -1487,8 +1602,8 @@ def populate_renderer(
     """Rebuild the board's actors in an EXISTING renderer, leaving the camera alone.
 
     ``exploded_mm`` lifts every part off the board, so the holes each one drops into are
-    visible at once (PLAN.md D7). ``highlight`` is a component or conductor id — the value
-    ``guide.step_focus`` returns — and dims everything else, which is what turns a frame
+    visible at once (PLAN.md D7). ``highlight`` is a component or conductor id â€” the value
+    ``guide.step_focus`` returns â€” and dims everything else, which is what turns a frame
     of the assembly sequence into an illustration of one step.
 
     The BOARD is never dimmed, only the other parts and the copper. A step card says which
@@ -1791,7 +1906,7 @@ def render_step_images(
     width: int = 560,
     height: int = 370,
 ) -> dict[str, bytes]:
-    """One picture per build step (PLAN.md §7.2), keyed by ``guide.step_focus``.
+    """One picture per build step (PLAN.md Â§7.2), keyed by ``guide.step_focus``.
 
     JPEG bytes rather than files, because that is what ``guide_export.guide_to_html``
     takes: it base64s them into the document, so the finished guide cannot acquire a
