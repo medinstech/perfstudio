@@ -79,6 +79,32 @@ closed without a bump.
 
 ### Fixed
 
+- **Conductors stop levitating, and crossings actually clear each other.** Two crossing
+  wires used to be drawn intersecting, and the fix for that was an offset per conductor —
+  a running index over `doc.conductors`, 0.08 mm a step. It bought neither thing it was
+  for: 0.08 mm is a tenth of what two 0.42 mm tubes need before they stop overlapping, so
+  crossing wires went on interpenetrating exactly as before, while the offset accumulated
+  into **4.47 mm of float on the dense fixture — a board 1.6 mm thick** — carrying the
+  solder traces, which are soldered flat *onto* the pads, up with it.
+  - `occupancy.stacking_layers` answers the question properly: which conductors actually
+    cross which, from `geometry.paths_cross` — the same predicate DRC's
+    `conductor-crossing` reads, so a shared endpoint stays the junction it is. A solder
+    trace is pinned to level 0 (it *is* the copper; it cannot pass over anything), the two
+    faces stack independently, and a board where nothing crosses comes out flat. On the
+    NE555 routed solder-first: **6 of 23 conductors lifted, one level**.
+  - Only then is a step big enough to work affordable, so `STACK_STEP_MM` is now derived
+    from the tube radii rather than guessed. `layer_z` uses the same step, so a level
+    somebody assigned by hand lifts a wire clear too.
+  - **Solder rests on the copper.** A run sat 0.45 mm below the pad surface against a
+    0.34 mm radius — 0.11 mm of daylight between a solder run and the pad it is soldered
+    to, visible as a shadow line under every run. The height comes off the pad plane and
+    the tube's own radius now, so it is tangent by construction, and one more magic number
+    is gone.
+  - **2D reads the same levels**, so the wire drawn passing over another there is the one
+    drawn over it in 3D — it used to be whichever the scene happened to paint last — and a
+    conductor that passes over another gets the dark outline that says so from directly
+    above, where two lines at one depth otherwise read as a junction.
+
 - **Two solder runs lying side by side are no longer a finding, and one gap is no longer
   two.** Routed with the solder-first style — the style a perfboard builder picks — the
   NE555 fixture came back with **51 proximity warnings on a board the tool had just routed

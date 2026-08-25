@@ -51,6 +51,7 @@ from perfstudio.model import (
     PerfDocument,
     contacts_every_path_hole,
 )
+from perfstudio.occupancy import stacking_layers
 from perfstudio.stripboard import cut_holes, segments
 
 from .boardcolors import scheme_for
@@ -138,22 +139,73 @@ def pad_z(board: Board, side: BoardSide) -> float:
     return 0.05 if side == "top" else -board.thickness - 0.05
 
 
+#: Tube radius per conductor kind, in mm. A solder trace is a low bulging ridge along the
+#: pads; a wire is a round section standing off the board. At their real proportions
+#: rather than one being a fatter version of the other, because "which of these is solder"
+#: is the question this view exists to answer (PLAN.md Sec 8.3).
+TRACE_RADIUS_MM = 0.34
+BARE_WIRE_RADIUS_MM = 0.30
+INSULATED_RADIUS_MM = 0.42
+
+#: How far one stacking level lifts a conductor clear of the one it crosses.
+#:
+#: DERIVED FROM THE RADII ABOVE, not chosen. Two insulated wires crossing need their
+#: centres 0.84 mm apart before the tubes stop intersecting, so anything less does not fix
+#: the thing stacking exists for. This was 0.08 mm, which is a tenth of what two 0.42 mm
+#: tubes need -- so crossing wires went on interpenetrating exactly as before, while the
+#: offset still accumulated: the level was a running index over every conductor on the
+#: board, which on the dense fixture put the last one 4.47 mm off a board 1.6 mm thick.
+#: It bought levitation and no clearance. ``occupancy.stacking_layers`` now lifts only
+#: what actually crosses something, which is what makes a step this size affordable.
+STACK_STEP_MM = 2 * INSULATED_RADIUS_MM + 0.1
+
+
+def conductor_radius(cond: Conductor) -> float:
+    """The tube one conductor is drawn as. Read by ``build_conductor`` and by
+    :func:`conductor_z`, which needs it to rest the tube ON the copper rather than near
+    it."""
+    if contacts_every_path_hole(cond):
+        return TRACE_RADIUS_MM
+    if cond.kind in ("insulated-wire", "top-jumper"):
+        return INSULATED_RADIUS_MM
+    return BARE_WIRE_RADIUS_MM
+
+
 def conductor_z(cond: Conductor, board: Board, stack: int = 0) -> float:
     """Where one conductor sits, in board z.
 
     Split out from ``build_conductor`` because the interesting property is arithmetic and
     testing it through VTK means reaching into an unexecuted pipeline, which segfaults.
 
-    ``stack`` separates conductors sharing a layer. Everything on the solder side used to
-    sit at one z per ``layer_z``, so two crossing bare wires were drawn INTERSECTING --
-    occupying the same space, which is not a thing wire does and looked like a modelling
-    error because it was one.
+    RESTING ON THE COPPER, not near it. The height used to be a constant 0.5 mm clear of
+    the substrate, which is 0.45 from the pad surface -- and with a 0.34 mm trace radius
+    that leaves 0.11 mm of daylight between a solder run and the pad it is supposedly
+    soldered to. Small, and visible as a shadow line under every run: it read as floating,
+    which is the one thing solder does not do. Taking the radius off the PAD plane makes
+    the tube tangent to the copper by construction, for a wire lying on the board as much
+    as for a run fused to it, and takes a magic number out of the file.
+
+    The beads at each joint are deliberately larger than that and so reach into the
+    substrate. That is correct: a fillet wicks into the hole, the board is opaque, and
+    what shows on the surface is the dome.
+
+    ``stack`` is the conductor's level from ``occupancy.stacking_layers`` -- how many
+    conductors it has to pass over. Everything on the solder side used to sit at one z per
+    ``layer_z``, so two crossing bare wires were drawn INTERSECTING: occupying the same
+    space, which is not a thing wire does and looked like a modelling error because it was
+    one. See :data:`STACK_STEP_MM` for why the first attempt at fixing that did not.
     """
+    # Both in the same step, because they answer the same question: how far clear of what
+    # is underneath. ``layer_z`` is the document's own answer -- a level somebody assigned
+    # -- and ``stack`` is the one worked out from what actually crosses what. Charging
+    # 0.4 mm for the first and 0.94 for the second would mean a wire a user deliberately
+    # lifted still buried in the one below it.
+    lift = STACK_STEP_MM * (cond.layer_z + stack)
     if cond.side == "bottom":
-        # The substrate spans z = -thickness .. 0, so solder-side conductors must sit
-        # BELOW -thickness or they end up buried inside the board.
-        return -board.thickness - 0.5 - 0.4 * cond.layer_z - 0.08 * stack
-    return 0.45 + 0.08 * stack
+        # Down from the solder-side copper. The substrate spans z = -thickness .. 0, and
+        # a tube tangent to a pad at -thickness - 0.05 cannot reach into it.
+        return pad_z(board, "bottom") - conductor_radius(cond) - lift
+    return pad_z(board, "top") + conductor_radius(cond) + lift
 
 
 def _stadium_contour(extent_x: float, extent_y: float, count: int) -> list[tuple[float, float]]:
@@ -1196,11 +1248,7 @@ def build_conductor(
 
     is_trace = contacts_every_path_hole(cond)
     insulated = cond.kind in ("insulated-wire", "top-jumper")
-    # A solder trace is a low bulging ridge along the pads; a wire is a round section
-    # standing off the board. Drawn at their real proportions rather than one being a
-    # fatter version of the other, because "which of these is solder" is the question this
-    # view exists to answer (PLAN.md Sec 8.3).
-    radius = 0.34 if is_trace else (0.42 if insulated else 0.30)
+    radius = conductor_radius(cond)
     tube = vtk.vtkTubeFilter()
     tube.SetInputData(poly)
     tube.SetRadius(radius)
@@ -1457,12 +1505,16 @@ def populate_renderer(
         net.id: index
         for index, net in enumerate(n for n in doc.nets if n.net_class == "signal")
     }
-    for stack, cond in enumerate(doc.conductors):
+    # How high each conductor has to sit to clear what it crosses -- from the engine, so
+    # 2D and 3D cannot disagree about which wire passes over which. Not a running index:
+    # see occupancy.stacking_layers.
+    layers = stacking_layers(doc)
+    for cond in doc.conductors:
         subject = highlight is not None and cond.id == highlight
         for actor in build_conductor(
             cond,
             board,
-            stack=stack,
+            stack=layers.get(cond.id, 0),
             net_class=net_class_by_id.get(cond.net_id or ""),
             signal_index=signal_index.get(cond.net_id or "", 0),
         ):

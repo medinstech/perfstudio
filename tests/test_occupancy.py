@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from perfstudio.model import (
     Board,
+    BoardSide,
     BodySpec,
     ComponentInstance,
     DocumentMeta,
@@ -29,7 +30,13 @@ from perfstudio.model import (
     StripConductor,
     WireConductor,
 )
-from perfstudio.occupancy import FootprintLookup, OccupyingPin, build_occupancy, can_cross_copper
+from perfstudio.occupancy import (
+    FootprintLookup,
+    OccupyingPin,
+    build_occupancy,
+    can_cross_copper,
+    stacking_layers,
+)
 
 # ---------------------------------------------------------------------------
 # Fixture builders -- same shape as test_connectivity.py's, kept independent
@@ -333,3 +340,122 @@ def test_build_occupancy_is_deterministic_across_repeats_and_reordering() -> Non
     assert reordered.occupied_holes() == first.occupied_holes()
     first_at_origin = first.conductors_at(hole(0, 0), "bottom")
     assert reordered.conductors_at(hole(0, 0), "bottom") == first_at_origin
+
+
+# ---------------------------------------------------------------------------
+# Stacking: which conductors have to pass over which
+# ---------------------------------------------------------------------------
+#
+# The renderers ask this, but the question is not a rendering one: it is "do these two
+# pieces of copper occupy the same space", which is what this module is for. Both views
+# read the answer, so a wire drawn passing over another in 3D is the one drawn over it
+# in 2D -- and neither can invent its own opinion.
+
+
+def wire(cid: str, path: tuple[HoleCoord, ...], side: BoardSide = "bottom") -> WireConductor:
+    return WireConductor(id=cid, kind="bare-wire", side=side, path=path)
+
+
+def run(cid: str, path: tuple[HoleCoord, ...]) -> SolderTraceConductor:
+    return SolderTraceConductor(id=cid, kind="solder-trace", side="bottom", path=path)
+
+
+def test_a_board_where_nothing_crosses_lies_completely_flat() -> None:
+    """The property the running index this replaced could not have: a board with nothing
+    to step over is drawn with nothing stepped over. It lifted every conductor past every
+    earlier one, which on the dense fixture came to 4.47 mm off a board 1.6 mm thick."""
+    doc = make_doc(
+        conductors=(
+            wire("w1", (hole(1, 1), hole(8, 1))),
+            wire("w2", (hole(1, 3), hole(8, 3))),
+            wire("w3", (hole(1, 5), hole(8, 5))),
+        )
+    )
+
+    assert set(stacking_layers(doc).values()) == {0}
+
+
+def test_two_wires_crossing_are_not_left_in_the_same_space() -> None:
+    doc = make_doc(
+        conductors=(wire("w1", (hole(1, 1), hole(8, 8))), wire("w2", (hole(8, 1), hole(1, 8)))),
+    )
+
+    layers = stacking_layers(doc)
+
+    assert layers["w1"] != layers["w2"]
+
+
+def test_two_wires_meeting_at_a_pad_stay_level_with_each_other() -> None:
+    """A shared endpoint is a junction, not a crossing -- two wires of one net soldered
+    into the same pad. Lifting one off the other would draw a deliberate joint as an
+    accident. `geometry.segments_touch` already draws this line and DRC reads the same
+    one, which is why this asks it rather than re-deciding."""
+    doc = make_doc(
+        conductors=(wire("w1", (hole(1, 1), hole(5, 5))), wire("w2", (hole(5, 5), hole(9, 1)))),
+    )
+
+    assert set(stacking_layers(doc).values()) == {0}
+
+
+def test_a_solder_trace_never_leaves_the_pads_and_the_wire_goes_over_it() -> None:
+    """A trace IS the copper: it is soldered at every pad it touches, so it cannot pass
+    over anything. Two traces crossing is a short, which is DRC's business and not a
+    question about drawing -- so both stay down and the picture shows what it is."""
+    doc = make_doc(
+        conductors=(
+            wire("w1", (hole(4, 1), hole(4, 8))),
+            run("t1", tuple(hole(c, 4) for c in range(1, 9))),
+            run("t2", tuple(hole(c, 6) for c in range(1, 9))),
+        )
+    )
+
+    layers = stacking_layers(doc)
+
+    assert layers["t1"] == 0 and layers["t2"] == 0
+    assert layers["w1"] > 0, "the wire crosses both runs, so it has to clear them"
+
+
+def test_the_two_faces_are_stacked_independently() -> None:
+    """Copper on one face cannot collide with copper on the other -- there is 1.6 mm of
+    board in between."""
+    doc = make_doc(
+        conductors=(
+            wire("w1", (hole(1, 1), hole(8, 8))),
+            wire("w2", (hole(8, 1), hole(1, 8)), side="top"),
+        )
+    )
+
+    assert set(stacking_layers(doc).values()) == {0}
+
+
+def test_only_what_crosses_is_lifted_and_only_past_what_it_crosses() -> None:
+    """Three wires over one: the crossers each need to clear the run underneath, and
+    nothing needs to clear a wire it never meets."""
+    doc = make_doc(
+        conductors=(
+            wire("base", (hole(1, 4), hole(9, 4))),
+            wire("a", (hole(2, 1), hole(2, 8))),
+            wire("b", (hole(5, 1), hole(5, 8))),
+            wire("far", (hole(1, 9), hole(9, 9))),
+        )
+    )
+
+    layers = stacking_layers(doc)
+
+    assert layers["base"] == 0
+    assert layers["a"] == 1 and layers["b"] == 1, "each clears the base, not each other"
+    assert layers["far"] == 0, "it crosses nothing, so it is not lifted"
+
+
+def test_the_same_board_stacks_the_same_way_twice() -> None:
+    """Greedy in document order and nothing else, so the picture does not shuffle between
+    two renders of one board."""
+    doc = make_doc(
+        conductors=(
+            wire("w1", (hole(1, 1), hole(8, 8))),
+            wire("w2", (hole(8, 1), hole(1, 8))),
+            wire("w3", (hole(1, 4), hole(9, 4))),
+        )
+    )
+
+    assert stacking_layers(doc) == stacking_layers(doc)

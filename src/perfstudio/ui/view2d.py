@@ -103,6 +103,7 @@ from perfstudio.model import (
     TrackCut,
     contacts_every_path_hole,
 )
+from perfstudio.occupancy import stacking_layers
 from perfstudio.ratsnest import RatsnestLink, all_links, ratsnest
 from perfstudio.stripboard import cut_holes, is_stripboard, segments
 
@@ -1201,6 +1202,7 @@ class ConductorItem(QGraphicsItem):
         net_class: NetClass | None = None,
         signal_index: int = 0,
         hatch_far_side: bool = True,
+        stack: int = 0,
     ) -> None:
         super().__init__()
         self.conductor = conductor
@@ -1209,10 +1211,17 @@ class ConductorItem(QGraphicsItem):
         self.net_class = net_class
         self.signal_index = signal_index
         self.hatch_far_side = hatch_far_side
+        self.stack = stack
         # Selectable, so a single bad route can be deleted instead of the whole autoroute
         # being undone or the entire board re-routed -- which were the only two options.
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
-        self.setZValue(-50 if conductor.side == "bottom" else 40)
+        # ``stack`` is the conductor's level from ``occupancy.stacking_layers``: how many
+        # conductors it passes over. Every solder-side conductor used to sit at one z, so
+        # which of two crossing wires was drawn on top came down to scene order -- and
+        # could disagree with the 3D view, which is the one place a reader checks. A tenth
+        # of a step keeps every conductor comfortably inside its band whatever the board
+        # does; three stacked wires still sit below the parts.
+        self.setZValue((-50 if conductor.side == "bottom" else 40) + 0.1 * stack)
         first, last = conductor.path[0], conductor.path[-1]
         self.setToolTip(
             f"{conductor.kind.replace('-', ' ')}  {format_hole(first)} → {format_hole(last)}"
@@ -1342,7 +1351,14 @@ class ConductorItem(QGraphicsItem):
         # Insulated wire and top jumpers get a dark casing line under the colour, so a
         # coloured sleeve reads as a sleeve rather than as a painted line, and stays
         # legible where it crosses a pad of nearly its own brightness.
-        if kind in ("insulated-wire", "top-jumper"):
+        #
+        # A conductor that PASSES OVER another gets the same outline whatever it is made
+        # of, and that is the one cue this view had no way to give. The 3D view lifts it
+        # clear (occupancy.stacking_layers, the same levels this item is built with), and
+        # from directly above two conductors at one z are just two lines meeting -- which
+        # reads as a junction, the opposite of what is there. An outline is the ordinary
+        # drawing convention for "this one is in front", and it costs one line.
+        if kind in ("insulated-wire", "top-jumper") or self.stack > 0:
             casing = QPen(QColor(0, 0, 0, 150), width + 0.22)
             casing.setCapStyle(Qt.PenCapStyle.RoundCap)
             casing.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
@@ -2197,6 +2213,9 @@ class BoardScene(QGraphicsScene):
             net.id: index
             for index, net in enumerate(n for n in self.document.nets if n.net_class == "signal")
         }
+        # From the engine, so the wire drawn passing over another here is the one drawn
+        # passing over it in 3D. See occupancy.stacking_layers.
+        conductor_layers = stacking_layers(self.document)
         for conductor in self.document.conductors:
             self.addItem(
                 ConductorItem(
@@ -2206,6 +2225,7 @@ class BoardScene(QGraphicsScene):
                     net_class=net_class_by_id.get(conductor.net_id or ""),
                     signal_index=signal_index.get(conductor.net_id or "", 0),
                     hatch_far_side=self.hatch_far_side,
+                    stack=conductor_layers.get(conductor.id, 0),
                 )
             )
 

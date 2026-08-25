@@ -19,16 +19,18 @@ from dataclasses import dataclass
 from types import MappingProxyType
 
 from .connectivity import FootprintLookup
-from .geometry import all_pin_holes, hole_key, hole_to_mm, transform_offset
+from .geometry import all_pin_holes, hole_key, hole_to_mm, paths_cross, transform_offset
 from .model import (
     BoardSide,
     ComponentId,
     ComponentInstance,
+    Conductor,
     ConductorId,
     ConductorKind,
     Footprint,
     HoleCoord,
     PerfDocument,
+    contacts_every_path_hole,
     is_crossing_blocked,
 )
 
@@ -207,3 +209,87 @@ def _body_footprint_holes(
 def can_cross_copper(kind: ConductorKind) -> bool:
     """Conductor kinds a router may lay over occupied copper."""
     return kind in ("insulated-wire", "top-jumper")
+
+
+# ---------------------------------------------------------------------------
+# Stacking: which conductors have to pass over which
+# ---------------------------------------------------------------------------
+
+
+def stacking_layers(doc: PerfDocument) -> dict[ConductorId, int]:
+    """How many steps clear of the board each conductor has to be drawn, per side.
+
+    A wire that crosses another has to pass OVER it. They cannot occupy the same space,
+    and two drawn at one height are shown interpenetrating -- which is not a thing wire
+    does, and reads as a modelling error because it is one.
+
+    THE FIRST ANSWER WAS A RUNNING INDEX over ``doc.conductors``, which separated
+    everything from everything whether or not it needed separating. Measured: on the dense
+    fixture that put the last conductor 4.47 mm off a board 1.6 mm thick, and on the NE555
+    routed solder-first, 1.92 mm -- with the solder traces, which are soldered flat ONTO
+    the pads, floating along with the wires. It traded interpenetration for levitation.
+
+    So only what actually crosses is lifted, and only past what it crosses:
+
+    * **A solder trace is always level 0.** It *is* the copper. It cannot pass over
+      anything -- it is soldered at every pad it touches
+      (``model.contacts_every_path_hole``), so a trace crossing another is a short, which
+      is DRC's ``conductor-crossing`` and not a question about drawing.
+    * **Opposite faces cannot collide**, so they are stacked independently.
+    * **A shared endpoint is a junction, not a crossing.** Two wires of one net meeting at
+      a pad stay level with each other; ``geometry.segments_touch`` already draws that
+      line and DRC reads the same one.
+
+    Greedy in document order, taking the lowest free level: deterministic, and a board
+    where nothing crosses comes back entirely flat, which is what such a board looks like.
+
+    Pure, so both renderers can read it and neither can drift: a wire drawn passing over
+    another in 3D is the one drawn over it in 2D.
+    """
+    layers: dict[ConductorId, int] = {}
+    placed: list[tuple[Conductor, int]] = []
+
+    # The traces first, ALL of them, before any wire is placed. They are pinned to level 0
+    # and cannot move, so a wire has to be judged against every one of them and not merely
+    # against the ones that happen to come earlier in the document -- which is how a wire
+    # written before the run it crosses ended up buried in it.
+    for conductor in doc.conductors:
+        if contacts_every_path_hole(conductor) or len(conductor.path) < 2:
+            layers[conductor.id] = 0
+            placed.append((conductor, 0))
+
+    for conductor in doc.conductors:
+        if conductor.id in layers:
+            continue
+        taken = {
+            level
+            for other, level in placed
+            if other.side == conductor.side
+            and _paths_may_meet(conductor.path, other.path)
+            and paths_cross(conductor.path, other.path) is not None
+        }
+        level = 0
+        while level in taken:
+            level += 1
+        layers[conductor.id] = level
+        placed.append((conductor, level))
+
+    return layers
+
+
+def _paths_may_meet(a: tuple[HoleCoord, ...], b: tuple[HoleCoord, ...]) -> bool:
+    """Cheap bounding-box reject before the O(segments x segments) crossing test.
+
+    Most pairs on a real board are nowhere near each other, and ``paths_cross`` is the
+    expensive half of a function that runs on every rebuild of the 3D scene.
+    """
+    a_cols = [h.col for h in a]
+    a_rows = [h.row for h in a]
+    b_cols = [h.col for h in b]
+    b_rows = [h.row for h in b]
+    return (
+        min(a_cols) <= max(b_cols)
+        and max(a_cols) >= min(b_cols)
+        and min(a_rows) <= max(b_rows)
+        and max(a_rows) >= min(b_rows)
+    )

@@ -2188,16 +2188,55 @@ def test_solder_and_wire_are_not_the_same_grey() -> None:
     assert difference > 0.5, "solder and tinned wire are still indistinguishable"
 
 
-def test_conductors_sharing_a_layer_do_not_occupy_the_same_space() -> None:
-    """Two wires crossing were drawn intersecting, which is not a thing wire does."""
-    from perfstudio.ui.view3d import conductor_z
+def test_one_stacking_step_actually_clears_a_tube_of_the_one_below() -> None:
+    """Two wires crossing were drawn intersecting, which is not a thing wire does -- and
+    the first fix for it did not fix it.
+
+    The step was 0.08 mm, against tubes drawn at a 0.42 mm radius: a tenth of what two of
+    them need before they stop overlapping, so crossing wires went on interpenetrating
+    exactly as before. Meanwhile the level was a running index over every conductor on the
+    board, so the offset still accumulated -- 4.47 mm off a board 1.6 mm thick on the
+    dense fixture. It bought levitation and no clearance.
+
+    The step is derived from the radii now, which only became affordable once
+    `occupancy.stacking_layers` stopped lifting conductors that cross nothing.
+    """
+    from perfstudio.ui.view3d import INSULATED_RADIUS_MM, STACK_STEP_MM, conductor_z
 
     doc = _load_dense()
     wire = WireConductor(id="w1", path=(HoleCoord(2, 2), HoleCoord(9, 9)), kind="bare-wire")
 
-    assert conductor_z(wire, doc.board, 0) != conductor_z(wire, doc.board, 1)
+    assert STACK_STEP_MM > 2 * INSULATED_RADIUS_MM, "a step that does not clear the tube"
+    step = abs(conductor_z(wire, doc.board, 1) - conductor_z(wire, doc.board, 0))
+    assert step == pytest.approx(STACK_STEP_MM)
     # Solder-side copper stays clear of the substrate however deep the stack goes.
     assert conductor_z(wire, doc.board, 12) < -doc.board.thickness
+
+
+def test_the_two_views_agree_about_which_wire_passes_over_which() -> None:
+    """Both read `occupancy.stacking_layers`, so they cannot drift. The 2D view used to
+    put every solder-side conductor at one z, which left the answer to scene order -- and
+    scene order is not what the 3D view is looking at."""
+    from perfstudio.occupancy import stacking_layers
+    from perfstudio.ui.view2d import BoardScene, ConductorItem
+
+    doc = _load_dense()
+    layers = stacking_layers(doc)
+    scene = BoardScene(doc, footprint_lookup())
+
+    drawn = {
+        item.conductor.id: item
+        for item in scene.items()
+        if isinstance(item, ConductorItem)
+    }
+    assert drawn, "the fixture has conductors"
+    for cid, item in drawn.items():
+        assert item.stack == layers[cid]
+    # And the order on screen follows it: a lifted wire is painted over the one it crosses.
+    lifted = [cid for cid, level in layers.items() if level > 0]
+    assert lifted, "the dense fixture has a crossing"
+    for cid in lifted:
+        assert drawn[cid].zValue() > drawn[next(iter(k for k in layers if layers[k] == 0))].zValue()
 
 
 # ---------------------------------------------------------------------------
