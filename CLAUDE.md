@@ -406,6 +406,16 @@ holes the obvious way took 124 ms/frame; a single even-odd `QPainterPath` took 5
 and `ui/scenetext.py` sizes annotation labels in **screen pixels** so they hold their size
 as the board zooms — physical silkscreen scales with the board, annotations do not.
 
+**A solder run is IN the surface and a wire is ON it, and that is geometry, not colour.**
+Solder wets copper, so a run's centreline in 3D is the pad plane itself and only its outer
+half shows; a wire's is a radius clear, and its two ends bend down into their holes. The
+run is ONE varying-radius tube — wide at each joint, drawn in between — because a constant
+tube with a sphere per pad meets it in a crease all the way round and reads as beads on a
+stick. That narrowing is load-bearing: counting joints along a run against the real board
+is what somebody following the guide does. Sizes live in `view3d`'s constants and say what
+they measure; the two end pads get a solid at exactly the tube's radius there, so a flat
+cap never shows.
+
 **How high a conductor sits is `occupancy.stacking_layers`, and both views read it.** Two
 crossing wires cannot occupy the same space; a solder trace never leaves the pads, because
 it *is* the copper. The level is computed from what actually crosses what (`paths_cross` —
