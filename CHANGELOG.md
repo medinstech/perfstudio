@@ -22,6 +22,58 @@ closed without a bump.
 
 ### Added
 
+- **PerfStudio can tell you a new version exists, and fetch it.** The last unwritten line
+  of PLAN.md §14's launch checklist: the three installers have shipped since 0.4.0 and
+  updating meant noticing a release on GitHub and downloading it by hand, which is a thing
+  nobody does on a schedule. Help ▸ **Check for Updates** asks now; Help ▸ **Check
+  Automatically at Startup** asks once a day as the window opens. What comes back is one
+  dismissible strip above the board naming both versions and quoting the changelog's own
+  bolded lead-ins — the release notes are built out of `CHANGELOG.md` by `release.yml`, so
+  the summary in the strip is the sentence somebody already wrote by hand rather than one
+  the application invented.
+  - **It does not install anything, and that is the design rather than an unfinished
+    edge.** The file is downloaded into the user's Downloads folder, checked against the
+    `SHA256SUMS` now attached to every release, and shown to them in their file manager.
+    Running it needs elevation on Windows, replacing a bundle inside `/Applications` on
+    macOS and overwriting a running AppImage on Linux — and doing that on somebody's
+    behalf with an installer nobody has signed (§12, unbought) is a mechanism that is
+    indistinguishable from malware and has no way back when it goes wrong. The last click
+    is the user's.
+  - **Nobody is checked up on before being asked.** A check is a request to GitHub
+    carrying the machine's address, so the first run asks, in one sentence with two
+    buttons, and remembers the answer — which is why the stored preference has three
+    states and not two: "not asked yet" is not "said no". Either answer is a menu item
+    away afterwards.
+  - **The decisions are separated from the network, the same way the engine is separated
+    from the filesystem.** `updates.py` has no I/O in it at all — which release is newer,
+    which of the three files suits this machine, when to look again, what the notes say —
+    and `ui/updater.py` does the fetching, the hashing and the clock. Fifty tests reach
+    every decision by handing a function a string; none of them opens a socket.
+  - Four answers here are the kind that are wrong by being plausible, and each is pinned:
+    a `.devN` build sorts BELOW the release it is heading for (`version.version_tuple()`
+    deliberately says the opposite, and somebody running 0.8.0.dev3 out of a clone should
+    be told when 0.8.0 ships); the highest VERSION wins rather than the newest
+    publication, because a patch to an old line published later would otherwise be offered
+    to everyone as an upgrade; an Intel Mac and an ARM Linux box are offered the release
+    notes and no download, because the only assets are arm64 and x86_64 respectively and a
+    match on the extension alone hands somebody 300 MB that cannot start; and a response
+    that is not a release feed — a hotel wi-fi login page — reads as "could not check",
+    never as "you are up to date".
+  - A build installed with `pip` is told about the release and sent to the release page
+    rather than offered an installer, because its update is `pip install -U` and an
+    installer is no use to it.
+  - The check runs from `main()` a moment after the window is on screen and never from a
+    constructor, which is what keeps a suite that builds a great many windows off the
+    network. `test_building_a_window_checks_nothing` asserts it rather than trusting it:
+    it is one convenient line away from being untrue at any time.
+
+- **Every release now carries a `SHA256SUMS` file** (`release.yml`), covering all three
+  installers. It is what the in-application download verifies against and what the release
+  notes tell a person to run by hand. Worth being precise about what it proves: it arrives
+  from the same host over the same connection as the installer, so it says the download
+  came through intact, not that GitHub handed out the file this project built. That second
+  claim needs the code signing §12 has not bought.
+
 - **The build guide is compared against a known-good one** (`tests/test_guide_golden.py`,
   `tests/guide_golden/`). All four exports of the routed NE555 fixture — JSON, the
   self-contained HTML, the cut list and the BOM — are stored whole and compared whole.

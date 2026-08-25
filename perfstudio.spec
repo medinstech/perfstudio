@@ -26,6 +26,15 @@ for package in ("vtkmodules",):
 
 hiddenimports += collect_submodules("perfstudio")
 
+# QtNetwork is reached from exactly one module (ui/updater.py, the update check) and
+# PyInstaller's PySide6 hook decides which Qt PLUGINS to pack from which Qt MODULES it
+# sees imported.  Listed explicitly so the dependency is visible here and cannot be lost
+# to a refactor that moves that import: with no QtNetwork in the graph the hook packs no
+# `tls` plugin, and the frozen build then reports every update check as a network failure
+# while a source run works perfectly.  That is the one failure in this feature no local
+# test can see -- check it on the first release after touching updater.py.
+hiddenimports += ["PySide6.QtNetwork"]
+
 # The 3D view reaches these three only at run time: VTK's Qt widget, and the two modules
 # whose import is what *registers* the OpenGL backend and the interactor styles.  Without
 # them the frozen build starts, opens the 3D panel and renders nothing -- or silently

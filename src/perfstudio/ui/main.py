@@ -178,10 +178,11 @@ from perfstudio.router import RoutingStyle, options_for_style
 from perfstudio.stripboard import is_stripboard
 from perfstudio.striproute import StripboardPlan, plan_stripboard
 from perfstudio.striproute import describe_plan as describe_strip_plan
+from perfstudio.updates import RELEASES_PAGE_URL, Release, is_check_due
 from perfstudio.version import __version__
 from perfstudio.version import describe as describe_version
 
-from . import icons, view3d
+from . import icons, updater, view3d
 from .boardcolors import SCHEMES as BOARD_SCHEMES
 from .boardcolors import choose as choose_board_colour
 from .boardcolors import chosen_key as chosen_board_colour
@@ -243,6 +244,11 @@ LANGUAGE_KEY = "session/language"
 #: launch, and repeating it forever is the application explaining its own front door to
 #: somebody who has walked through it a hundred times.
 HAS_PLACED_KEY = "session/hasPlacedAPart"
+
+#: How long after the window appears the daily update check runs. Long enough that the
+#: board is drawn and the first paint is over; short enough that somebody who opened the
+#: application to see whether there is an update does not conclude it has no such thing.
+UPDATE_CHECK_DELAY_MS = 1500
 
 ROLE_HOLES = int(Qt.ItemDataRole.UserRole) + 1
 ROLE_COMPONENT_IDS = int(Qt.ItemDataRole.UserRole) + 2
@@ -1350,6 +1356,14 @@ class MainWindow(QMainWindow):
         #: Set once the user has ever placed a part, in any session. See _refresh_empty_hint.
         self._has_placed_a_part = _stored_bool(app_settings(), HAS_PLACED_KEY, False)
 
+        #: The update check. Built on first use and never in this constructor: the test
+        #: suite builds a great many windows and none of them should reach the network.
+        #: See ui/updater.py, and consider_checking_for_updates for who starts one.
+        self._update_checker: updater.UpdateChecker | None = None
+        self._update_release: Release | None = None
+        self._update_asked_by_hand = False
+        self._downloaded_update: str | None = None
+
         #: The document as it last hit disk. Identity comparison against the bus's
         #: current document is what "modified" means here -- see is_modified.
         self._saved_document = document
@@ -1385,7 +1399,24 @@ class MainWindow(QMainWindow):
 
         # The 2D editor is the application; the 3D view is a panel you open when you want
         # it. See _build_3d_dock for why that is not just a layout preference.
-        self.setCentralWidget(self.view)
+        #
+        # It is wrapped rather than set directly so that the update strip can sit above
+        # it: a strip in the layout pushes the board down by its own height when there is
+        # news and occupies nothing when there is not, where an overlay would cover the
+        # top row of holes and a dialog would land on top of whatever was being routed.
+        self.update_bar = updater.UpdateBar(self)
+        self.update_bar.downloadRequested.connect(self._on_update_download)
+        self.update_bar.notesRequested.connect(self._on_update_notes)
+        self.update_bar.revealRequested.connect(self._on_update_reveal)
+        self.update_bar.cancelRequested.connect(self._on_update_cancel)
+        self.update_bar.dismissed.connect(self._on_update_dismissed)
+        centre = QWidget(self)
+        column = QVBoxLayout(centre)
+        column.setContentsMargins(0, 0, 0, 0)
+        column.setSpacing(0)
+        column.addWidget(self.update_bar)
+        column.addWidget(self.view, 1)
+        self.setCentralWidget(centre)
 
         # Docks before menus: the View menu offers each dock's own toggleViewAction, so the
         # docks have to exist for the menu to be able to name them.
@@ -2236,6 +2267,20 @@ class MainWindow(QMainWindow):
             )
         )
         act_keys.triggered.connect(self.on_shortcuts)
+        help_menu.addSeparator()
+        act_updates = help_menu.addAction(t("Check for &Updates…"))
+        act_updates.setToolTip(t("Ask GitHub whether a newer release has been published."))
+        act_updates.triggered.connect(self.on_check_for_updates)
+        self.act_auto_updates = help_menu.addAction(t("Check Automatically at &Startup"))
+        self.act_auto_updates.setCheckable(True)
+        self.act_auto_updates.setChecked(bool(updater.stored_preference(app_settings())))
+        self.act_auto_updates.setToolTip(
+            t(
+                "Look once a day, as the window opens. Nothing is downloaded or installed "
+                "without you asking for it."
+            )
+        )
+        self.act_auto_updates.toggled.connect(self._on_automatic_updates_toggled)
         help_menu.addSeparator()
         act_about = help_menu.addAction(t("&About PerfStudio"))
         act_about.triggered.connect(self.on_about)
@@ -5086,6 +5131,11 @@ class MainWindow(QMainWindow):
             # AFTER the offer, never before: a close the user backed out of must not
             # record the layout as if they had left.
             self._save_session()
+            # A download in flight is abandoned rather than left running into a window
+            # that is closing, which is also what removes its half-written .part file --
+            # the transfer's own cancel path does that, and nothing else will.
+            if self._update_checker is not None:
+                self._update_checker.cancel()
             event.accept()
         else:
             event.ignore()
@@ -5329,6 +5379,142 @@ class MainWindow(QMainWindow):
         box.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
         box.exec()
 
+    # -- updates -------------------------------------------------------------
+    #
+    # PLAN.md §14's last unwritten line. Every decision lives in updates.py and every
+    # byte on the wire in ui/updater.py; what is left here is the policy a window has to
+    # hold -- when to look, who to tell, and what a Hide means.
+
+    def consider_checking_for_updates(self) -> None:
+        """The daily check, and the one question that has to be answered before it.
+
+        Called from ``main()`` a moment after the window is on screen, never from the
+        constructor: a check is a network request, and a window that makes one while it
+        is being built makes one in every test that builds a window.
+        """
+        settings = app_settings()
+        preference = updater.stored_preference(settings)
+        if preference is None:
+            preference = self._ask_about_updates(settings)
+        if not preference:
+            return
+        if not is_check_due(updater.last_checked(settings), updater.now_iso()):
+            return
+        self._start_update_check(by_hand=False)
+
+    def _ask_about_updates(self, settings: QSettings) -> bool:
+        """Asked once, on the first run, and remembered.
+
+        An update check is a request to GitHub carrying this machine's address, and a
+        tool that quietly starts making them has decided something on the user's behalf.
+        One sentence, two buttons, and either answer is a menu item away afterwards.
+        """
+        box = QMessageBox(self)
+        box.setWindowTitle(t("Check for updates?"))
+        box.setText(t("Should PerfStudio look for new versions?"))
+        box.setInformativeText(
+            t(
+                "It would ask GitHub once a day, as the window opens, and tell you when a "
+                "newer release exists. Nothing is downloaded or installed without you "
+                "asking for it. Either answer can be changed in the Help menu."
+            )
+        )
+        yes = box.addButton(t("Check for Updates"), QMessageBox.ButtonRole.AcceptRole)
+        box.addButton(t("Do Not Check"), QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        enabled = box.clickedButton() is yes
+        updater.remember_preference(settings, enabled)
+        self.act_auto_updates.setChecked(enabled)
+        return enabled
+
+    def on_check_for_updates(self) -> None:
+        """Help > Check for Updates. Says something either way, because it was asked."""
+        self.statusBar().showMessage(t("Checking for updates…"), 4000)
+        self._start_update_check(by_hand=True)
+
+    def _start_update_check(self, *, by_hand: bool) -> None:
+        self._update_asked_by_hand = by_hand
+        self._checker().check(__version__)
+
+    def _checker(self) -> updater.UpdateChecker:
+        """The checker, built on first use and then kept: one object owns the transfer."""
+        if self._update_checker is None:
+            checker = updater.UpdateChecker(self)
+            checker.checked.connect(self._on_update_checked)
+            checker.checkFailed.connect(self._on_update_check_failed)
+            checker.downloadProgress.connect(self.update_bar.show_progress)
+            checker.downloaded.connect(self._on_update_downloaded)
+            checker.downloadFailed.connect(self.update_bar.show_failure)
+            self._update_checker = checker
+        return self._update_checker
+
+    def _on_update_checked(self, release: Release | None) -> None:
+        settings = app_settings()
+        # Stamped on a finished check and not on a failed one, so that a laptop which was
+        # offline this morning looks again this afternoon rather than tomorrow.
+        updater.remember_check(settings, updater.now_iso())
+        if release is None:
+            if self._update_asked_by_hand:
+                self.statusBar().showMessage(
+                    t("PerfStudio {version} is the newest release.").format(version=__version__),
+                    6000,
+                )
+            return
+        # A version somebody pressed Hide on stays hidden -- unless they came from the
+        # menu, in which case they have just asked about exactly that version.
+        if not self._update_asked_by_hand and release.version == updater.skipped_version(settings):
+            return
+        self._update_release = release
+        self.update_bar.announce(
+            release, __version__, downloadable=updater.installable_asset(release) is not None
+        )
+
+    def _on_update_check_failed(self, message: str) -> None:
+        # Only when somebody asked. An automatic check that could not reach GitHub has
+        # found out nothing, and nothing is not worth a strip across somebody's board.
+        if self._update_asked_by_hand:
+            self.statusBar().showMessage(
+                t("Could not check for updates: {reason}").format(reason=message), 8000
+            )
+
+    def _on_update_download(self) -> None:
+        release = self._update_release
+        if release is None:  # pragma: no cover - the button only exists after a check
+            return
+        asset = updater.installable_asset(release)
+        if asset is None:
+            # A pip install, or a machine this project publishes no installer for. The
+            # release page answers both, and it is where "install from source" is written.
+            updater.open_url(release.url)
+            return
+        self.update_bar.show_progress(0, asset.size)
+        self._checker().download(release, asset)
+
+    def _on_update_notes(self) -> None:
+        release = self._update_release
+        updater.open_url(release.url if release is not None else RELEASES_PAGE_URL)
+
+    def _on_update_reveal(self) -> None:
+        if self._downloaded_update is not None:
+            updater.open_in_file_manager(self._downloaded_update)
+
+    def _on_update_cancel(self) -> None:
+        if self._update_checker is not None:
+            self._update_checker.cancel()
+        self.update_bar.dismiss()
+
+    def _on_update_downloaded(self, path: str, verified: bool) -> None:
+        self._downloaded_update = path
+        self.update_bar.show_downloaded(path, verified)
+
+    def _on_update_dismissed(self) -> None:
+        if self._update_release is not None:
+            updater.remember_skip(app_settings(), self._update_release.version)
+        self.update_bar.dismiss()
+
+    def _on_automatic_updates_toggled(self, enabled: bool) -> None:
+        updater.remember_preference(app_settings(), enabled)
+
 
 
 def _language_argument(argv: list[str]) -> str | None:
@@ -5430,6 +5616,10 @@ def main() -> int:
 
     window = MainWindow(document, path)
     window.show()
+    # After the window is up rather than while it is being built, and through the event
+    # loop rather than in line: the first thing somebody should see is their board, and
+    # the reply to an update check arrives on the loop this call is scheduled on.
+    QTimer.singleShot(UPDATE_CHECK_DELAY_MS, window.consider_checking_for_updates)
     return app.exec()
 
 

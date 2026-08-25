@@ -203,8 +203,10 @@ gelmez — mesh kütüphanesi yok, devralınacak share-alike lisansı yok. Bir p
 
 Biten: editör, kütüphane, bağlantısallık ve LVS, DRC, router ve yerleştirme
 optimizasyonu, render edilmiş adım görselleri ve montaj oynatması ile montaj rehberi,
-1:1 PDF çıktısı, MCP sunucusu, TR/EN yerelleştirme, ve bir `v*` etiketiyle çalışan
-üç platformluk paketleme.
+1:1 PDF çıktısı, MCP sunucusu, TR/EN yerelleştirme, bir `v*` etiketiyle çalışan
+üç platformluk paketleme, ve yeni sürümü haber verip indiren güncelleme denetimi
+(**Yardım ▸ Güncellemeleri Denetle**; indirdiğini sürümün `SHA256SUMS` dosyasıyla
+doğrulayıp size teslim eder — çalıştırmak sizin tıklamanız).
 
 Sırada, [PLAN.md](./PLAN.md) §11'in koyduğu sırayla:
 
@@ -212,8 +214,6 @@ Sırada, [PLAN.md](./PLAN.md) §11'in koyduğu sırayla:
   lehimlemesi gerekiyor. Bu olana kadar bu sayfadaki her iddia, çalışan bir devre
   hakkında değil, yazılım hakkında bir iddiadır. Bu liste içinde bir yabancının proje
   için yapabileceği tek şey de bu — [bunun için bir issue şablonu var](./.github/ISSUE_TEMPLATE/board_i_could_not_build.yml).
-- **Otomatik güncelleme.** [PLAN.md](./PLAN.md) §14 istiyor, kurulum paketlerinde yok:
-  bugün güncellemek, bir sonraki sürümü elle indirmek demek.
 - **Kod imzalama.** Windows EV sertifikası ~$300/yıl, Apple notarization $99/yıl; o zamana
   kadar kurulum paketleri ilk açılışta uyarı veriyor ve release notları bunun nasıl
   aşılacağını yazıyor.

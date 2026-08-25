@@ -147,7 +147,58 @@ TURKISH: Mapping[str, str] = {
     "White": "Beyaz",
     "Orange (phenolic)": "Turuncu (pertinaks)",
     "&Keyboard Shortcuts…": "&Klavye Kısayolları…",
+    "Check for &Updates…": "&Güncellemeleri Denetle…",
+    "Check Automatically at &Startup": "Açılışta Otomatik &Denetle",
     "&About PerfStudio": "PerfStudio &Hakkında",
+    # -- the update check (updater.py), from "is there one?" to "here is the file" ---
+    "Ask GitHub whether a newer release has been published.":
+        "GitHub'a sorar: daha yeni bir sürüm yayınlanmış mı?",
+    "Look once a day, as the window opens. Nothing is downloaded or installed "
+    "without you asking for it.":
+        "Günde bir kez, pencere açılırken bakar. Siz istemeden hiçbir şey indirilmez, "
+        "hiçbir şey kurulmaz.",
+    "Check for updates?": "Güncellemeler denetlensin mi?",
+    "Should PerfStudio look for new versions?": "PerfStudio yeni sürümlere baksın mı?",
+    "It would ask GitHub once a day, as the window opens, and tell you when a "
+    "newer release exists. Nothing is downloaded or installed without you "
+    "asking for it. Either answer can be changed in the Help menu.":
+        "Günde bir kez, pencere açılırken GitHub'a sorar ve daha yeni bir sürüm varsa "
+        "size söyler. Siz istemeden hiçbir şey indirilmez, hiçbir şey kurulmaz. İki "
+        "yanıt da Yardım menüsünden değiştirilebilir.",
+    "Check for Updates": "Güncellemeleri Denetle",
+    "Do Not Check": "Denetleme",
+    "Checking for updates…": "Güncellemeler denetleniyor…",
+    "PerfStudio {version} is the newest release.":
+        "En yeni sürüm zaten bu: PerfStudio {version}.",
+    "Could not check for updates: {reason}": "Güncellemeler denetlenemedi: {reason}",
+    "PerfStudio {new} is available — you have {old}.":
+        "PerfStudio {new} çıktı — sizde {old} var.",
+    "Download": "İndir",
+    "Fetch the installer into your Downloads folder and check it arrived intact.":
+        "Kurulum dosyasını İndirilenler klasörüne indirir ve eksiksiz geldiğini doğrular.",
+    "Open the Download Page": "İndirme Sayfasını Aç",
+    "This build was not installed from a package, so the release page is the answer.":
+        "Bu yapı bir paketten kurulmadı; doğru adres sürüm sayfası.",
+    "What Changed": "Ne Değişti",
+    "Open this release's notes on GitHub.": "Bu sürümün notlarını GitHub'da açar.",
+    "Show the File": "Dosyayı Göster",
+    "Open the folder the installer was saved in.":
+        "Kurulum dosyasının kaydedildiği klasörü açar.",
+    "Hide": "Gizle",
+    "Stop mentioning this version. The next one will still be announced when "
+    "it is released.":
+        "Bu sürümü bir daha anmaz. Bir sonraki çıktığında yine haber verilir.",
+    "Downloading… {done:.0f} of {all:.0f} MB": "İndiriliyor… {done:.0f} / {all:.0f} MB",
+    "Downloading… {done:.0f} MB": "İndiriliyor… {done:.0f} MB",
+    "Downloaded to {path}": "Şuraya indirildi: {path}",
+    "Its checksum matched. Close PerfStudio before you run it.":
+        "Sağlama toplamı tuttu. Çalıştırmadan önce PerfStudio'yu kapatın.",
+    "This release published no checksum, so the file was not verified.":
+        "Bu sürüm sağlama toplamı yayınlamamış, dosya doğrulanamadı.",
+    "The update could not be downloaded.": "Güncelleme indirilemedi.",
+    "The download did not match its published checksum, so it was deleted.":
+        "İndirilen dosya yayınlanan sağlama toplamıyla uyuşmadı, o yüzden silindi.",
+    "The download could not be saved.": "İndirilen dosya kaydedilemedi.",
     # -- the shortcut card, the mode banner and the empty-board guidance -------
     "Keyboard Shortcuts": "Klavye Kısayolları",
     "Action": "Eylem",

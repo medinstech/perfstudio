@@ -199,8 +199,10 @@ extrudes its body in 3D, so the two cannot disagree.
 
 Done: the editor, the library, connectivity and LVS, DRC, the router and the placement
 optimiser, the build guide with rendered step images and assembly playback, the 1:1 PDF
-export, the MCP server, TR/EN localisation, and the three-platform packaging that a `v*`
-tag runs.
+export, the MCP server, TR/EN localisation, the three-platform packaging that a `v*` tag
+runs, and the update check that tells you a release exists and fetches it (**Help ▸ Check
+for Updates**; it verifies the download against the release's `SHA256SUMS` and then hands
+it to you — running it stays your click).
 
 Next, in the order [PLAN.md](./PLAN.md) §11 puts them:
 
@@ -208,8 +210,6 @@ Next, in the order [PLAN.md](./PLAN.md) §11 puts them:
   Until that has happened, every claim on this page is a claim about software rather than
   about a working circuit. It is also the one thing on this list that a stranger can do
   for the project — there is [an issue template for it](./.github/ISSUE_TEMPLATE/board_i_could_not_build.yml).
-- **Automatic updates.** [PLAN.md](./PLAN.md) §14 asks for them and the installers do not
-  have them: today an update means downloading the next release by hand.
 - **Code signing.** A Windows EV certificate is ~$300/year and Apple notarization
   $99/year, so until then the installers warn on first run and the release notes say how
   to get past it.

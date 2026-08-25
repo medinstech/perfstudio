@@ -521,9 +521,15 @@ Kutular gerçek durumu gösterir; yarısı yapılmış bir madde işaretlenmez, 
 - [x] CI: test + lint (`ruff`) + tipler (`mypy --strict`) + 3 işletim sistemi matrisi +
       görsel regresyon (`test_render_golden.py`, suite'in içinde). 3 platform **build**'i
       `release.yml`'de, etikete basınca
-- [ ] Release: installer üç platformda da var (`release.yml`), Windows imzasız / macOS
-      ad-hoc imzalı ama notarize değil — §12'nin kabul ettiği durum. **Kalan: otomatik
-      güncelleme.** Hiç yazılmadı
+- [x] Release: installer üç platformda da var (`release.yml`), Windows imzasız / macOS
+      ad-hoc imzalı ama notarize değil — §12'nin kabul ettiği durum. Otomatik güncelleme
+      yazıldı: uygulama günde bir kez (ve Yardım menüsünden istendiğinde) GitHub'a bakıyor,
+      yeni sürümü kartın üstünde bir şeritle duyuruyor, platforma uygun dosyayı indirip
+      release'e eklenen `SHA256SUMS` ile doğruluyor. **Kurulumu başlatmıyor ve bu bir
+      eksik değil, karar:** imzasız bir kurulumu kullanıcı adına çalıştırmak (Windows'ta
+      yükseltme, macOS'ta /Applications içindeki paketi değiştirme, Linux'ta çalışan
+      AppImage'ın üstüne yazma) kötü amaçlı yazılımdan ayırt edilemeyen ve geri dönüşü
+      olmayan bir mekanizma. Son tıklama kullanıcının
 - [x] Örnek projeler: 555 flaşör, LM317 güç kaynağı, Arduino shield, gitar pedalı
       (`examples/`, dördü de netlist + kart)
 - [x] MCP kurulum dokümanı (`docs/MCP.md`: Claude Code, ve JSON config okuyan her şey —

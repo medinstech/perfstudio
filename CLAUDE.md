@@ -505,9 +505,9 @@ a rebuild missed in English.
 
 ### What the window remembers
 
-`main.app_settings()` is the one `QSettings` store — recent files and the session
-(geometry, dock state, board colour, the view toggles, routing style, language). A test
-must point it somewhere temporary; `tests/test_ui.py`'s autouse `_settings_in_a_temp_file`
+`main.app_settings()` is the one `QSettings` store — recent files, the session
+(geometry, dock state, board colour, the view toggles, routing style, language) and the
+three `updates/` keys below. A test must point it somewhere temporary; `tests/test_ui.py`'s autouse `_settings_in_a_temp_file`
 does, and has to, because every test there closes a window and closing saves.
 
 Two rules it is easy to break: `restoreState` matches docks and toolbars **by
@@ -518,3 +518,48 @@ build-guide dock (`Ctrl+4`) is the same shape of thing: it fills itself only whi
 because `build_guide` runs DRC and LVS, and `MainWindow.current_guide()` is the single
 cache both it and the 3D assembly slider read — two views of one list that must not
 disagree about how many steps there are.
+
+
+### The update check decides nothing on the network and installs nothing at all
+
+`updates.py` is an engine module and follows the engine's rule: **no network, no clock, no
+disk.** Which release is newer, which of the three assets suits this machine, when to look
+again, what the notes say — all of it maps a string to an answer, so all of it is reachable
+from a test that hands it a string. `ui/updater.py` is the host: QtNetwork (the platform's
+own TLS, so a frozen build has no CA bundle to forget to pack, and a 300 MB download gets a
+progress bar and a working Cancel without a thread), the file, `hashlib`, and the clock.
+
+Four decisions here are load-bearing and each is pinned by a test:
+
+- **A `.devN` sorts BELOW the release it is heading for**, which is the opposite of
+  `version.version_tuple()`. The two answer different questions — "which feature set is
+  this?" versus "is there anything newer than what I am?" — and they are three lines apart
+  in the imports.
+- **Highest version wins, not newest publication.** The feed arrives in publication order,
+  so a patch to an older line published after a newer minor would be offered to everyone
+  as an upgrade.
+- **A platform with no asset is offered no download.** The only macOS build is arm64 and
+  the only AppImage x86_64; matching on the extension alone hands an Intel Mac 300 MB that
+  cannot start. The release notes are offered instead — that is where "install from
+  source" is written, and it is the same answer a `pip` install gets, since `sys.frozen`
+  is what separates a packaged build from one whose update is `pip install -U`.
+- **A response that is not a release feed is an error, never an answer.** A hotel wi-fi
+  login page must read as "could not check", not as "you are up to date".
+
+**It stops at the download.** The file is verified against the `SHA256SUMS` `release.yml`
+attaches to every release, put in the user's Downloads folder and revealed in their file
+manager. Running it needs elevation on Windows, a bundle swap in `/Applications` on macOS
+and overwriting a running AppImage on Linux; doing that on somebody's behalf with an
+installer nobody has signed (PLAN.md §12) is indistinguishable from malware and has no way
+back. The checksum is worth exactly what it is worth, too: same host, same connection, so
+it proves the download arrived intact and not who built it.
+
+**Nothing runs by itself and nothing runs from a constructor.** The check starts from
+`main()` through `QTimer.singleShot` after the window is shown, or from the Help menu —
+never from `MainWindow.__init__`, which is what keeps a suite that builds a great many
+windows off the network (`test_building_a_window_checks_nothing`). The first run asks
+before the first request, so `updater.stored_preference` has **three** states: `None` is
+"nobody has been asked", which is not "said no". Announcements land in a strip above the
+board rather than a dialog, because a modal over a board somebody is routing gets
+dismissed unread; Hide remembers **that version only**, so the next release is still
+announced.

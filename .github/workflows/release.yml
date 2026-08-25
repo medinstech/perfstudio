@@ -171,6 +171,13 @@ jobs:
           **Anywhere with Python 3.12+**: `pip install -e .` from a clone, then
           `perfstudio`.
 
+          **Checking your download** - `SHA256SUMS` carries the SHA-256 of all three
+          files. `sha256sum -c SHA256SUMS` on Linux, `shasum -a 256 -c SHA256SUMS` on
+          macOS, `Get-FileHash <file>` in PowerShell. PerfStudio does this for you when it
+          fetches an update itself: **Help - Check for Updates**. It proves the file
+          arrived intact, not who built it - that second claim needs the code signing
+          this project has not bought yet.
+
           This is pre-alpha software. Nobody has yet built a real board by following a
           generated guide - check every measurement against the part in your hand.
           EOF
@@ -380,8 +387,8 @@ jobs:
     permissions:
       contents: write
     steps:
-      # Named one at a time rather than by pattern: `perfstudio-*` would also pull down
-      # the Windows installer, which is already on the release.
+      # Named one at a time rather than by pattern, so that which files the checksum
+      # file below covers is visible here rather than inferred from a glob.
       - uses: actions/download-artifact@v4
         with:
           name: perfstudio-linux-appimage
@@ -390,10 +397,36 @@ jobs:
         with:
           name: perfstudio-macos-dmg
           path: releases
-      - env:
+      # The Windows installer is already on the release and is NOT uploaded again. It is
+      # fetched because SHA256SUMS has to cover all three files, and this is the only job
+      # that can see more than one of them.
+      - uses: actions/download-artifact@v4
+        with:
+          name: perfstudio-windows-installer
+          path: releases
+
+      # Two steps and in this order, deliberately: the bundles are what somebody is
+      # waiting for, and a failure while hashing must not be able to leave a published
+      # release with no Linux or macOS build on it.
+      - name: Attach the Linux and macOS bundles
+        env:
           GH_TOKEN: ${{ github.token }}
         run: |
           ls -l releases/
           gh release upload "$GITHUB_REF_NAME" \
             releases/*.AppImage releases/*.dmg --clobber \
+            --repo "$GITHUB_REPOSITORY"
+
+      # What the in-application update check verifies a download against, and what the
+      # release notes tell a person to run by hand. Hashed from inside `releases/` so the
+      # file records bare names -- `sha256sum -c SHA256SUMS` then works in the folder the
+      # files were downloaded into, which is the only place anybody will run it.
+      - name: Attach the checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd releases
+          sha256sum -- *.exe *.AppImage *.dmg > SHA256SUMS
+          cat SHA256SUMS
+          gh release upload "$GITHUB_REF_NAME" SHA256SUMS --clobber \
             --repo "$GITHUB_REPOSITORY"
