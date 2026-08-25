@@ -64,6 +64,18 @@ class StripSegment:
         return not self.holes
 
 
+#: How far apart along one strip two pins of different nets have to sit before the board
+#: can be separated at all, in holes.
+#:
+#: It is 2 because a cut destroys the copper AT a hole: to break the track between two
+#: pins there has to BE a hole between them to put the drill in. Two pins in neighbouring
+#: holes are joined by the board and no amount of routing changes that -- the fix is to
+#: move a part, which is why ``placer.py`` reads this number as well as ``cut_between``
+#: below. One fact, two consumers: an optimiser that packs parts into an arrangement its
+#: own planner then refuses to wire is worse than no optimiser.
+MIN_SEPARABLE_GAP = 2
+
+
 def is_stripboard(board: Board) -> bool:
     return board.type == "stripboard"
 
@@ -232,7 +244,7 @@ def cut_between(
     board = doc.board
     index = strip_index(board, a)
     lo, hi = sorted((position_along(board, a), position_along(board, b)))
-    if hi - lo < 2:
+    if hi - lo < MIN_SEPARABLE_GAP:
         return None  # Adjacent pins: there is no hole between them to drill out.
 
     middle = (lo + hi) / 2

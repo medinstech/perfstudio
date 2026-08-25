@@ -23,9 +23,11 @@ short. ``stripboard.apply`` takes both.
 WHAT THIS DOES NOT DO. It does not move parts. On stripboard placement IS most of the
 design -- pins that want to share a net want to share a row -- and an autorouter that
 quietly rearranged the board would be answering a question nobody asked. It reports what
-it could not separate and leaves the decision where it belongs. (``placer.py`` is the
-tool for that half, and it does not yet score strip alignment; that is written down here
-rather than pretended away.)
+it could not separate and leaves the decision where it belongs. ``placer.py`` is the tool
+for that half, and it reads the same rule this module refuses by: ``cannot-separate``
+below and its ``strip_conflict`` term count the same pairs, out of
+``stripboard.MIN_SEPARABLE_GAP``. Two answers to "can this board be wired" would mean an
+optimiser packing boards this planner then declines to finish.
 
 Pure and deterministic, like every planner above it: the same board plans the same way.
 """

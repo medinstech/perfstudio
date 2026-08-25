@@ -21,6 +21,13 @@ are readable as exchange rates against wire length (see :class:`PlacementWeights
                 single solder-trace rail (PLAN.md Sec 6.2); one spread over five rows
                 cannot. This is the term the competing tools do not have, and it is why
                 the output is cheap to SOLDER rather than merely short.
+                ON STRIPBOARD only the strip axis counts, because only the strip axis
+                joins anything: two pins sharing a column on a board whose strips run
+                horizontally are as far apart electrically as two pins at opposite
+                corners, and pricing that arrangement as free is pricing a connection the
+                board does not make.
+  STRIP         pairs of pins on one strip, in different nets, that no cut can separate.
+                See :data:`stripboard.MIN_SEPARABLE_GAP`.
   OVERLAP       area of overlapping courtyards, in mm^2. An area rather than a boolean
                 on purpose: a yes/no penalty is a plateau, and an annealer cannot
                 descend a plateau. It needs to know that two parts are nearly clear.
@@ -36,6 +43,19 @@ are readable as exchange rates against wire length (see :class:`PlacementWeights
                 because drc.py reports the same pairs by the same measure -- an
                 optimiser that avoids a hazard its own checker never names is one the
                 user has no way to learn from.
+
+STRIPBOARD IS A DIFFERENT PROBLEM AND THE SAME OPTIMISER. Its copper arrives already
+joined along one axis, so placement is not merely most of the design there -- it is the
+part of the design a router cannot rescue. ``striproute.py`` says so in its own docstring
+("``placer.py`` is the tool for that half"), and reports every pair of pins it could not
+separate rather than routing around them. Those reports are placements, so this module
+prices them: the STRIP term above counts exactly the pairs ``striproute`` would refuse,
+by the same rule, from the same constant in ``stripboard.py``. Both terms switch
+themselves off on a pad-per-hole board, where they are meaningless and cost nothing.
+
+A candidate board is also JUDGED by the planner that suits it (see :func:`_build_cost`):
+handing a stripboard to ``autoroute.py`` ranks it by a build process nobody is going to
+follow, since on that board most connections are made by cutting rather than adding.
 
 DETERMINISM IS NOT NEGOTIABLE (PLAN.md Sec 6.3). The RNG is seeded from the options and
 nothing else. Same document, same seed, same result -- byte for byte, run after run,
@@ -76,12 +96,16 @@ from .model import (
     HEAT_SENSITIVE_ARCHETYPES,
     HEAT_SOURCE_ARCHETYPES,
     VALID_ROTATIONS,
+    Board,
     BodyArchetype,
     ComponentId,
     HoleCoord,
     PerfDocument,
     Rotation,
 )
+from .router import DEFAULT_ROUTER_COSTS
+from .stripboard import MIN_SEPARABLE_GAP, is_stripboard, strip_axis
+from .striproute import StripboardPlan, plan_stripboard
 
 # ---------------------------------------------------------------------------
 # Domain knowledge: which parts care about where they are
@@ -136,6 +160,15 @@ class PlacementWeights:
     edge: float = 0.6
     #: Per mm closer than HEAT_CLEARANCE_MM, per (source, sensitive) pair.
     heat: float = 4.0
+    #: Per pair of pins on one strip, in different nets, with no hole between them to
+    #: cut. Stripboard only; always zero on a pad-per-hole board.
+    #:
+    #: Priced between an overlap and a collision, and for the same reason: it is not a
+    #: preference. A board in this state cannot be wired as placed, whatever the planner
+    #: does afterwards -- ``striproute`` reports it and tells the user to move a part.
+    #: Below an overlap because a hole or two of slack fixes it, where an overlap means
+    #: two bodies in one space.
+    strip_conflict: float = 300.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -207,6 +240,8 @@ class PlacementCost:
     off_board_pins: int
     edge_mm: float
     heat_mm: float
+    #: Pairs of pins the board joins and no cut can separate. Always 0 off stripboard.
+    strip_conflicts: int = 0
 
     def total(self, weights: PlacementWeights) -> float:
         return (
@@ -218,6 +253,7 @@ class PlacementCost:
             + weights.off_board * self.off_board_pins
             + weights.edge * self.edge_mm
             + weights.heat * self.heat_mm
+            + weights.strip_conflict * self.strip_conflicts
         )
 
     @property
@@ -227,6 +263,13 @@ class PlacementCost:
         Overlaps, collisions and off-board pins are errors, not preferences; a placement
         with any of them is one the tool should not have proposed. Deliberately keyed on
         ``overlap_pairs`` rather than the area, so it agrees with DRC to the last ULP.
+
+        ``strip_conflicts`` is deliberately NOT here, and the omission is the same
+        distinction the whole project rests on: a stripboard whose pins cannot be
+        separated is still a legal DOCUMENT -- nothing overlaps, every pin is in a real
+        hole, and DRC says nothing about it. It is a board that cannot be finished, which
+        is priced dearly in :meth:`total` and is what ``striproute`` reports, but "legal"
+        here means "breaks no hard rule" and it would stop meaning that if this crept in.
         """
         return self.overlap_pairs == 0 and self.collisions == 0 and self.off_board_pins == 0
 
@@ -274,10 +317,12 @@ class PlacementPlan:
     movable: int
     locked: int
     label: str
-    #: The autorouter's total cost for this placement, when the winner was chosen by
-    #: routing. None when the internal cost decided (no netlist, or scoring turned off).
+    #: What this placement would cost to build, when the winner was chosen by planning
+    #: each candidate: the autorouter's total on a pad-per-hole board, and the cuts and
+    #: links ``striproute`` would need on a stripboard. None when the internal cost
+    #: decided (no netlist, or scoring turned off).
     route_cost: float | None = None
-    #: Connections the router could not make on this placement. The first thing a
+    #: Connections the planner could not make on this placement. The first thing a
     #: candidate is judged on, because a board that cannot be finished is not a board.
     route_unrouted: int | None = None
 
@@ -465,17 +510,131 @@ def _build_parts(doc: PerfDocument, lookup: FootprintLookup) -> list[_Part]:
 
 
 # ---------------------------------------------------------------------------
+# The board's own copper
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class _Strips:
+    """Everything about a stripboard the annealer needs, precomputed.
+
+    ``None`` everywhere below on a pad-per-hole board, and that is the switch: no strip
+    bookkeeping is kept, no strip term is scored, and the arithmetic of a placement run
+    is exactly what it was before this existed.
+    """
+
+    #: Whether the strips run along rows. See ``stripboard.strip_axis``.
+    horizontal: bool
+    #: How many strips there are, and how many holes long each one is. Used only to
+    #: ignore a pin that is off the board, which has no strip to be on.
+    count: int
+    length: int
+    #: Per part POSITION (not document index), the net id of each of its pins, parallel
+    #: to ``_Part.pin_numbers``. ``-1`` for a pin no net declares -- which is not the
+    #: same as a pin in a net of its own: an undeclared pin is a gap in the schematic,
+    #: and it is a party to no conflict, but it still stands in a hole and still blocks
+    #: the drill. ``striproute._plan_cuts`` treats it identically.
+    pin_nets: tuple[tuple[int, ...], ...]
+    #: Positions along each strip whose copper has already been cut away, by strip index.
+    #: Almost always empty -- placement comes before cutting -- but a board that has been
+    #: worked on is a board whose strips are already broken in places, and two pins either
+    #: side of an existing cut are not joined and need nothing done about them.
+    cuts: dict[int, frozenset[int]]
+
+    def strip_of(self, col: int, row: int) -> tuple[int, int] | None:
+        """(strip index, position along it) for a hole, or None if it is off the board."""
+        index, position = (row, col) if self.horizontal else (col, row)
+        if not (0 <= index < self.count and 0 <= position < self.length):
+            return None
+        return index, position
+
+
+def _build_strips(
+    doc: PerfDocument, parts: list[_Part], pin_nets: list[tuple[int, ...]]
+) -> _Strips | None:
+    """The strip facts for this document, or None if it has no strips."""
+    board = doc.board
+    if not is_stripboard(board):
+        return None
+    horizontal = strip_axis(board) == "horizontal"
+    cuts: dict[int, set[int]] = {}
+    for cut in doc.cuts:
+        index, position = (
+            (cut.at.row, cut.at.col) if horizontal else (cut.at.col, cut.at.row)
+        )
+        cuts.setdefault(index, set()).add(position)
+    return _Strips(
+        horizontal=horizontal,
+        count=board.rows if horizontal else board.cols,
+        length=board.cols if horizontal else board.rows,
+        pin_nets=tuple(pin_nets),
+        cuts={index: frozenset(positions) for index, positions in cuts.items()},
+    )
+
+
+def _conflicts_on_strip(entries: list[tuple[int, int]], cuts: frozenset[int]) -> int:
+    """Pairs on one strip that no cut can separate, from its ``(position, net)`` pins.
+
+    ``striproute._plan_cuts`` spelled out over integers instead of over a document, and
+    it has to stay that way -- the optimiser and the planner disagreeing about which
+    boards are wireable is worse than either of them being wrong alone:
+
+    * pins are walked ALONG the strip and only CONSECUTIVE pairs are considered, because
+      a cut between neighbours is the only cut that separates anything;
+    * a pin whose net nobody declared is a party to no pair, but it does occupy a hole,
+      so it is one less place the drill can go;
+    * a pair with a cut already between them is on two segments -- the board does not
+      join them and there is nothing to do;
+    * and a pair with fewer than ``MIN_SEPARABLE_GAP`` holes between them is the conflict
+      this counts. Two pins in ONE hole land here too, with a gap of zero, which is what
+      they physically are: joined, in different nets, and not separable by drilling.
+    """
+    conflicts = 0
+    previous_position = -1
+    previous_net = -1
+    occupied_between = 0
+    for position, net in sorted(entries):
+        if position in cuts:
+            continue  # A pin in a cut hole is joined to nothing; there is no pair here.
+        if net < 0:
+            if previous_net >= 0:
+                occupied_between += 1
+            continue
+        if previous_net >= 0 and net != previous_net:
+            # The room the drill actually has: how far apart the two pins are, less the
+            # holes something else is already standing in. Measured the same way
+            # ``cut_between`` measures it, so the same boards come out separable.
+            gap = position - previous_position - occupied_between
+            already_cut = bool(cuts) and any(
+                at in cuts for at in range(previous_position + 1, position)
+            )
+            if gap < MIN_SEPARABLE_GAP and not already_cut:
+                conflicts += 1
+        previous_position = position
+        previous_net = net
+        occupied_between = 0
+    return conflicts
+
+
+# ---------------------------------------------------------------------------
 # Mutable annealing state
 # ---------------------------------------------------------------------------
 
 
 @dataclass(slots=True)
 class _State:
-    """Anchors and rotations, plus the one thing that cannot be evaluated locally.
+    """Anchors and rotations, plus the two things that cannot be evaluated locally.
 
-    ``hole_count`` and ``collisions`` are maintained incrementally through
-    :meth:`set_placement`, because counting shared holes is a global question and
-    recomputing it every iteration is the one term that would dominate the run.
+    ``hole_count``/``collisions`` and ``strip_entries``/``strip_conflicts`` are
+    maintained incrementally through :meth:`set_placement`, because both are global
+    questions -- whether a hole is shared, and which pins end up NEXT to each other along
+    a strip -- and recomputing either one every iteration is a term that would dominate
+    the run. Everything else is local, which is what :meth:`_Scorer.local` relies on.
+
+    The strip half is the more easily got wrong of the two, because it is global in a
+    second way: moving one part out from between two others changes whether THOSE two
+    are neighbours. So the affected strips are rescored whole rather than adjusted,
+    which is cheap -- a strip holds a handful of pins, not a boardful.
     """
 
     parts: list[_Part]
@@ -484,6 +643,14 @@ class _State:
     rot: list[int]
     hole_count: dict[tuple[int, int], int] = field(default_factory=dict)
     collisions: int = 0
+    #: None on a pad-per-hole board, and then nothing below is touched at all.
+    strips: _Strips | None = None
+    #: Per strip index, one ``(position, net)`` entry per pin standing on it. A list
+    #: rather than a dict keyed on position because two pins CAN share a hole -- that is
+    #: a collision, priced elsewhere, and the bookkeeping still has to survive it.
+    strip_entries: dict[int, list[tuple[int, int]]] = field(default_factory=dict)
+    strip_conflict_of: dict[int, int] = field(default_factory=dict)
+    strip_conflicts: int = 0
 
     def snapshot(self) -> tuple[tuple[int, ...], tuple[int, ...], tuple[int, ...]]:
         return tuple(self.col), tuple(self.row), tuple(self.rot)
@@ -505,7 +672,7 @@ class _State:
         return tuple((c + dc, r + dr) for dc, dr in part.pin_offsets[self.rot[index]])
 
     def set_placement(self, index: int, col: int, row: int, rot: int) -> None:
-        """Move one part, keeping the shared-hole bookkeeping exact."""
+        """Move one part, keeping the shared-hole and strip bookkeeping exact."""
         for hole in self.pins(index):
             count = self.hole_count[hole]
             if count >= 2:
@@ -514,6 +681,8 @@ class _State:
                 del self.hole_count[hole]
             else:
                 self.hole_count[hole] = count - 1
+        if self.strips is not None:
+            self._leave_strips(index)
 
         self.col[index] = col
         self.row[index] = row
@@ -524,14 +693,62 @@ class _State:
             if count >= 1:
                 self.collisions += 1
             self.hole_count[hole] = count + 1
+        if self.strips is not None:
+            self._join_strips(index)
+
+    # -- strip bookkeeping, only ever reached on a stripboard ---------------
+
+    def _leave_strips(self, index: int) -> None:
+        """Take one part's pins off the strips they are standing on."""
+        strips = self.strips
+        assert strips is not None
+        touched: set[int] = set()
+        for (col, row), net in zip(self.pins(index), strips.pin_nets[index], strict=True):
+            on = strips.strip_of(col, row)
+            if on is None:
+                continue
+            self.strip_entries[on[0]].remove((on[1], net))
+            touched.add(on[0])
+        for strip in touched:
+            self._rescore_strip(strip)
+
+    def _join_strips(self, index: int) -> None:
+        """Put them back down where they now are."""
+        strips = self.strips
+        assert strips is not None
+        touched: set[int] = set()
+        for (col, row), net in zip(self.pins(index), strips.pin_nets[index], strict=True):
+            on = strips.strip_of(col, row)
+            if on is None:
+                continue
+            self.strip_entries.setdefault(on[0], []).append((on[1], net))
+            touched.add(on[0])
+        for strip in touched:
+            self._rescore_strip(strip)
+
+    def _rescore_strip(self, strip: int) -> None:
+        strips = self.strips
+        assert strips is not None
+        was = self.strip_conflict_of.get(strip, 0)
+        now = _conflicts_on_strip(
+            self.strip_entries[strip], strips.cuts.get(strip, frozenset())
+        )
+        if now:
+            self.strip_conflict_of[strip] = now
+        else:
+            self.strip_conflict_of.pop(strip, None)
+        self.strip_conflicts += now - was
 
 
-def _initial_state(doc: PerfDocument, parts: list[_Part]) -> _State:
+def _initial_state(
+    doc: PerfDocument, parts: list[_Part], strips: _Strips | None = None
+) -> _State:
     state = _State(
         parts=parts,
         col=[doc.components[p.doc_index].anchor.col for p in parts],
         row=[doc.components[p.doc_index].anchor.row for p in parts],
         rot=[_rotation_index(doc.components[p.doc_index].rotation) for p in parts],
+        strips=strips,
     )
     for position in range(len(parts)):
         for hole in state.pins(position):
@@ -539,6 +756,8 @@ def _initial_state(doc: PerfDocument, parts: list[_Part]) -> _State:
             if count >= 1:
                 state.collisions += 1
             state.hole_count[hole] = count + 1
+        if strips is not None:
+            state._join_strips(position)
     return state
 
 
@@ -561,8 +780,14 @@ class _NetPins:
 
 def _build_nets(
     doc: PerfDocument, parts: list[_Part]
-) -> tuple[list[_NetPins], list[tuple[int, ...]]]:
-    """Nets as pin references, plus the reverse index from part position to its nets."""
+) -> tuple[list[_NetPins], list[tuple[int, ...]], list[tuple[int, ...]]]:
+    """Nets as pin references, the reverse index from part position to its nets, and the
+    net of every individual pin.
+
+    The third one is what the strip terms need and the others cannot answer: they are
+    keyed on the net, and the question on a stripboard is about a HOLE -- what is
+    standing in it, and whether the thing next to it belongs to the same net.
+    """
     by_ref: dict[str, int] = {}
     pin_index: dict[tuple[int, str], int] = {}
     for position, part in enumerate(parts):
@@ -572,7 +797,8 @@ def _build_nets(
 
     nets: list[_NetPins] = []
     touched: list[list[int]] = [[] for _ in parts]
-    for net in doc.nets:
+    pin_nets: list[list[int]] = [[-1] * len(part.pin_numbers) for part in parts]
+    for declared, net in enumerate(doc.nets):
         resolved: list[tuple[int, int]] = []
         for node in net.nodes:
             at = by_ref.get(node.component_ref)
@@ -582,6 +808,14 @@ def _build_nets(
             if pin_at is None:
                 continue
             resolved.append((at, pin_at))
+        for position, number in resolved:
+            # Numbered by the DOCUMENT's net order rather than by the filtered list
+            # below, and the difference matters on exactly one pin: one whose net reaches
+            # nowhere else on the board. It constrains no placement, so it is dropped
+            # from ``nets`` -- but it is still a declared net standing in a hole, and
+            # ``striproute`` will still cut the strip between it and its neighbour. A
+            # conflict the planner is going to report has to be a conflict here.
+            pin_nets[position][number] = declared
         if len(resolved) < 2:
             # A net reaching one pin or none constrains nothing about placement.
             continue
@@ -591,7 +825,11 @@ def _build_nets(
             if net_id not in touched[position]:
                 touched[position].append(net_id)
 
-    return nets, [tuple(entry) for entry in touched]
+    return (
+        nets,
+        [tuple(entry) for entry in touched],
+        [tuple(entry) for entry in pin_nets],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -607,6 +845,9 @@ class _Scorer:
     weights: PlacementWeights
     nets: list[_NetPins]
     nets_of: list[tuple[int, ...]]
+    #: None on a pad-per-hole board. Only the axis is read here; the conflict count is
+    #: kept on the state, because it is not a local question.
+    strips: _Strips | None = None
 
     # -- individual terms, each returning millimetres (or mm^2) -------------
 
@@ -621,10 +862,18 @@ class _Scorer:
             cols.append(state.col[position] + dc)
             rows.append(state.row[position] + dr)
         hpwl = (max(cols) - min(cols) + max(rows) - min(rows)) * self.board_pitch
-        # The cheaper of "one rail along a row" and "one rail along a column": a net whose
-        # pins share a row needs one trace, and every extra distinct row is another stub
-        # or another wire. PLAN.md Sec 6.2.
-        spread = min(len(set(rows)), len(set(cols))) - 1
+        if self.strips is None:
+            # The cheaper of "one rail along a row" and "one rail along a column": a net
+            # whose pins share a row needs one trace, and every extra distinct row is
+            # another stub or another wire. PLAN.md Sec 6.2.
+            spread = min(len(set(rows)), len(set(cols))) - 1
+        else:
+            # On stripboard there is no choice of axis: the copper runs the way it runs,
+            # and pins sharing a strip are joined by the board with nothing soldered at
+            # all. Pins sharing the OTHER axis are joined by nothing, so counting them as
+            # aligned would price a free connection where a jumper has to go.
+            along = rows if self.strips.horizontal else cols
+            spread = len(set(along)) - 1
         return hpwl, spread * self.board_pitch
 
     def part_terms(self, state: _State, position: int) -> tuple[int, float]:
@@ -713,15 +962,17 @@ class _Scorer:
             off_board_pins=off_board,
             edge_mm=edge,
             heat_mm=heat,
+            strip_conflicts=state.strip_conflicts,
         )
 
     def local(self, state: _State, positions: tuple[int, ...]) -> float:
-        """Every cost term involving ``positions``, weighted, collisions excluded.
+        """Every LOCAL cost term involving ``positions``, weighted.
 
         Correctness rests on two things: every term not involving one of these parts is
         unaffected by moving them, and no term is counted twice when two parts move at
-        once (the ``a in moved`` guard below). Collisions are tracked on the state
-        instead, because they are the one term that is not local.
+        once (the ``a in moved`` guard below). Collisions and strip conflicts are tracked
+        on the state instead, because they are the terms that are not local --
+        :func:`_global_delta` is how a move's effect on them reaches the annealer.
         """
         moved = set(positions)
         weights = self.weights
@@ -753,6 +1004,27 @@ class _Scorer:
                 )
 
         return total
+
+
+def _global_counts(state: _State) -> tuple[int, int]:
+    """The two terms :meth:`_Scorer.local` cannot see, before a move is made."""
+    return state.collisions, state.strip_conflicts
+
+
+def _global_delta(
+    state: _State, before: tuple[int, int], weights: PlacementWeights
+) -> float:
+    """What a move did to them, weighted, to be added to the local delta.
+
+    Written as weight-times-difference rather than as a difference of weighted totals so
+    that a board with no strips adds an exact ``0.0`` and anneals bit for bit as it did
+    before this term existed. The distinction is not pedantic: the annealer compares a
+    delta against ``exp(-delta/T)`` and a rounding difference in the last place is enough
+    to flip an acceptance, which would move every golden placement for no reason at all.
+    """
+    return weights.collision * (state.collisions - before[0]) + weights.strip_conflict * (
+        state.strip_conflicts - before[1]
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -858,8 +1130,9 @@ def plan_placement(
     Leave it None and the function is exactly as deterministic as before.
     """
     parts = _build_parts(doc, lookup)
-    nets, nets_of = _build_nets(doc, parts)
-    state = _initial_state(doc, parts)
+    nets, nets_of, pin_nets = _build_nets(doc, parts)
+    strips = _build_strips(doc, parts, pin_nets)
+    state = _initial_state(doc, parts, strips)
 
     scorer = _Scorer(
         board_pitch=doc.board.pitch,
@@ -868,6 +1141,7 @@ def plan_placement(
         weights=options.weights,
         nets=nets,
         nets_of=nets_of,
+        strips=strips,
     )
     before = scorer.full(state)
     movable = [position for position, part in enumerate(state.parts) if part.movable]
@@ -895,7 +1169,7 @@ def plan_placement(
         # Every restart starts from the ORIGINAL placement, not from the last one's
         # result: restarts exist to sample independent basins, and chaining them would
         # just be one longer anneal with the temperature reset.
-        run_state = _initial_state(doc, parts)
+        run_state = _initial_state(doc, parts, strips)
         after, accepted = _anneal(
             run_state, scorer, movable, doc, options, iterations, options.seed + attempt,
             should_stop,
@@ -955,15 +1229,15 @@ def _anneal(
 
         positions, placements = proposal
         local_before = scorer.local(state, positions)
-        collisions_before = state.collisions
+        global_before = _global_counts(state)
         snapshot = tuple((state.col[p], state.row[p], state.rot[p]) for p in positions)
 
         for position, (col, row, rot) in zip(positions, placements, strict=True):
             state.set_placement(position, col, row, rot)
 
         local_after = scorer.local(state, positions)
-        delta = (local_after - local_before) + options.weights.collision * (
-            state.collisions - collisions_before
+        delta = (local_after - local_before) + _global_delta(
+            state, global_before, options.weights
         )
 
         if delta <= 0 or rng.random() < math.exp(-delta / temperature):
@@ -1059,12 +1333,12 @@ def _calibrate(
             continue
         positions, placements = proposal
         local_before = scorer.local(state, positions)
-        collisions_before = state.collisions
+        global_before = _global_counts(state)
         snapshot = tuple((state.col[p], state.row[p], state.rot[p]) for p in positions)
         for position, (col, row, rot) in zip(positions, placements, strict=True):
             state.set_placement(position, col, row, rot)
-        delta = (scorer.local(state, positions) - local_before) + options.weights.collision * (
-            state.collisions - collisions_before
+        delta = (scorer.local(state, positions) - local_before) + _global_delta(
+            state, global_before, options.weights
         )
         for position, (col, row, rot) in zip(positions, snapshot, strict=True):
             state.set_placement(position, col, row, rot)
@@ -1098,6 +1372,50 @@ def _changes(doc: PerfDocument, state: _State) -> tuple[PlacementChange, ...]:
     return tuple(changes)
 
 
+#: What one track cut costs, in the router's own money -- the same table the pad-per-hole
+#: side is priced from, so the two kinds of board are judged in one currency. A cut is a
+#: drill bit twisted by hand in a hole: real work, and an order of magnitude less of it
+#: than measuring, cutting, stripping and fitting a jumper (``top_jumper_fixed``, 40).
+STRIP_CUT_COST = 4.0
+
+
+def _strip_build_cost(plan: StripboardPlan, board: Board) -> float:
+    """What building this stripboard would cost: the cuts, plus the links.
+
+    The links are priced as what they are -- ``striproute`` lays every one of them as a
+    top jumper, so the router's own top-jumper cost is the honest number rather than a
+    second table invented here.
+    """
+    costs = DEFAULT_ROUTER_COSTS
+    total = STRIP_CUT_COST * len(plan.cuts)
+    for link in plan.links:
+        span = math.hypot(
+            link.to_hole.col - link.from_hole.col, link.to_hole.row - link.from_hole.row
+        )
+        total += costs.top_jumper_fixed + costs.top_jumper_per_mm * span * board.pitch
+    return total
+
+
+def _build_cost(doc: PerfDocument, lookup: FootprintLookup) -> tuple[int, float]:
+    """(connections this placement cannot finish, what finishing it would cost).
+
+    The two numbers a candidate is judged on, from the planner that suits the board.
+    Which planner that is, is not a detail: a stripboard is not routed by ``autoroute.py``
+    at all -- its copper is subtracted rather than added, and a wire laid on its solder
+    side shorts every strip it crosses -- so scoring one with the pad-per-hole router
+    ranks candidates by a build process nobody is going to follow, and would happily
+    prefer a board ``striproute`` then refuses to wire.
+    """
+    if is_stripboard(doc.board):
+        plan = plan_stripboard(doc, lookup)
+        # Every problem, not only the inseparable pairs: a pin the planner could not find
+        # and a strip it could not cut are both "this board cannot be finished as placed",
+        # which is what the first number means on the other branch too.
+        return len(plan.problems), _strip_build_cost(plan, doc.board)
+    route = plan_autoroute(doc, lookup)
+    return route.summary.links_unrouted, route.summary.total_cost
+
+
 def _pick_best(
     candidates: list[PlacementPlan],
     doc: PerfDocument,
@@ -1112,12 +1430,13 @@ def _pick_best(
     crossings are what turn a solder trace into an insulated wire.
 
     So rather than tune the proxy, ask the thing that knows. Each candidate is handed to
-    the autorouter and scored on what it would actually cost to build: connections that
-    could not be routed first (a placement that cannot be finished is worse than any that
-    can), then the router's own total. It is the same relationship as between the router
-    and DRC -- the cheap heuristic searches, the expensive truth decides.
+    the planner that suits the board (:func:`_build_cost`) and scored on what it would
+    actually cost to build: connections that could not be made first (a placement that
+    cannot be finished is worse than any that can), then the cost of making the rest. It
+    is the same relationship as between the router and DRC -- the cheap heuristic
+    searches, the expensive truth decides.
 
-    Costs one autoroute per restart, which is why ``route_scored_restarts`` bounds it
+    Costs one planning run per restart, which is why ``route_scored_restarts`` bounds it
     rather than the restart count doing so. Falls back to the internal cost when the
     board has no netlist to route, when scoring is turned off, or beyond that bound.
     """
@@ -1138,11 +1457,11 @@ def _pick_best(
     best: PlacementPlan | None = None
     best_key: tuple[int, int, float, float] | None = None
     for plan in shortlist:
-        route = plan_autoroute(plan.document, lookup)
+        unfinished, cost = _build_cost(plan.document, lookup)
         key = (
             0 if plan.after.is_legal else 1,
-            route.summary.links_unrouted,
-            route.summary.total_cost,
+            unfinished,
+            cost,
             plan.after.total(options.weights),  # Deterministic tie-break.
         )
         if best_key is None or key < best_key:
@@ -1165,16 +1484,16 @@ def _settle_winner(
     """Give the chosen board back every orientation it was turned for nothing.
 
     Kept honest by the same arbiter that chose the board in the first place: if the
-    router prefers the turned version, the turned version is what ships. So this can
+    planner prefers the turned version, the turned version is what ships. So this can
     remove gratuitous rotations and cannot cost a connection -- across eight fixtures and
     eight seeds it took the parts turned from 46 to 27 with the routed cost unchanged.
 
-    Costs one extra autoroute on a board that has a netlist, next to the four
+    Costs one extra planning run on a board that has a netlist, next to the four
     ``_pick_best`` already ran.
     """
-    state = _initial_state(plan.document, parts)
+    state = _initial_state(plan.document, parts, scorer.strips)
     _settle_rotations(state, scorer, movable, original, options)
-    if tuple(state.rot) == tuple(_initial_state(plan.document, parts).rot):
+    if tuple(state.rot) == tuple(_initial_state(plan.document, parts, scorer.strips).rot):
         return plan
 
     settled = _plan_from(
@@ -1187,15 +1506,12 @@ def _settle_winner(
         # guaranteed it did not go up.
         return settled
 
-    route = plan_autoroute(settled.document, lookup)
-    if (route.summary.links_unrouted, route.summary.total_cost) <= (
-        plan.route_unrouted,
-        plan.route_cost,
-    ):
+    unfinished, cost = _build_cost(settled.document, lookup)
+    if (unfinished, cost) <= (plan.route_unrouted, plan.route_cost):
         return replace(
             settled,
-            route_cost=route.summary.total_cost,
-            route_unrouted=route.summary.links_unrouted,
+            route_cost=cost,
+            route_unrouted=unfinished,
         )
     return plan
 

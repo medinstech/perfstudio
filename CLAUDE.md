@@ -332,7 +332,14 @@ wire laid across it there shorts every strip it crosses. Both halves commit as o
 command (`stripboard.apply`), because separately one Ctrl+Z leaves the board cut apart
 with nothing linking it, or linked with nothing cut, which is a short. Pairs it cannot
 separate (adjacent pins, no hole between them to drill) are reported, never routed around:
-the fix is to move a part, and the placer does not yet score strip alignment.
+the fix is to move a part, and `placer.py` is what moves parts. It prices exactly those
+pairs (`PlacementWeights.strip_conflict`) by exactly this rule — both modules read
+`stripboard.MIN_SEPARABLE_GAP`, the same one-fact-two-consumers shape as `heat-proximity`
+and the placer. Two more things follow from the board type there and were wrong before:
+the alignment term counts **only the strip axis** (a shared column joins nothing on a
+horizontal-strip board), and a candidate placement is judged by `plan_stripboard`, never
+by `autoroute.py` — ranking a stripboard with the pad-per-hole router scores it on a build
+nobody is going to follow.
 
 ### Layering
 

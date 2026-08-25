@@ -20,6 +20,42 @@ closed without a bump.
 
 ## [Unreleased]
 
+### Changed
+
+- **The placer knows what a stripboard is.** `striproute.py` has said so in its own
+  docstring since it was written — "`placer.py` is the tool for that half, and it does not
+  yet score strip alignment" — and the gap showed as the one failure a user could not act
+  on: `cannot-separate`, two pins of different nets in neighbouring holes of one strip,
+  with no hole between them to put a drill in. The planner reports it and says *move one
+  of the parts*; the placer is what moves parts, and it was arranging boards with no idea
+  the copper was already joined. Three things changed together, and none of them touches a
+  pad-per-hole board — every term is zero there and the arithmetic is bit-for-bit what it
+  was:
+  - **The pairs the planner would refuse are priced** (`PlacementWeights.strip_conflict`),
+    counted by exactly the rule `striproute` refuses them by, from one constant —
+    `stripboard.MIN_SEPARABLE_GAP` — that both modules now read. Same shape as
+    `heat-proximity` and the placer reading one clearance out of `model.py`: an optimiser
+    that packs a board its own planner then declines to wire is worse than no optimiser.
+    A pin nobody declared a net for is a party to no pair and still blocks the drill,
+    because that is what it physically does and what the planner already assumed.
+  - **Alignment counts the strip axis and not the other one.** The term takes the cheaper
+    of "one rail along a row" and "one rail along a column", which is right on a board
+    where a rail can be run either way and wrong on one where the copper runs the way it
+    runs: two pins sharing a column on a horizontal-strip board are joined by nothing, and
+    pricing that arrangement as free priced a connection the board does not make.
+  - **A candidate stripboard is judged by `plan_stripboard`, not by the autorouter.** The
+    winner among restarts is chosen by planning each one and asking what it would cost to
+    build — and a stripboard is not routed by `autoroute.py` at all, since its copper is
+    subtracted rather than added and a wire on its solder side shorts every strip it
+    crosses. It was being ranked by a build nobody was going to follow, which could and did
+    outrank the cost function above.
+  - The visible effect is the one a stripboard user would ask for first: a three-pin
+    inline part — a TO-92, a regulator, a 3-pin header — laid **along** the strips has
+    three nets in three neighbouring holes and cannot be wired at all. It now gets turned
+    a quarter so its pins land one per strip. Nothing else in the cost function can see
+    that: it is the same three pins over the same span, so HPWL, overlap and heat all
+    score the two orientations identically.
+
 ## [0.6.0] - 2026-08-14
 
 ### Added
