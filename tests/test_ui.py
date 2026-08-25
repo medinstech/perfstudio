@@ -2188,6 +2188,70 @@ def test_solder_and_wire_are_not_the_same_grey() -> None:
     assert difference > 0.5, "solder and tinned wire are still indistinguishable"
 
 
+def test_a_solder_run_is_the_size_of_a_solder_run() -> None:
+    """It has to bridge the gap to the next pad -- that is what a run IS -- and it has to
+    leave the pad it is soldered to visible, or the view stops answering "which pads is
+    this run on".
+
+    Both ends of that were wrong at 0.34 mm: under half a real run, and thinner than the
+    bead drawn at every pad, so the silhouette came out as balls on a stick.
+    """
+    from perfstudio.geometry import pad_edge_gap_mm
+    from perfstudio.ui.view3d import BEAD_RATIO_TRACE, TRACE_RADIUS_MM
+
+    board = _load_dense().board
+    width = 2 * TRACE_RADIUS_MM
+
+    assert width > pad_edge_gap_mm(board, "horizontal"), "too thin to bridge to the next pad"
+    assert width < board.pad_diameter, "a run this wide hides the pad it is soldered to"
+    assert width * BEAD_RATIO_TRACE <= board.pad_diameter, "the joint spills off its own pad"
+    assert BEAD_RATIO_TRACE < 1.5, "a joint is a swelling in the run, not a ball threaded on it"
+
+
+def test_one_stacking_step_clears_the_widest_pair_that_can_cross() -> None:
+    """A wire can cross a solder run, so the step has to clear those two together --
+    the widest pair there is. Derived rather than chosen; see STACK_STEP_MM."""
+    from perfstudio.ui.view3d import (
+        BARE_WIRE_RADIUS_MM,
+        INSULATED_RADIUS_MM,
+        STACK_STEP_MM,
+        TRACE_RADIUS_MM,
+    )
+
+    radii = (TRACE_RADIUS_MM, BARE_WIRE_RADIUS_MM, INSULATED_RADIUS_MM)
+    widest_pair = sum(sorted(radii)[-2:])
+
+    assert widest_pair < STACK_STEP_MM, "a step that leaves two crossing tubes overlapping"
+
+
+def test_the_lights_travel_with_the_camera() -> None:
+    """They were nailed to world positions, one above the board and one below -- and the
+    lower one was the deliberately dimmer FILL, so the solder side, the face you turn the
+    board over to inspect, was lit by the weaker lamp at an angle unrelated to where you
+    were looking from. Solder came out flat and dark, which is most of why a run of it
+    read as grey plumbing rather than metal.
+
+    A camera light keeps whichever face is towards you the lit one, however the board is
+    turned. Asserted on the renderer because the failure is invisible in every test that
+    does not actually look at a picture.
+    """
+    import vtk
+
+    from perfstudio.ui.view3d import build_renderer
+
+    ren, _stats = build_renderer(_load_dense(), footprint_lookup())
+    lights = list(ren.GetLights())
+
+    assert len(lights) == 2, "a key and a fill"
+    for light in lights:
+        assert light.GetLightType() == vtk.VTK_LIGHT_TYPE_CAMERA_LIGHT, (
+            "a world-positioned light leaves one face of the board in the dark"
+        )
+    assert max(light.GetIntensity() for light in lights) > min(
+        light.GetIntensity() for light in lights
+    ), "a key and a fill of equal strength is a headlight, and a headlight is flat"
+
+
 def test_one_stacking_step_actually_clears_a_tube_of_the_one_below() -> None:
     """Two wires crossing were drawn intersecting, which is not a thing wire does -- and
     the first fix for it did not fix it.

@@ -139,25 +139,51 @@ def pad_z(board: Board, side: BoardSide) -> float:
     return 0.05 if side == "top" else -board.thickness - 0.05
 
 
-#: Tube radius per conductor kind, in mm. A solder trace is a low bulging ridge along the
-#: pads; a wire is a round section standing off the board. At their real proportions
-#: rather than one being a fatter version of the other, because "which of these is solder"
-#: is the question this view exists to answer (PLAN.md Sec 8.3).
-TRACE_RADIUS_MM = 0.34
+#: Tube radius per conductor kind, in mm, at the sizes the real things are.
+#:
+#: A run of solder along a row of pads is a RIDGE about a millimetre across -- it has to
+#: be, or it would not bridge a 0.6 mm gap between pads -- so it is drawn at one. 24 AWG
+#: hookup wire is 1.1 mm over the insulation, and tinned copper for a spine is 0.6 mm.
+#:
+#: These were 0.34 / 0.42 / 0.30, which was under half a real run and left the tube
+#: THINNER THAN THE BEAD AT EACH PAD (below): the silhouette came out as balls on a stick,
+#: a molecular model rather than a length of copper soldered down. See BEAD_RATIO.
+TRACE_RADIUS_MM = 0.50
 BARE_WIRE_RADIUS_MM = 0.30
-INSULATED_RADIUS_MM = 0.42
+INSULATED_RADIUS_MM = 0.55
+
+#: How much a joint swells above the run it sits on.
+#:
+#: 1.9 was too much and it was measured against a tube half the size, so each pad grew a
+#: ball twice the width of the run and the run pinched to a waist between them. A solder
+#: joint is a FILLET: a bulge you can count, not a bead threaded on a wire. At 1.3 against
+#: a 0.50 mm run that is 1.3 mm across, which sits inside a 1.9 mm pad and still reads as
+#: a swelling from any angle.
+#:
+#: A wire's two ends get less again: there is a fillet where it is soldered, and nothing
+#: along its length, which is the distinction ``contacts_every_path_hole`` draws and the
+#: single most important thing this view says.
+BEAD_RATIO_TRACE = 1.30
+BEAD_RATIO_WIRE = 1.15
+
+#: Facets round a tube and round a bead. Ten and twelve are enough at the whole-board
+#: zoom the default camera gives and visibly polygonal as soon as anyone looks closely at
+#: a joint -- which is the thing they are most likely to want to look closely at.
+TUBE_SIDES = 20
+BEAD_RESOLUTION = 20
 
 #: How far one stacking level lifts a conductor clear of the one it crosses.
 #:
-#: DERIVED FROM THE RADII ABOVE, not chosen. Two insulated wires crossing need their
-#: centres 0.84 mm apart before the tubes stop intersecting, so anything less does not fix
-#: the thing stacking exists for. This was 0.08 mm, which is a tenth of what two 0.42 mm
-#: tubes need -- so crossing wires went on interpenetrating exactly as before, while the
-#: offset still accumulated: the level was a running index over every conductor on the
-#: board, which on the dense fixture put the last one 4.47 mm off a board 1.6 mm thick.
-#: It bought levitation and no clearance. ``occupancy.stacking_layers`` now lifts only
-#: what actually crosses something, which is what makes a step this size affordable.
-STACK_STEP_MM = 2 * INSULATED_RADIUS_MM + 0.1
+#: DERIVED FROM THE RADII ABOVE, not chosen: the worst pair that can actually cross is an
+#: insulated wire over a solder run, and their tubes stop overlapping when their centres
+#: are the sum of the two radii apart. Anything less does not fix the thing stacking
+#: exists for -- which is what the 0.08 mm this used to be did not, being a tenth of what
+#: two tubes needed, while the offset still accumulated: the level was a running index
+#: over every conductor on the board, putting the last one on the dense fixture 4.47 mm
+#: off a board 1.6 mm thick. It bought levitation and no clearance.
+#: ``occupancy.stacking_layers`` now lifts only what actually crosses something, which is
+#: what makes a step this size affordable.
+STACK_STEP_MM = INSULATED_RADIUS_MM + TRACE_RADIUS_MM + 0.15
 
 
 def conductor_radius(cond: Conductor) -> float:
@@ -1252,7 +1278,7 @@ def build_conductor(
     tube = vtk.vtkTubeFilter()
     tube.SetInputData(poly)
     tube.SetRadius(radius)
-    tube.SetNumberOfSides(10)
+    tube.SetNumberOfSides(TUBE_SIDES)
     tube.CappingOn()
 
     mapper = vtk.vtkPolyDataMapper()
@@ -1268,17 +1294,24 @@ def build_conductor(
     rgb = _hex_rgb(getattr(cond, "color", None), fallback)
     actor.GetProperty().SetColor(*rgb)
     if is_trace:
-        # Solder is dull and slightly rough. Making it shiny is what made it look like
-        # wire, which is the one thing it must not look like.
-        actor.GetProperty().SetSpecular(0.25)
-        actor.GetProperty().SetSpecularPower(8.0)
-        actor.GetProperty().SetDiffuse(0.85)
+        # Solder is metal, and it is ROUGH metal: a broad soft sheen rather than the tight
+        # glint tinned wire gives. Making it shiny is what once made it look like wire,
+        # which is the one thing it must not look like -- but leaving it at a matte 0.25
+        # with no ambient is what made it look like grey plumbing, which is not better.
+        # A little ambient so a fillet turned away from the lamp is still a fillet.
+        actor.GetProperty().SetSpecular(0.42)
+        actor.GetProperty().SetSpecularPower(16.0)
+        actor.GetProperty().SetDiffuse(0.8)
+        actor.GetProperty().SetAmbient(0.16)
     elif insulated:
         actor.GetProperty().SetSpecular(0.35)
         actor.GetProperty().SetSpecularPower(25.0)
+        actor.GetProperty().SetAmbient(0.14)
     else:
+        # Tinned copper: a tight bright glint, which is exactly what solder must not have.
         actor.GetProperty().SetSpecular(0.9)
         actor.GetProperty().SetSpecularPower(60.0)
+        actor.GetProperty().SetAmbient(0.12)
     actors = [actor]
 
     # The distinction that matters: a trace is soldered at EVERY pad it crosses, a wire
@@ -1292,11 +1325,12 @@ def build_conductor(
     bead_data = vtk.vtkPolyData()
     bead_data.SetPoints(bead_pts)
     sphere = vtk.vtkSphereSource()
-    # A trace bulges noticeably at every pad -- that chain of beads IS the silhouette of
-    # a solder run. A wire only has a fillet where it is soldered, at its two ends.
-    sphere.SetRadius(radius * (1.9 if is_trace else 1.3))
-    sphere.SetThetaResolution(12)
-    sphere.SetPhiResolution(12)
+    # A run swells at every pad it is soldered to, and a wire has a fillet at each of its
+    # two ends: the whole distinction `contacts_every_path_hole` draws, drawn. A SWELLING,
+    # though -- see BEAD_RATIO_TRACE for why it used to be a ball on a stick.
+    sphere.SetRadius(radius * (BEAD_RATIO_TRACE if is_trace else BEAD_RATIO_WIRE))
+    sphere.SetThetaResolution(BEAD_RESOLUTION)
+    sphere.SetPhiResolution(BEAD_RESOLUTION)
     bead_glyph = vtk.vtkGlyph3DMapper()
     bead_glyph.SetInputData(bead_data)
     bead_glyph.SetSourceConnection(sphere.GetOutputPort())
@@ -1305,8 +1339,12 @@ def build_conductor(
     beads = vtk.vtkActor()
     beads.SetMapper(bead_glyph)
     beads.GetProperty().SetColor(*SOLDER_RGB)
-    beads.GetProperty().SetSpecular(0.3)
-    beads.GetProperty().SetSpecularPower(10.0)
+    # The same material as the run it swells out of -- a joint and the copper leading into
+    # it are one piece of solder, and two finishes would draw a seam that is not there.
+    beads.GetProperty().SetSpecular(0.42)
+    beads.GetProperty().SetSpecularPower(16.0)
+    beads.GetProperty().SetDiffuse(0.8)
+    beads.GetProperty().SetAmbient(0.16)
     actors.append(beads)
     return actors
 
@@ -1569,22 +1607,45 @@ def build_renderer(
     stats = populate_renderer(ren, doc, lookup, exploded_mm=exploded_mm, highlight=highlight)
     apply_default_camera(ren, flipped)
 
-    # TWO lights, above and below. With only the upper one, flipping to the solder side
-    # showed an almost black board: the substrate's underside faced away from the only light
-    # in the scene, so the view whose entire purpose is checking the side you actually solder
-    # was the one you could not see. The lower light is dimmer -- a board's solder side is
-    # genuinely less brightly lit than its component side, and matching that keeps the two
-    # sides visually distinguishable instead of identically flat.
+    apply_default_lighting(ren)
+    return ren, stats
+
+
+def apply_default_lighting(ren: vtk.vtkRenderer) -> None:
+    """Two lights, and they travel WITH THE CAMERA.
+
+    They used to be nailed to world positions, one above the board and one below. That
+    was already the second attempt -- with only the upper one, flipping to the solder side
+    showed an almost black board -- and it was still wrong in the same way, just less
+    obviously: the lower light was the deliberately dimmer FILL, so the face you turn the
+    board over to inspect was the one lit by the weaker lamp, at a fixed angle that no
+    longer had anything to do with where you were looking from. Solder came out a flat
+    dark grey with no highlight on it, which is why a run of it read as grey plumbing
+    rather than as metal, and why turning the board could take a conductor into shadow for
+    no reason a viewer could see.
+
+    A camera light is positioned relative to the viewpoint, so whichever face is towards
+    you is the lit one, at a constant angle, however the board is turned -- which is also
+    what somebody bent over a board with a lamp on the bench actually has. The key is
+    offset up and to the left rather than dead-on: a headlight flattens everything it
+    lights, and the shape of a solder fillet is the thing this view is for.
+    """
+    for existing in list(ren.GetLights()):
+        ren.RemoveLight(existing)
+
     key = vtk.vtkLight()
-    key.SetPosition(80, 60, 120)
-    key.SetIntensity(0.9)
+    key.SetLightTypeToCameraLight()
+    key.SetPosition(-0.45, 0.55, 1.0)  # relative to the camera, in its own frame
+    key.SetFocalPoint(0.0, 0.0, 0.0)
+    key.SetIntensity(0.95)
     ren.AddLight(key)
 
     fill = vtk.vtkLight()
-    fill.SetPosition(-60, -40, -140)
-    fill.SetIntensity(0.7)
+    fill.SetLightTypeToCameraLight()
+    fill.SetPosition(0.6, -0.4, 0.7)
+    fill.SetFocalPoint(0.0, 0.0, 0.0)
+    fill.SetIntensity(0.45)
     ren.AddLight(fill)
-    return ren, stats
 
 
 def trackball_style() -> vtk.vtkInteractorStyleTrackballCamera:

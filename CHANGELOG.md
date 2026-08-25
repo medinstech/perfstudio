@@ -79,6 +79,29 @@ closed without a bump.
 
 ### Fixed
 
+- **Solder in the 3D view stops looking like grey plumbing.** Three things, and the
+  lighting was the biggest of them.
+  - **The lights travel with the camera.** They were nailed to world positions, one above
+    the board and one below — and the lower one was the deliberately dimmer *fill*, so the
+    solder side, the face you turn a board over to inspect, was lit by the weaker lamp at
+    an angle unrelated to where you were looking from. A camera light keeps whichever face
+    is towards you the lit one, however the board is turned, which is also what somebody
+    with a lamp on the bench has. The key is offset up and left rather than dead-on,
+    because a headlight flattens the shape of a fillet, which is the thing this view is for.
+  - **A run is the size of a run.** The tube was 0.34 mm radius — under half a real solder
+    run, and *thinner than the bead drawn at every pad*, which is why the silhouette came
+    out as balls threaded on a stick. It is 0.50 now, wide enough to bridge the 0.64 mm
+    gap to the next pad and still narrow enough to leave the pad visible; the joint swells
+    to 1.3× rather than 1.9×, so a pad reads as a fillet instead of a ball. Insulated wire
+    is 0.55, which is 24 AWG over the sleeve. Tubes and beads get 20 facets rather than 10
+    and 12, since a joint is what a person zooms in on.
+  - **Solder is metal.** A broad soft sheen — rough metal — where it was almost matte and
+    unlit from behind, and a little ambient so a fillet turned away from the lamp is still
+    a fillet. Still nothing like the tight glint on tinned wire, which is the distinction
+    PLAN.md §8.3 requires and a test enforces.
+  - `STACK_STEP_MM` follows the radii, so it still clears the widest pair that can cross —
+    an insulated wire over a solder run.
+
 - **Conductors stop levitating, and crossings actually clear each other.** Two crossing
   wires used to be drawn intersecting, and the fix for that was an offset per conductor —
   a running index over `doc.conductors`, 0.08 mm a step. It bought neither thing it was
