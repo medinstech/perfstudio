@@ -1,0 +1,12 @@
+type,net,from,to,path_mm,cut_mm,strip_mm,awg,colour,note
+insulated wire,GND,X11,T11,10.2,29.4,5.0,24,black,
+bare wire,GND,Y3,X11,20.5,29.7,0.0,24,black,
+insulated wire,GND,D11,B3,20.9,40.1,5.0,24,black,
+bare wire,VCC,I3,E3,10.2,19.4,0.0,24,red,
+bare wire,VCC,W11,I3,41.0,50.2,0.0,24,red,
+bare wire,THRESH,E5,B4,8.0,17.2,0.0,24,blue,
+insulated wire,THRESH,T3,E5,38.4,57.6,5.0,24,blue,
+insulated wire,DISCH,M3,E4,20.5,39.7,5.0,24,white,
+bare wire,CTRL,B11,E6,14.8,24.0,0.0,24,orange,
+insulated wire,OUT,I11,B5,23.4,42.6,5.0,24,yellow,
+trace spine,GND,,,50.8,50.8,0.0,,tinned copper,"0.6 mm, laid along 21 pads"

@@ -1,0 +1,9 @@
+quantity,value,footprint,references
+1,NE555,DIP-8,U1
+1,0.01uF,"Electrolytic capacitor, 5 mm dia, 2-hole pitch",C2
+1,10uF,"Electrolytic capacitor, 5 mm dia, 2-hole pitch",C1
+1,Conn_01x02,"Pin header, 1x4",J1
+1,100k,"Resistor (axial, 4-hole span)",R2
+1,10k,"Resistor (axial, 4-hole span)",R1
+1,330,"Resistor (axial, 4-hole span)",R3
+1,LED,"Resistor (axial, 4-hole span)",LED1

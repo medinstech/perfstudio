@@ -20,6 +20,27 @@ closed without a bump.
 
 ## [Unreleased]
 
+### Added
+
+- **The build guide is compared against a known-good one** (`tests/test_guide_golden.py`,
+  `tests/guide_golden/`). All four exports of the routed NE555 fixture — JSON, the
+  self-contained HTML, the cut list and the BOM — are stored whole and compared whole.
+  `test_guide.py` was thorough about the guide *model* and asked the exporters targeted
+  questions, and targeted questions can only catch what somebody thought to name: a phase
+  that swapped places, a checkpoint that stopped being generated, a sentence that lost its
+  polarity warning, a BOM row that vanished when a footprint was renamed. The guide is what
+  this application is *for* — the thing a person prints and follows with an iron in their
+  hand — and nothing compared one against a known-good one.
+  - Not part of the differential proof: the TypeScript engine never had a guide exporter,
+    so there is nothing to be differential against. These are our own output, blessed
+    deliberately, which is why they sit under `tests/` beside `render_signatures.json`
+    rather than in `tools/diffcheck/golden/`.
+  - Floats are compared at **12 significant digits**, not bit for bit, for the reason
+    `test_footprints.py` records: the JSON emits full-precision lengths through
+    `math.hypot`, and macOS arm64's libm disagrees with x86-64's in the last ULP. Twelve
+    digits absorbs ten of those and still fails on a tenth of a millimetre. The other three
+    formats print to one decimal place and are compared as text.
+
 ### Changed
 
 - **The placer knows what a stripboard is.** `striproute.py` has said so in its own

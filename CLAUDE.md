@@ -63,6 +63,19 @@ Without a GL context VTK does not raise, it aborts the process, so an unmarked t
 not fail — it ends the run partway through with no summary. `test_every_vtk_touching_test_is_marked`
 finds them by reading the sources, because marking them by hand missed two.
 
+**What the guide SAYS is checked by `tests/test_guide_golden.py`**, which stores all four
+exports of the routed NE555 fixture whole in `tests/guide_golden/` and compares them whole.
+The targeted assertions in `test_guide.py` can only catch what somebody thought to name;
+a phase that swapped places or a checkpoint that stopped being generated is exactly what
+nobody names. Re-bless with `PERFSTUDIO_BLESS_GUIDE=1` **after reading the diff** — a
+readable diff is the point of the test. Not part of the differential proof below: the
+TypeScript side never had a guide exporter, so these are our own output, like
+`render_signatures.json`, which is why they live under `tests/` and not in
+`tools/diffcheck/golden/`. Floats are compared at 12 significant digits because the JSON
+emits full-precision lengths through `math.hypot` and macOS arm64's libm disagrees in the
+last ULP (`test_footprints.py` learned this the hard way); the other three formats print
+to one decimal and are compared as text.
+
 **What the render LOOKS like is checked by `tests/test_render_golden.py`**, not by the
 headless PNGs, which nobody opens. It compares the mean colour of each cell of a 6 × 6
 grid against `tests/render_signatures.json` — stable across renderers to a fraction of a

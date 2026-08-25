@@ -1,0 +1,2182 @@
+{
+  "generator": "PerfStudio {VERSION}",
+  "document": "diffcheck",
+  "board": {
+    "cols": 32,
+    "rows": 22,
+    "pitch_mm": 2.54,
+    "material": "FR4",
+    "thickness_mm": 1.6
+  },
+  "iron": {
+    "temperature_c": 350,
+    "max_dwell_s": 3.0,
+    "note": "FR-4 tolerates heat well; the limit here is the component, not the board."
+  },
+  "tools": [
+    "Soldering iron with a fine tip, set to 350 °C",
+    "60/40 or lead-free solder, 0.7–1.0 mm",
+    "Flux — a pen or a small pot. Solder traces are not reliably makeable without it",
+    "Side cutters and small pliers",
+    "A multimeter with a continuity buzzer (every checkpoint below uses it)",
+    "Hookup wire, AWG 24 in black, blue, orange, red, white, yellow — about 0.35 m in total",
+    "Wire strippers",
+    "Tinned copper wire for the trace spines, 0.6 mm — about 51 mm (component lead offcuts do the job just as well)"
+  ],
+  "warnings": [],
+  "bom": [
+    {
+      "ref_designators": [
+        "U1"
+      ],
+      "value": "NE555",
+      "footprint_name": "DIP-8",
+      "quantity": 1
+    },
+    {
+      "ref_designators": [
+        "C2"
+      ],
+      "value": "0.01uF",
+      "footprint_name": "Electrolytic capacitor, 5 mm dia, 2-hole pitch",
+      "quantity": 1
+    },
+    {
+      "ref_designators": [
+        "C1"
+      ],
+      "value": "10uF",
+      "footprint_name": "Electrolytic capacitor, 5 mm dia, 2-hole pitch",
+      "quantity": 1
+    },
+    {
+      "ref_designators": [
+        "J1"
+      ],
+      "value": "Conn_01x02",
+      "footprint_name": "Pin header, 1x4",
+      "quantity": 1
+    },
+    {
+      "ref_designators": [
+        "R2"
+      ],
+      "value": "100k",
+      "footprint_name": "Resistor (axial, 4-hole span)",
+      "quantity": 1
+    },
+    {
+      "ref_designators": [
+        "R1"
+      ],
+      "value": "10k",
+      "footprint_name": "Resistor (axial, 4-hole span)",
+      "quantity": 1
+    },
+    {
+      "ref_designators": [
+        "R3"
+      ],
+      "value": "330",
+      "footprint_name": "Resistor (axial, 4-hole span)",
+      "quantity": 1
+    },
+    {
+      "ref_designators": [
+        "LED1"
+      ],
+      "value": "LED",
+      "footprint_name": "Resistor (axial, 4-hole span)",
+      "quantity": 1
+    }
+  ],
+  "cut_list": [
+    {
+      "conductor_id": "cond-1",
+      "net_name": "GND",
+      "from_hole": {
+        "col": 23,
+        "row": 10,
+        "ref": "X11"
+      },
+      "to_hole": {
+        "col": 19,
+        "row": 10,
+        "ref": "T11"
+      },
+      "path_mm": 10.160000000000004,
+      "cut_mm": 29.360000000000003,
+      "strip_mm": 5.0,
+      "awg": 24,
+      "color": "black",
+      "insulated": true
+    },
+    {
+      "conductor_id": "cond-2",
+      "net_name": "GND",
+      "from_hole": {
+        "col": 24,
+        "row": 2,
+        "ref": "Y3"
+      },
+      "to_hole": {
+        "col": 23,
+        "row": 10,
+        "ref": "X11"
+      },
+      "path_mm": 20.478134680678316,
+      "cut_mm": 29.678134680678316,
+      "strip_mm": 0.0,
+      "awg": 24,
+      "color": "black",
+      "insulated": false
+    },
+    {
+      "conductor_id": "cond-3",
+      "net_name": "GND",
+      "from_hole": {
+        "col": 3,
+        "row": 10,
+        "ref": "D11"
+      },
+      "to_hole": {
+        "col": 1,
+        "row": 2,
+        "ref": "B3"
+      },
+      "path_mm": 20.945376578137715,
+      "cut_mm": 40.145376578137714,
+      "strip_mm": 5.0,
+      "awg": 24,
+      "color": "black",
+      "insulated": true
+    },
+    {
+      "conductor_id": "cond-5",
+      "net_name": "VCC",
+      "from_hole": {
+        "col": 8,
+        "row": 2,
+        "ref": "I3"
+      },
+      "to_hole": {
+        "col": 4,
+        "row": 2,
+        "ref": "E3"
+      },
+      "path_mm": 10.16,
+      "cut_mm": 19.36,
+      "strip_mm": 0.0,
+      "awg": 24,
+      "color": "red",
+      "insulated": false
+    },
+    {
+      "conductor_id": "cond-6",
+      "net_name": "VCC",
+      "from_hole": {
+        "col": 22,
+        "row": 10,
+        "ref": "W11"
+      },
+      "to_hole": {
+        "col": 8,
+        "row": 2,
+        "ref": "I3"
+      },
+      "path_mm": 40.95626936135663,
+      "cut_mm": 50.156269361356635,
+      "strip_mm": 0.0,
+      "awg": 24,
+      "color": "red",
+      "insulated": false
+    },
+    {
+      "conductor_id": "cond-8",
+      "net_name": "THRESH",
+      "from_hole": {
+        "col": 4,
+        "row": 4,
+        "ref": "E5"
+      },
+      "to_hole": {
+        "col": 1,
+        "row": 3,
+        "ref": "B4"
+      },
+      "path_mm": 8.032185256827683,
+      "cut_mm": 17.232185256827684,
+      "strip_mm": 0.0,
+      "awg": 24,
+      "color": "blue",
+      "insulated": false
+    },
+    {
+      "conductor_id": "cond-9",
+      "net_name": "THRESH",
+      "from_hole": {
+        "col": 19,
+        "row": 2,
+        "ref": "T3"
+      },
+      "to_hole": {
+        "col": 4,
+        "row": 4,
+        "ref": "E5"
+      },
+      "path_mm": 38.43717471407075,
+      "cut_mm": 57.63717471407075,
+      "strip_mm": 5.0,
+      "awg": 24,
+      "color": "blue",
+      "insulated": true
+    },
+    {
+      "conductor_id": "cond-11",
+      "net_name": "DISCH",
+      "from_hole": {
+        "col": 12,
+        "row": 2,
+        "ref": "M3"
+      },
+      "to_hole": {
+        "col": 4,
+        "row": 3,
+        "ref": "E4"
+      },
+      "path_mm": 20.478134680678316,
+      "cut_mm": 39.67813468067831,
+      "strip_mm": 5.0,
+      "awg": 24,
+      "color": "white",
+      "insulated": true
+    },
+    {
+      "conductor_id": "cond-12",
+      "net_name": "CTRL",
+      "from_hole": {
+        "col": 1,
+        "row": 10,
+        "ref": "B11"
+      },
+      "to_hole": {
+        "col": 4,
+        "row": 5,
+        "ref": "E6"
+      },
+      "path_mm": 14.810617812907063,
+      "cut_mm": 24.010617812907064,
+      "strip_mm": 0.0,
+      "awg": 24,
+      "color": "orange",
+      "insulated": false
+    },
+    {
+      "conductor_id": "cond-14",
+      "net_name": "OUT",
+      "from_hole": {
+        "col": 8,
+        "row": 10,
+        "ref": "I11"
+      },
+      "to_hole": {
+        "col": 1,
+        "row": 4,
+        "ref": "B5"
+      },
+      "path_mm": 23.417642921523935,
+      "cut_mm": 42.61764292152394,
+      "strip_mm": 5.0,
+      "awg": 24,
+      "color": "yellow",
+      "insulated": true
+    }
+  ],
+  "spine_list": [
+    {
+      "conductor_id": "cond-4",
+      "net_name": "GND",
+      "pads": 21,
+      "length_mm": 50.79999999999999,
+      "gauge_mm": 0.6,
+      "material": "tinned copper"
+    }
+  ],
+  "track_cuts": [],
+  "phases": [
+    {
+      "number": 0,
+      "title": "Preparation",
+      "summary": "Cut the board, mark hole A1, and get the iron and the parts ready.",
+      "steps": [],
+      "checkpoints": []
+    },
+    {
+      "number": 1,
+      "title": "Lowest profile",
+      "summary": "Anything that lies flat: axial resistors and diodes. These go first because a board with a tall part on it will not sit flat on the bench, and a part that cannot be pressed down solders at an angle.",
+      "steps": [
+        {
+          "kind": "part",
+          "component_id": "cmp-7",
+          "ref": "LED1",
+          "value": "LED",
+          "footprint_name": "Resistor (axial, 4-hole span)",
+          "archetype": "axial-cylinder",
+          "anchor": {
+            "col": 15,
+            "row": 10,
+            "ref": "P11"
+          },
+          "pin_holes": [
+            [
+              "1",
+              {
+                "col": 15,
+                "row": 10,
+                "ref": "P11"
+              }
+            ],
+            [
+              "2",
+              {
+                "col": 19,
+                "row": 10,
+                "ref": "T11"
+              }
+            ]
+          ],
+          "span": "P11 → T11, 4 holes apart",
+          "bend_template_mm": 10.16,
+          "rotation": 0,
+          "mirrored": false,
+          "height_mm": 2.3,
+          "polarity": null,
+          "notes": []
+        },
+        {
+          "kind": "part",
+          "component_id": "cmp-2",
+          "ref": "R1",
+          "value": "10k",
+          "footprint_name": "Resistor (axial, 4-hole span)",
+          "archetype": "axial-cylinder",
+          "anchor": {
+            "col": 8,
+            "row": 2,
+            "ref": "I3"
+          },
+          "pin_holes": [
+            [
+              "1",
+              {
+                "col": 8,
+                "row": 2,
+                "ref": "I3"
+              }
+            ],
+            [
+              "2",
+              {
+                "col": 12,
+                "row": 2,
+                "ref": "M3"
+              }
+            ]
+          ],
+          "span": "I3 → M3, 4 holes apart",
+          "bend_template_mm": 10.16,
+          "rotation": 0,
+          "mirrored": false,
+          "height_mm": 2.3,
+          "polarity": null,
+          "notes": []
+        },
+        {
+          "kind": "part",
+          "component_id": "cmp-3",
+          "ref": "R2",
+          "value": "100k",
+          "footprint_name": "Resistor (axial, 4-hole span)",
+          "archetype": "axial-cylinder",
+          "anchor": {
+            "col": 15,
+            "row": 2,
+            "ref": "P3"
+          },
+          "pin_holes": [
+            [
+              "1",
+              {
+                "col": 15,
+                "row": 2,
+                "ref": "P3"
+              }
+            ],
+            [
+              "2",
+              {
+                "col": 19,
+                "row": 2,
+                "ref": "T3"
+              }
+            ]
+          ],
+          "span": "P3 → T3, 4 holes apart",
+          "bend_template_mm": 10.16,
+          "rotation": 0,
+          "mirrored": false,
+          "height_mm": 2.3,
+          "polarity": null,
+          "notes": []
+        },
+        {
+          "kind": "part",
+          "component_id": "cmp-6",
+          "ref": "R3",
+          "value": "330",
+          "footprint_name": "Resistor (axial, 4-hole span)",
+          "archetype": "axial-cylinder",
+          "anchor": {
+            "col": 8,
+            "row": 10,
+            "ref": "I11"
+          },
+          "pin_holes": [
+            [
+              "1",
+              {
+                "col": 8,
+                "row": 10,
+                "ref": "I11"
+              }
+            ],
+            [
+              "2",
+              {
+                "col": 12,
+                "row": 10,
+                "ref": "M11"
+              }
+            ]
+          ],
+          "span": "I11 → M11, 4 holes apart",
+          "bend_template_mm": 10.16,
+          "rotation": 0,
+          "mirrored": false,
+          "height_mm": 2.3,
+          "polarity": null,
+          "notes": []
+        }
+      ],
+      "checkpoints": []
+    },
+    {
+      "number": 2,
+      "title": "IC sockets",
+      "summary": "IC sockets. The ICs themselves go in at the very end -- heat and static are the two things that kill them, and both are avoidable by fitting them last.",
+      "steps": [
+        {
+          "kind": "part",
+          "component_id": "cmp-1",
+          "ref": "U1",
+          "value": "NE555",
+          "footprint_name": "DIP-8",
+          "archetype": "dip",
+          "anchor": {
+            "col": 1,
+            "row": 2,
+            "ref": "B3"
+          },
+          "pin_holes": [
+            [
+              "1",
+              {
+                "col": 1,
+                "row": 2,
+                "ref": "B3"
+              }
+            ],
+            [
+              "2",
+              {
+                "col": 1,
+                "row": 3,
+                "ref": "B4"
+              }
+            ],
+            [
+              "3",
+              {
+                "col": 1,
+                "row": 4,
+                "ref": "B5"
+              }
+            ],
+            [
+              "4",
+              {
+                "col": 1,
+                "row": 5,
+                "ref": "B6"
+              }
+            ],
+            [
+              "5",
+              {
+                "col": 4,
+                "row": 5,
+                "ref": "E6"
+              }
+            ],
+            [
+              "6",
+              {
+                "col": 4,
+                "row": 4,
+                "ref": "E5"
+              }
+            ],
+            [
+              "7",
+              {
+                "col": 4,
+                "row": 3,
+                "ref": "E4"
+              }
+            ],
+            [
+              "8",
+              {
+                "col": 4,
+                "row": 2,
+                "ref": "E3"
+              }
+            ]
+          ],
+          "span": "B3–E6, 8 pins with pin 1 at B3",
+          "bend_template_mm": null,
+          "rotation": 0,
+          "mirrored": false,
+          "height_mm": 5,
+          "polarity": "Pin 1 (the notched end, marked with a dot) in B3",
+          "notes": [
+            "Fit a socket here if you have one. If you are soldering the IC directly, leave it until phase 8 -- it is the last thing that should meet an iron."
+          ]
+        }
+      ],
+      "checkpoints": []
+    },
+    {
+      "number": 3,
+      "title": "Small bodies",
+      "summary": "Small bodies: ceramic and film capacitors, TO-92 transistors, LEDs.",
+      "steps": [],
+      "checkpoints": []
+    },
+    {
+      "number": 4,
+      "title": "Medium bodies",
+      "summary": "Medium bodies: electrolytics, TO-220 packages, crystals.",
+      "steps": [
+        {
+          "kind": "part",
+          "component_id": "cmp-4",
+          "ref": "C1",
+          "value": "10uF",
+          "footprint_name": "Electrolytic capacitor, 5 mm dia, 2-hole pitch",
+          "archetype": "radial-electrolytic",
+          "anchor": {
+            "col": 22,
+            "row": 2,
+            "ref": "W3"
+          },
+          "pin_holes": [
+            [
+              "1",
+              {
+                "col": 22,
+                "row": 2,
+                "ref": "W3"
+              }
+            ],
+            [
+              "2",
+              {
+                "col": 24,
+                "row": 2,
+                "ref": "Y3"
+              }
+            ]
+          ],
+          "span": "W3 → Y3, 2 holes apart",
+          "bend_template_mm": 5.08,
+          "rotation": 0,
+          "mirrored": false,
+          "height_mm": 7,
+          "polarity": "Positive (long) lead in W3; Negative lead — the side with the printed stripe in Y3",
+          "notes": []
+        },
+        {
+          "kind": "part",
+          "component_id": "cmp-5",
+          "ref": "C2",
+          "value": "0.01uF",
+          "footprint_name": "Electrolytic capacitor, 5 mm dia, 2-hole pitch",
+          "archetype": "radial-electrolytic",
+          "anchor": {
+            "col": 1,
+            "row": 10,
+            "ref": "B11"
+          },
+          "pin_holes": [
+            [
+              "1",
+              {
+                "col": 1,
+                "row": 10,
+                "ref": "B11"
+              }
+            ],
+            [
+              "2",
+              {
+                "col": 3,
+                "row": 10,
+                "ref": "D11"
+              }
+            ]
+          ],
+          "span": "B11 → D11, 2 holes apart",
+          "bend_template_mm": 5.08,
+          "rotation": 0,
+          "mirrored": false,
+          "height_mm": 7,
+          "polarity": "Positive (long) lead in B11; Negative lead — the side with the printed stripe in D11",
+          "notes": []
+        }
+      ],
+      "checkpoints": []
+    },
+    {
+      "number": 5,
+      "title": "Tall and mechanical",
+      "summary": "Tall and mechanical: connectors, terminals, potentiometers, switches, relays.",
+      "steps": [
+        {
+          "kind": "part",
+          "component_id": "cmp-8",
+          "ref": "J1",
+          "value": "Conn_01x02",
+          "footprint_name": "Pin header, 1x4",
+          "archetype": "pin-header",
+          "anchor": {
+            "col": 22,
+            "row": 10,
+            "ref": "W11"
+          },
+          "pin_holes": [
+            [
+              "1",
+              {
+                "col": 22,
+                "row": 10,
+                "ref": "W11"
+              }
+            ],
+            [
+              "2",
+              {
+                "col": 23,
+                "row": 10,
+                "ref": "X11"
+              }
+            ],
+            [
+              "3",
+              {
+                "col": 24,
+                "row": 10,
+                "ref": "Y11"
+              }
+            ],
+            [
+              "4",
+              {
+                "col": 25,
+                "row": 10,
+                "ref": "Z11"
+              }
+            ]
+          ],
+          "span": "W11–Z11, 4 pins with pin 1 at W11",
+          "bend_template_mm": null,
+          "rotation": 0,
+          "mirrored": false,
+          "height_mm": 8.5,
+          "polarity": null,
+          "notes": []
+        }
+      ],
+      "checkpoints": []
+    },
+    {
+      "number": 6,
+      "title": "Solder side: traces and bare wire",
+      "summary": "Turn the board over. Solder traces and bare wire, worked one net at a time so each is finished and checked before the next crosses it.",
+      "steps": [
+        {
+          "kind": "conductor",
+          "conductor_id": "cond-2",
+          "conductor_kind": "bare-wire",
+          "net_name": "GND",
+          "net_class": "ground",
+          "span": "Y3 → X11",
+          "path": [
+            {
+              "col": 24,
+              "row": 2,
+              "ref": "Y3"
+            },
+            {
+              "col": 23,
+              "row": 10,
+              "ref": "X11"
+            }
+          ],
+          "pads": 2,
+          "length_mm": 20.478134680678316,
+          "resistance_ohm": null,
+          "drop_mv": null,
+          "loss_mw": null,
+          "spine": null,
+          "cut": {
+            "conductor_id": "cond-2",
+            "net_name": "GND",
+            "from_hole": {
+              "col": 24,
+              "row": 2,
+              "ref": "Y3"
+            },
+            "to_hole": {
+              "col": 23,
+              "row": 10,
+              "ref": "X11"
+            },
+            "path_mm": 20.478134680678316,
+            "cut_mm": 29.678134680678316,
+            "strip_mm": 0.0,
+            "awg": 24,
+            "color": "black",
+            "insulated": false
+          },
+          "risks": [],
+          "notes": [
+            "Bare wire: it must not touch any other conductor along its length. Keep it flat against the board and check it against the neighbouring runs."
+          ]
+        },
+        {
+          "kind": "conductor",
+          "conductor_id": "cond-4",
+          "conductor_kind": "solder-trace-wired",
+          "net_name": "GND",
+          "net_class": "ground",
+          "span": "T11 → D11, 21 pads",
+          "path": [
+            {
+              "col": 19,
+              "row": 10,
+              "ref": "T11"
+            },
+            {
+              "col": 18,
+              "row": 10,
+              "ref": "S11"
+            },
+            {
+              "col": 17,
+              "row": 10,
+              "ref": "R11"
+            },
+            {
+              "col": 17,
+              "row": 9,
+              "ref": "R10"
+            },
+            {
+              "col": 16,
+              "row": 9,
+              "ref": "Q10"
+            },
+            {
+              "col": 16,
+              "row": 8,
+              "ref": "Q9"
+            },
+            {
+              "col": 15,
+              "row": 8,
+              "ref": "P9"
+            },
+            {
+              "col": 14,
+              "row": 8,
+              "ref": "O9"
+            },
+            {
+              "col": 13,
+              "row": 8,
+              "ref": "N9"
+            },
+            {
+              "col": 12,
+              "row": 8,
+              "ref": "M9"
+            },
+            {
+              "col": 11,
+              "row": 8,
+              "ref": "L9"
+            },
+            {
+              "col": 10,
+              "row": 8,
+              "ref": "K9"
+            },
+            {
+              "col": 9,
+              "row": 8,
+              "ref": "J9"
+            },
+            {
+              "col": 8,
+              "row": 8,
+              "ref": "I9"
+            },
+            {
+              "col": 7,
+              "row": 8,
+              "ref": "H9"
+            },
+            {
+              "col": 7,
+              "row": 9,
+              "ref": "H10"
+            },
+            {
+              "col": 6,
+              "row": 9,
+              "ref": "G10"
+            },
+            {
+              "col": 6,
+              "row": 10,
+              "ref": "G11"
+            },
+            {
+              "col": 5,
+              "row": 10,
+              "ref": "F11"
+            },
+            {
+              "col": 4,
+              "row": 10,
+              "ref": "E11"
+            },
+            {
+              "col": 3,
+              "row": 10,
+              "ref": "D11"
+            }
+          ],
+          "pads": 21,
+          "length_mm": 50.79999999999999,
+          "resistance_ohm": 0.0026978282620874023,
+          "drop_mv": null,
+          "loss_mw": null,
+          "spine": {
+            "conductor_id": "cond-4",
+            "net_name": "GND",
+            "pads": 21,
+            "length_mm": 50.79999999999999,
+            "gauge_mm": 0.6,
+            "material": "tinned copper"
+          },
+          "cut": null,
+          "risks": [],
+          "notes": [
+            "Lay the 0.6 mm tinned copper along the pads first and solder it at each one. Work in one direction and do not go back over a section that has cooled.",
+            "Tin each pad lightly first, then join them. Flux is not optional on a run this long."
+          ]
+        },
+        {
+          "kind": "conductor",
+          "conductor_id": "cond-5",
+          "conductor_kind": "bare-wire",
+          "net_name": "VCC",
+          "net_class": "power",
+          "span": "I3 → E3",
+          "path": [
+            {
+              "col": 8,
+              "row": 2,
+              "ref": "I3"
+            },
+            {
+              "col": 4,
+              "row": 2,
+              "ref": "E3"
+            }
+          ],
+          "pads": 2,
+          "length_mm": 10.16,
+          "resistance_ohm": null,
+          "drop_mv": null,
+          "loss_mw": null,
+          "spine": null,
+          "cut": {
+            "conductor_id": "cond-5",
+            "net_name": "VCC",
+            "from_hole": {
+              "col": 8,
+              "row": 2,
+              "ref": "I3"
+            },
+            "to_hole": {
+              "col": 4,
+              "row": 2,
+              "ref": "E3"
+            },
+            "path_mm": 10.16,
+            "cut_mm": 19.36,
+            "strip_mm": 0.0,
+            "awg": 24,
+            "color": "red",
+            "insulated": false
+          },
+          "risks": [],
+          "notes": [
+            "Bare wire: it must not touch any other conductor along its length. Keep it flat against the board and check it against the neighbouring runs."
+          ]
+        },
+        {
+          "kind": "conductor",
+          "conductor_id": "cond-6",
+          "conductor_kind": "bare-wire",
+          "net_name": "VCC",
+          "net_class": "power",
+          "span": "W11 → I3",
+          "path": [
+            {
+              "col": 22,
+              "row": 10,
+              "ref": "W11"
+            },
+            {
+              "col": 8,
+              "row": 2,
+              "ref": "I3"
+            }
+          ],
+          "pads": 2,
+          "length_mm": 40.95626936135663,
+          "resistance_ohm": null,
+          "drop_mv": null,
+          "loss_mw": null,
+          "spine": null,
+          "cut": {
+            "conductor_id": "cond-6",
+            "net_name": "VCC",
+            "from_hole": {
+              "col": 22,
+              "row": 10,
+              "ref": "W11"
+            },
+            "to_hole": {
+              "col": 8,
+              "row": 2,
+              "ref": "I3"
+            },
+            "path_mm": 40.95626936135663,
+            "cut_mm": 50.156269361356635,
+            "strip_mm": 0.0,
+            "awg": 24,
+            "color": "red",
+            "insulated": false
+          },
+          "risks": [],
+          "notes": [
+            "Bare wire: it must not touch any other conductor along its length. Keep it flat against the board and check it against the neighbouring runs."
+          ]
+        },
+        {
+          "kind": "conductor",
+          "conductor_id": "cond-12",
+          "conductor_kind": "bare-wire",
+          "net_name": "CTRL",
+          "net_class": "signal",
+          "span": "B11 → E6",
+          "path": [
+            {
+              "col": 1,
+              "row": 10,
+              "ref": "B11"
+            },
+            {
+              "col": 4,
+              "row": 5,
+              "ref": "E6"
+            }
+          ],
+          "pads": 2,
+          "length_mm": 14.810617812907063,
+          "resistance_ohm": null,
+          "drop_mv": null,
+          "loss_mw": null,
+          "spine": null,
+          "cut": {
+            "conductor_id": "cond-12",
+            "net_name": "CTRL",
+            "from_hole": {
+              "col": 1,
+              "row": 10,
+              "ref": "B11"
+            },
+            "to_hole": {
+              "col": 4,
+              "row": 5,
+              "ref": "E6"
+            },
+            "path_mm": 14.810617812907063,
+            "cut_mm": 24.010617812907064,
+            "strip_mm": 0.0,
+            "awg": 24,
+            "color": "orange",
+            "insulated": false
+          },
+          "risks": [],
+          "notes": [
+            "Bare wire: it must not touch any other conductor along its length. Keep it flat against the board and check it against the neighbouring runs."
+          ]
+        },
+        {
+          "kind": "conductor",
+          "conductor_id": "cond-10",
+          "conductor_kind": "solder-trace",
+          "net_name": "DISCH",
+          "net_class": "signal",
+          "span": "M3 → P3, 4 pads",
+          "path": [
+            {
+              "col": 12,
+              "row": 2,
+              "ref": "M3"
+            },
+            {
+              "col": 13,
+              "row": 2,
+              "ref": "N3"
+            },
+            {
+              "col": 14,
+              "row": 2,
+              "ref": "O3"
+            },
+            {
+              "col": 15,
+              "row": 2,
+              "ref": "P3"
+            }
+          ],
+          "pads": 4,
+          "length_mm": 7.620000000000001,
+          "resistance_ohm": 0.0038100000000000013,
+          "drop_mv": null,
+          "loss_mw": null,
+          "spine": null,
+          "cut": null,
+          "risks": [],
+          "notes": [
+            "Consider laying a lead offcut along these pads as a spine rather than building the run out of solder alone: it drops the resistance by roughly an order of magnitude and is far easier to make repeatable.",
+            "Tin each pad lightly first, then join them. Flux is not optional on a run this long."
+          ]
+        },
+        {
+          "kind": "conductor",
+          "conductor_id": "cond-13",
+          "conductor_kind": "solder-trace",
+          "net_name": "LED_A",
+          "net_class": "signal",
+          "span": "P11 → M11, 4 pads",
+          "path": [
+            {
+              "col": 15,
+              "row": 10,
+              "ref": "P11"
+            },
+            {
+              "col": 14,
+              "row": 10,
+              "ref": "O11"
+            },
+            {
+              "col": 13,
+              "row": 10,
+              "ref": "N11"
+            },
+            {
+              "col": 12,
+              "row": 10,
+              "ref": "M11"
+            }
+          ],
+          "pads": 4,
+          "length_mm": 7.620000000000001,
+          "resistance_ohm": 0.0038100000000000013,
+          "drop_mv": null,
+          "loss_mw": null,
+          "spine": null,
+          "cut": null,
+          "risks": [],
+          "notes": [
+            "Consider laying a lead offcut along these pads as a spine rather than building the run out of solder alone: it drops the resistance by roughly an order of magnitude and is far easier to make repeatable.",
+            "Tin each pad lightly first, then join them. Flux is not optional on a run this long."
+          ]
+        },
+        {
+          "kind": "conductor",
+          "conductor_id": "cond-7",
+          "conductor_kind": "solder-trace",
+          "net_name": "THRESH",
+          "net_class": "signal",
+          "span": "W3 → T3, 4 pads",
+          "path": [
+            {
+              "col": 22,
+              "row": 2,
+              "ref": "W3"
+            },
+            {
+              "col": 21,
+              "row": 2,
+              "ref": "V3"
+            },
+            {
+              "col": 20,
+              "row": 2,
+              "ref": "U3"
+            },
+            {
+              "col": 19,
+              "row": 2,
+              "ref": "T3"
+            }
+          ],
+          "pads": 4,
+          "length_mm": 7.6200000000000045,
+          "resistance_ohm": 0.0038100000000000026,
+          "drop_mv": null,
+          "loss_mw": null,
+          "spine": null,
+          "cut": null,
+          "risks": [],
+          "notes": [
+            "Consider laying a lead offcut along these pads as a spine rather than building the run out of solder alone: it drops the resistance by roughly an order of magnitude and is far easier to make repeatable.",
+            "Tin each pad lightly first, then join them. Flux is not optional on a run this long."
+          ]
+        },
+        {
+          "kind": "conductor",
+          "conductor_id": "cond-8",
+          "conductor_kind": "bare-wire",
+          "net_name": "THRESH",
+          "net_class": "signal",
+          "span": "E5 → B4",
+          "path": [
+            {
+              "col": 4,
+              "row": 4,
+              "ref": "E5"
+            },
+            {
+              "col": 1,
+              "row": 3,
+              "ref": "B4"
+            }
+          ],
+          "pads": 2,
+          "length_mm": 8.032185256827683,
+          "resistance_ohm": null,
+          "drop_mv": null,
+          "loss_mw": null,
+          "spine": null,
+          "cut": {
+            "conductor_id": "cond-8",
+            "net_name": "THRESH",
+            "from_hole": {
+              "col": 4,
+              "row": 4,
+              "ref": "E5"
+            },
+            "to_hole": {
+              "col": 1,
+              "row": 3,
+              "ref": "B4"
+            },
+            "path_mm": 8.032185256827683,
+            "cut_mm": 17.232185256827684,
+            "strip_mm": 0.0,
+            "awg": 24,
+            "color": "blue",
+            "insulated": false
+          },
+          "risks": [],
+          "notes": [
+            "Bare wire: it must not touch any other conductor along its length. Keep it flat against the board and check it against the neighbouring runs."
+          ]
+        }
+      ],
+      "checkpoints": [
+        {
+          "kind": "continuity",
+          "title": "J1.1 ↔ R1.1",
+          "instruction": "Probe J1 pin 1 and R1 pin 1.",
+          "expected": "Continuous — they are both on net VCC.",
+          "holes": [],
+          "pins": [
+            {
+              "component_ref": "J1",
+              "pin": "1"
+            },
+            {
+              "component_ref": "R1",
+              "pin": "1"
+            }
+          ],
+          "blocking": false
+        },
+        {
+          "kind": "continuity",
+          "title": "R1.1 ↔ U1.8",
+          "instruction": "Probe R1 pin 1 and U1 pin 8.",
+          "expected": "Continuous — they are both on net VCC.",
+          "holes": [],
+          "pins": [
+            {
+              "component_ref": "R1",
+              "pin": "1"
+            },
+            {
+              "component_ref": "U1",
+              "pin": "8"
+            }
+          ],
+          "blocking": false
+        },
+        {
+          "kind": "continuity",
+          "title": "LED1.1 ↔ R3.2",
+          "instruction": "Probe LED1 pin 1 and R3 pin 2.",
+          "expected": "Continuous — they are both on net LED_A.",
+          "holes": [],
+          "pins": [
+            {
+              "component_ref": "LED1",
+              "pin": "1"
+            },
+            {
+              "component_ref": "R3",
+              "pin": "2"
+            }
+          ],
+          "blocking": false
+        },
+        {
+          "kind": "continuity",
+          "title": "C2.1 ↔ U1.5",
+          "instruction": "Probe C2 pin 1 and U1 pin 5.",
+          "expected": "Continuous — they are both on net CTRL.",
+          "holes": [],
+          "pins": [
+            {
+              "component_ref": "C2",
+              "pin": "1"
+            },
+            {
+              "component_ref": "U1",
+              "pin": "5"
+            }
+          ],
+          "blocking": false
+        },
+        {
+          "kind": "resistance",
+          "title": "GND run T11 → D11, 21 pads: about 2.7 mΩ end to end",
+          "instruction": "Measure between T11 and D11. Use four-wire mode if your meter has it; otherwise subtract the reading with the probes touched together.",
+          "expected": "About 2.7 mΩ (accept 1.3–4.0 mΩ). Much higher means a cold joint or a crack in the run.",
+          "holes": [
+            {
+              "col": 19,
+              "row": 10,
+              "ref": "T11"
+            },
+            {
+              "col": 3,
+              "row": 10,
+              "ref": "D11"
+            }
+          ],
+          "pins": [],
+          "blocking": false
+        }
+      ]
+    },
+    {
+      "number": 7,
+      "title": "Long insulated wires",
+      "summary": "Insulated wire, which may cross anything already on the solder side.",
+      "steps": [
+        {
+          "kind": "conductor",
+          "conductor_id": "cond-1",
+          "conductor_kind": "insulated-wire",
+          "net_name": "GND",
+          "net_class": "ground",
+          "span": "X11 → T11",
+          "path": [
+            {
+              "col": 23,
+              "row": 10,
+              "ref": "X11"
+            },
+            {
+              "col": 19,
+              "row": 10,
+              "ref": "T11"
+            }
+          ],
+          "pads": 2,
+          "length_mm": 10.160000000000004,
+          "resistance_ohm": null,
+          "drop_mv": null,
+          "loss_mw": null,
+          "spine": null,
+          "cut": {
+            "conductor_id": "cond-1",
+            "net_name": "GND",
+            "from_hole": {
+              "col": 23,
+              "row": 10,
+              "ref": "X11"
+            },
+            "to_hole": {
+              "col": 19,
+              "row": 10,
+              "ref": "T11"
+            },
+            "path_mm": 10.160000000000004,
+            "cut_mm": 29.360000000000003,
+            "strip_mm": 5.0,
+            "awg": 24,
+            "color": "black",
+            "insulated": true
+          },
+          "risks": [],
+          "notes": []
+        },
+        {
+          "kind": "conductor",
+          "conductor_id": "cond-3",
+          "conductor_kind": "insulated-wire",
+          "net_name": "GND",
+          "net_class": "ground",
+          "span": "D11 → B3",
+          "path": [
+            {
+              "col": 3,
+              "row": 10,
+              "ref": "D11"
+            },
+            {
+              "col": 1,
+              "row": 2,
+              "ref": "B3"
+            }
+          ],
+          "pads": 2,
+          "length_mm": 20.945376578137715,
+          "resistance_ohm": null,
+          "drop_mv": null,
+          "loss_mw": null,
+          "spine": null,
+          "cut": {
+            "conductor_id": "cond-3",
+            "net_name": "GND",
+            "from_hole": {
+              "col": 3,
+              "row": 10,
+              "ref": "D11"
+            },
+            "to_hole": {
+              "col": 1,
+              "row": 2,
+              "ref": "B3"
+            },
+            "path_mm": 20.945376578137715,
+            "cut_mm": 40.145376578137714,
+            "strip_mm": 5.0,
+            "awg": 24,
+            "color": "black",
+            "insulated": true
+          },
+          "risks": [],
+          "notes": []
+        },
+        {
+          "kind": "conductor",
+          "conductor_id": "cond-11",
+          "conductor_kind": "insulated-wire",
+          "net_name": "DISCH",
+          "net_class": "signal",
+          "span": "M3 → E4",
+          "path": [
+            {
+              "col": 12,
+              "row": 2,
+              "ref": "M3"
+            },
+            {
+              "col": 4,
+              "row": 3,
+              "ref": "E4"
+            }
+          ],
+          "pads": 2,
+          "length_mm": 20.478134680678316,
+          "resistance_ohm": null,
+          "drop_mv": null,
+          "loss_mw": null,
+          "spine": null,
+          "cut": {
+            "conductor_id": "cond-11",
+            "net_name": "DISCH",
+            "from_hole": {
+              "col": 12,
+              "row": 2,
+              "ref": "M3"
+            },
+            "to_hole": {
+              "col": 4,
+              "row": 3,
+              "ref": "E4"
+            },
+            "path_mm": 20.478134680678316,
+            "cut_mm": 39.67813468067831,
+            "strip_mm": 5.0,
+            "awg": 24,
+            "color": "white",
+            "insulated": true
+          },
+          "risks": [],
+          "notes": []
+        },
+        {
+          "kind": "conductor",
+          "conductor_id": "cond-14",
+          "conductor_kind": "insulated-wire",
+          "net_name": "OUT",
+          "net_class": "signal",
+          "span": "I11 → B5",
+          "path": [
+            {
+              "col": 8,
+              "row": 10,
+              "ref": "I11"
+            },
+            {
+              "col": 1,
+              "row": 4,
+              "ref": "B5"
+            }
+          ],
+          "pads": 2,
+          "length_mm": 23.417642921523935,
+          "resistance_ohm": null,
+          "drop_mv": null,
+          "loss_mw": null,
+          "spine": null,
+          "cut": {
+            "conductor_id": "cond-14",
+            "net_name": "OUT",
+            "from_hole": {
+              "col": 8,
+              "row": 10,
+              "ref": "I11"
+            },
+            "to_hole": {
+              "col": 1,
+              "row": 4,
+              "ref": "B5"
+            },
+            "path_mm": 23.417642921523935,
+            "cut_mm": 42.61764292152394,
+            "strip_mm": 5.0,
+            "awg": 24,
+            "color": "yellow",
+            "insulated": true
+          },
+          "risks": [],
+          "notes": []
+        },
+        {
+          "kind": "conductor",
+          "conductor_id": "cond-9",
+          "conductor_kind": "insulated-wire",
+          "net_name": "THRESH",
+          "net_class": "signal",
+          "span": "T3 → E5",
+          "path": [
+            {
+              "col": 19,
+              "row": 2,
+              "ref": "T3"
+            },
+            {
+              "col": 4,
+              "row": 4,
+              "ref": "E5"
+            }
+          ],
+          "pads": 2,
+          "length_mm": 38.43717471407075,
+          "resistance_ohm": null,
+          "drop_mv": null,
+          "loss_mw": null,
+          "spine": null,
+          "cut": {
+            "conductor_id": "cond-9",
+            "net_name": "THRESH",
+            "from_hole": {
+              "col": 19,
+              "row": 2,
+              "ref": "T3"
+            },
+            "to_hole": {
+              "col": 4,
+              "row": 4,
+              "ref": "E5"
+            },
+            "path_mm": 38.43717471407075,
+            "cut_mm": 57.63717471407075,
+            "strip_mm": 5.0,
+            "awg": 24,
+            "color": "blue",
+            "insulated": true
+          },
+          "risks": [],
+          "notes": []
+        }
+      ],
+      "checkpoints": [
+        {
+          "kind": "continuity",
+          "title": "R3.1 ↔ U1.3",
+          "instruction": "Probe R3 pin 1 and U1 pin 3.",
+          "expected": "Continuous — they are both on net OUT.",
+          "holes": [],
+          "pins": [
+            {
+              "component_ref": "R3",
+              "pin": "1"
+            },
+            {
+              "component_ref": "U1",
+              "pin": "3"
+            }
+          ],
+          "blocking": false
+        },
+        {
+          "kind": "continuity",
+          "title": "C1.2 ↔ C2.2",
+          "instruction": "Probe C1 pin 2 and C2 pin 2.",
+          "expected": "Continuous — they are both on net GND.",
+          "holes": [],
+          "pins": [
+            {
+              "component_ref": "C1",
+              "pin": "2"
+            },
+            {
+              "component_ref": "C2",
+              "pin": "2"
+            }
+          ],
+          "blocking": false
+        },
+        {
+          "kind": "continuity",
+          "title": "C2.2 ↔ J1.2",
+          "instruction": "Probe C2 pin 2 and J1 pin 2.",
+          "expected": "Continuous — they are both on net GND.",
+          "holes": [],
+          "pins": [
+            {
+              "component_ref": "C2",
+              "pin": "2"
+            },
+            {
+              "component_ref": "J1",
+              "pin": "2"
+            }
+          ],
+          "blocking": false
+        },
+        {
+          "kind": "continuity",
+          "title": "J1.2 ↔ LED1.2",
+          "instruction": "Probe J1 pin 2 and LED1 pin 2.",
+          "expected": "Continuous — they are both on net GND.",
+          "holes": [],
+          "pins": [
+            {
+              "component_ref": "J1",
+              "pin": "2"
+            },
+            {
+              "component_ref": "LED1",
+              "pin": "2"
+            }
+          ],
+          "blocking": false
+        },
+        {
+          "kind": "continuity",
+          "title": "LED1.2 ↔ U1.1",
+          "instruction": "Probe LED1 pin 2 and U1 pin 1.",
+          "expected": "Continuous — they are both on net GND.",
+          "holes": [],
+          "pins": [
+            {
+              "component_ref": "LED1",
+              "pin": "2"
+            },
+            {
+              "component_ref": "U1",
+              "pin": "1"
+            }
+          ],
+          "blocking": false
+        },
+        {
+          "kind": "continuity",
+          "title": "C1.1 ↔ R2.2",
+          "instruction": "Probe C1 pin 1 and R2 pin 2.",
+          "expected": "Continuous — they are both on net THRESH.",
+          "holes": [],
+          "pins": [
+            {
+              "component_ref": "C1",
+              "pin": "1"
+            },
+            {
+              "component_ref": "R2",
+              "pin": "2"
+            }
+          ],
+          "blocking": false
+        },
+        {
+          "kind": "continuity",
+          "title": "R2.2 ↔ U1.2",
+          "instruction": "Probe R2 pin 2 and U1 pin 2.",
+          "expected": "Continuous — they are both on net THRESH.",
+          "holes": [],
+          "pins": [
+            {
+              "component_ref": "R2",
+              "pin": "2"
+            },
+            {
+              "component_ref": "U1",
+              "pin": "2"
+            }
+          ],
+          "blocking": false
+        },
+        {
+          "kind": "continuity",
+          "title": "U1.2 ↔ U1.6",
+          "instruction": "Probe U1 pin 2 and U1 pin 6.",
+          "expected": "Continuous — they are both on net THRESH.",
+          "holes": [],
+          "pins": [
+            {
+              "component_ref": "U1",
+              "pin": "2"
+            },
+            {
+              "component_ref": "U1",
+              "pin": "6"
+            }
+          ],
+          "blocking": false
+        },
+        {
+          "kind": "continuity",
+          "title": "R1.2 ↔ R2.1",
+          "instruction": "Probe R1 pin 2 and R2 pin 1.",
+          "expected": "Continuous — they are both on net DISCH.",
+          "holes": [],
+          "pins": [
+            {
+              "component_ref": "R1",
+              "pin": "2"
+            },
+            {
+              "component_ref": "R2",
+              "pin": "1"
+            }
+          ],
+          "blocking": false
+        },
+        {
+          "kind": "continuity",
+          "title": "R2.1 ↔ U1.7",
+          "instruction": "Probe R2 pin 1 and U1 pin 7.",
+          "expected": "Continuous — they are both on net DISCH.",
+          "holes": [],
+          "pins": [
+            {
+              "component_ref": "R2",
+              "pin": "1"
+            },
+            {
+              "component_ref": "U1",
+              "pin": "7"
+            }
+          ],
+          "blocking": false
+        }
+      ]
+    },
+    {
+      "number": 8,
+      "title": "Closing up",
+      "summary": "Fit the ICs, run the final checks, and power up under current limit.",
+      "steps": [],
+      "checkpoints": [
+        {
+          "kind": "isolation",
+          "title": "VCC ↔ GND must be separate",
+          "instruction": "Probe J1 pin 1 (VCC) and C1 pin 2 (GND).",
+          "expected": "Open, or at least the circuit's own resistance — never a short.",
+          "holes": [],
+          "pins": [
+            {
+              "component_ref": "J1",
+              "pin": "1"
+            },
+            {
+              "component_ref": "C1",
+              "pin": "2"
+            }
+          ],
+          "blocking": true
+        },
+        {
+          "kind": "isolation",
+          "title": "VCC ↔ CTRL must be separate",
+          "instruction": "Probe J1 pin 1 (VCC) and C2 pin 1 (CTRL).",
+          "expected": "Open, or at least the circuit's own resistance — never a short.",
+          "holes": [],
+          "pins": [
+            {
+              "component_ref": "J1",
+              "pin": "1"
+            },
+            {
+              "component_ref": "C2",
+              "pin": "1"
+            }
+          ],
+          "blocking": false
+        },
+        {
+          "kind": "isolation",
+          "title": "VCC ↔ DISCH must be separate",
+          "instruction": "Probe J1 pin 1 (VCC) and R1 pin 2 (DISCH).",
+          "expected": "Open, or at least the circuit's own resistance — never a short.",
+          "holes": [],
+          "pins": [
+            {
+              "component_ref": "J1",
+              "pin": "1"
+            },
+            {
+              "component_ref": "R1",
+              "pin": "2"
+            }
+          ],
+          "blocking": false
+        },
+        {
+          "kind": "isolation",
+          "title": "VCC ↔ LED_A must be separate",
+          "instruction": "Probe J1 pin 1 (VCC) and LED1 pin 1 (LED_A).",
+          "expected": "Open, or at least the circuit's own resistance — never a short.",
+          "holes": [],
+          "pins": [
+            {
+              "component_ref": "J1",
+              "pin": "1"
+            },
+            {
+              "component_ref": "LED1",
+              "pin": "1"
+            }
+          ],
+          "blocking": false
+        },
+        {
+          "kind": "isolation",
+          "title": "VCC ↔ OUT must be separate",
+          "instruction": "Probe J1 pin 1 (VCC) and R3 pin 1 (OUT).",
+          "expected": "Open, or at least the circuit's own resistance — never a short.",
+          "holes": [],
+          "pins": [
+            {
+              "component_ref": "J1",
+              "pin": "1"
+            },
+            {
+              "component_ref": "R3",
+              "pin": "1"
+            }
+          ],
+          "blocking": false
+        },
+        {
+          "kind": "isolation",
+          "title": "VCC ↔ THRESH must be separate",
+          "instruction": "Probe J1 pin 1 (VCC) and C1 pin 1 (THRESH).",
+          "expected": "Open, or at least the circuit's own resistance — never a short.",
+          "holes": [],
+          "pins": [
+            {
+              "component_ref": "J1",
+              "pin": "1"
+            },
+            {
+              "component_ref": "C1",
+              "pin": "1"
+            }
+          ],
+          "blocking": false
+        },
+        {
+          "kind": "isolation",
+          "title": "DISCH ↔ CTRL must be separate",
+          "instruction": "Probe R1 pin 2 (DISCH) and C2 pin 1 (CTRL).",
+          "expected": "Open, or at least the circuit's own resistance — never a short.",
+          "holes": [],
+          "pins": [
+            {
+              "component_ref": "R1",
+              "pin": "2"
+            },
+            {
+              "component_ref": "C2",
+              "pin": "1"
+            }
+          ],
+          "blocking": false
+        },
+        {
+          "kind": "isolation",
+          "title": "GND ↔ CTRL must be separate",
+          "instruction": "Probe C1 pin 2 (GND) and C2 pin 1 (CTRL).",
+          "expected": "Open, or at least the circuit's own resistance — never a short.",
+          "holes": [],
+          "pins": [
+            {
+              "component_ref": "C1",
+              "pin": "2"
+            },
+            {
+              "component_ref": "C2",
+              "pin": "1"
+            }
+          ],
+          "blocking": false
+        },
+        {
+          "kind": "isolation",
+          "title": "GND ↔ DISCH must be separate",
+          "instruction": "Probe C1 pin 2 (GND) and R1 pin 2 (DISCH).",
+          "expected": "Open, or at least the circuit's own resistance — never a short.",
+          "holes": [],
+          "pins": [
+            {
+              "component_ref": "C1",
+              "pin": "2"
+            },
+            {
+              "component_ref": "R1",
+              "pin": "2"
+            }
+          ],
+          "blocking": false
+        },
+        {
+          "kind": "isolation",
+          "title": "GND ↔ LED_A must be separate",
+          "instruction": "Probe C1 pin 2 (GND) and LED1 pin 1 (LED_A).",
+          "expected": "Open, or at least the circuit's own resistance — never a short.",
+          "holes": [],
+          "pins": [
+            {
+              "component_ref": "C1",
+              "pin": "2"
+            },
+            {
+              "component_ref": "LED1",
+              "pin": "1"
+            }
+          ],
+          "blocking": false
+        },
+        {
+          "kind": "isolation",
+          "title": "GND ↔ THRESH must be separate",
+          "instruction": "Probe C1 pin 2 (GND) and C1 pin 1 (THRESH).",
+          "expected": "Open, or at least the circuit's own resistance — never a short.",
+          "holes": [],
+          "pins": [
+            {
+              "component_ref": "C1",
+              "pin": "2"
+            },
+            {
+              "component_ref": "C1",
+              "pin": "1"
+            }
+          ],
+          "blocking": false
+        },
+        {
+          "kind": "isolation",
+          "title": "LED_A ↔ CTRL must be separate",
+          "instruction": "Probe LED1 pin 1 (LED_A) and C2 pin 1 (CTRL).",
+          "expected": "Open, or at least the circuit's own resistance — never a short.",
+          "holes": [],
+          "pins": [
+            {
+              "component_ref": "LED1",
+              "pin": "1"
+            },
+            {
+              "component_ref": "C2",
+              "pin": "1"
+            }
+          ],
+          "blocking": false
+        },
+        {
+          "kind": "isolation",
+          "title": "LED_A ↔ DISCH must be separate",
+          "instruction": "Probe LED1 pin 1 (LED_A) and R1 pin 2 (DISCH).",
+          "expected": "Open, or at least the circuit's own resistance — never a short.",
+          "holes": [],
+          "pins": [
+            {
+              "component_ref": "LED1",
+              "pin": "1"
+            },
+            {
+              "component_ref": "R1",
+              "pin": "2"
+            }
+          ],
+          "blocking": false
+        },
+        {
+          "kind": "isolation",
+          "title": "LED_A ↔ THRESH must be separate",
+          "instruction": "Probe LED1 pin 1 (LED_A) and C1 pin 1 (THRESH).",
+          "expected": "Open, or at least the circuit's own resistance — never a short.",
+          "holes": [],
+          "pins": [
+            {
+              "component_ref": "LED1",
+              "pin": "1"
+            },
+            {
+              "component_ref": "C1",
+              "pin": "1"
+            }
+          ],
+          "blocking": false
+        },
+        {
+          "kind": "isolation",
+          "title": "OUT ↔ CTRL must be separate",
+          "instruction": "Probe R3 pin 1 (OUT) and C2 pin 1 (CTRL).",
+          "expected": "Open, or at least the circuit's own resistance — never a short.",
+          "holes": [],
+          "pins": [
+            {
+              "component_ref": "R3",
+              "pin": "1"
+            },
+            {
+              "component_ref": "C2",
+              "pin": "1"
+            }
+          ],
+          "blocking": false
+        },
+        {
+          "kind": "isolation",
+          "title": "OUT ↔ DISCH must be separate",
+          "instruction": "Probe R3 pin 1 (OUT) and R1 pin 2 (DISCH).",
+          "expected": "Open, or at least the circuit's own resistance — never a short.",
+          "holes": [],
+          "pins": [
+            {
+              "component_ref": "R3",
+              "pin": "1"
+            },
+            {
+              "component_ref": "R1",
+              "pin": "2"
+            }
+          ],
+          "blocking": false
+        },
+        {
+          "kind": "isolation",
+          "title": "OUT ↔ GND must be separate",
+          "instruction": "Probe R3 pin 1 (OUT) and C1 pin 2 (GND).",
+          "expected": "Open, or at least the circuit's own resistance — never a short.",
+          "holes": [],
+          "pins": [
+            {
+              "component_ref": "R3",
+              "pin": "1"
+            },
+            {
+              "component_ref": "C1",
+              "pin": "2"
+            }
+          ],
+          "blocking": false
+        },
+        {
+          "kind": "isolation",
+          "title": "OUT ↔ LED_A must be separate",
+          "instruction": "Probe R3 pin 1 (OUT) and LED1 pin 1 (LED_A).",
+          "expected": "Open, or at least the circuit's own resistance — never a short.",
+          "holes": [],
+          "pins": [
+            {
+              "component_ref": "R3",
+              "pin": "1"
+            },
+            {
+              "component_ref": "LED1",
+              "pin": "1"
+            }
+          ],
+          "blocking": false
+        },
+        {
+          "kind": "isolation",
+          "title": "OUT ↔ THRESH must be separate",
+          "instruction": "Probe R3 pin 1 (OUT) and C1 pin 1 (THRESH).",
+          "expected": "Open, or at least the circuit's own resistance — never a short.",
+          "holes": [],
+          "pins": [
+            {
+              "component_ref": "R3",
+              "pin": "1"
+            },
+            {
+              "component_ref": "C1",
+              "pin": "1"
+            }
+          ],
+          "blocking": false
+        },
+        {
+          "kind": "isolation",
+          "title": "THRESH ↔ CTRL must be separate",
+          "instruction": "Probe C1 pin 1 (THRESH) and C2 pin 1 (CTRL).",
+          "expected": "Open, or at least the circuit's own resistance — never a short.",
+          "holes": [],
+          "pins": [
+            {
+              "component_ref": "C1",
+              "pin": "1"
+            },
+            {
+              "component_ref": "C2",
+              "pin": "1"
+            }
+          ],
+          "blocking": false
+        },
+        {
+          "kind": "isolation",
+          "title": "THRESH ↔ DISCH must be separate",
+          "instruction": "Probe C1 pin 1 (THRESH) and R1 pin 2 (DISCH).",
+          "expected": "Open, or at least the circuit's own resistance — never a short.",
+          "holes": [],
+          "pins": [
+            {
+              "component_ref": "C1",
+              "pin": "1"
+            },
+            {
+              "component_ref": "R1",
+              "pin": "2"
+            }
+          ],
+          "blocking": false
+        },
+        {
+          "kind": "polarity",
+          "title": "Polarity sweep before power",
+          "instruction": "Look at every polarised part once more and compare it against the component-side sheet: C1, C2.",
+          "expected": "Every stripe, band and flat facing the way the sheet shows. A backwards electrolytic fails loudly and a backwards diode fails silently.",
+          "holes": [],
+          "pins": [],
+          "blocking": true
+        },
+        {
+          "kind": "polarity",
+          "title": "Fit the ICs, pin 1 as shown",
+          "instruction": "Only now put U1 into their sockets, notch to the end the sheet marks. Straighten the legs on a flat surface first.",
+          "expected": "Every notch and dot pointing the same way as the sheet.",
+          "holes": [],
+          "pins": [],
+          "blocking": true
+        },
+        {
+          "kind": "power-on",
+          "title": "First power-up, current limited",
+          "instruction": "Set the supply to the circuit's voltage and the current limit to a little above what you expect it to draw. Watch the current as it comes up, and keep a hand on the switch.",
+          "expected": "Current settles at roughly what you expected. If it runs into the limit, power down at once and go back to the isolation checks — something is bridged.",
+          "holes": [],
+          "pins": [],
+          "blocking": true
+        }
+      ]
+    }
+  ],
+  "totals": {
+    "part_steps": 8,
+    "conductor_steps": 14,
+    "checkpoints": 39
+  }
+}
