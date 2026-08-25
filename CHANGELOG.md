@@ -79,6 +79,32 @@ closed without a bump.
 
 ### Fixed
 
+- **Two solder runs lying side by side are no longer a finding, and one gap is no longer
+  two.** Routed with the solder-first style — the style a perfboard builder picks — the
+  NE555 fixture came back with **51 proximity warnings on a board the tool had just routed
+  itself**. 30 of those were runs beside runs, and 20 of the 51 were the same physical gap
+  named twice, once from each run, because the rule walked each conductor separately.
+  - **One physical pair is one finding.** Two pads either side of a 0.6 mm gap are one
+    risk. This half is not a judgement call.
+  - **A run beside a run is not reported; a run beside a PIN still is.** The gap is the
+    same 0.6 mm, so the distinction is about attention rather than millimetres: a run
+    beside another run is one you are laying yourself, on the face you are looking at, in
+    the same phase — running parallel returns is how dense perfboard is built, and calling
+    it out is the tool objecting to ordinary practice. A run passing a pin is a pad
+    belonging to a part soldered three phases ago, with a lead through it for solder to
+    wick up, that nobody is watching while they drag the iron. On that NE555 board:
+    **51 → 17**.
+  - The router still *prices* the proximity (`RouterCosts.proximity_risk`), so it steers
+    around it where it can; it just no longer complains afterwards about the arrangement
+    the chosen style asked for. Golden routes are unchanged.
+  - Eight findings across three fixtures change, all named in `DIVERGES_FROM_TYPESCRIPT`
+    (renamed from `SHARPER_THAN_TYPESCRIPT`, which now covers both directions) and pinned
+    by tests that assert the *reason* — what is standing in the neighbouring hole — not
+    just that the finding is gone.
+  - The panel's gathering of these into one row per run (0.6.0) was the first answer and
+    was a workaround at the wrong layer. It stays, because a run passing a DIP's row of
+    pins still produces seven findings about one run, and that is what it is for.
+
 - **The resistance checkpoint asks for a measurement the guide's own tool list can make.**
   Found by reading a generated guide end to end the way somebody holding an iron would,
   which is the dogfood test PLAN.md §11 says M5 does not close without. Every resistance

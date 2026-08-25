@@ -351,14 +351,19 @@ def test_phase_titles_and_summaries_exist_for_every_phase() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("fixture", ["dense", "random-02"])
+@pytest.mark.parametrize("fixture", ["dense", "random-07"])
 def test_every_proximity_risk_becomes_a_measurement(fixture: str) -> None:
     """PLAN.md Sec 7.5's central claim, as an assertion.
 
-    R5' is the 0.6 mm gap between a solder trace and the neighbouring pad of another net
-    -- the commonest way a perfboard build fails. DRC predicts each one; the guide has to
+    R5' is the 0.6 mm gap between a solder trace and a neighbouring PIN of another net --
+    the commonest way a perfboard build fails. DRC predicts each one; the guide has to
     turn each one into a specific probe, so that the risk the tool foresaw and the
     measurement the user performs come off the same list and cannot drift apart.
+
+    ``random-02`` used to be the second fixture here and is no longer: its one proximity
+    finding was two solder runs lying side by side, which the rule stopped reporting --
+    see the rule's own docstring, and DIVERGES_FROM_TYPESCRIPT in test_drc.py. random-07
+    has four, all of them runs passing pins, which is the case this claim is about.
     """
     doc = golden(fixture)
     proximity = [v for v in run_drc(doc, REGISTRY) if v.rule == "solder-trace-proximity"]

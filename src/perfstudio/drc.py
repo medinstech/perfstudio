@@ -694,19 +694,39 @@ def _check_solder_trace_paths(doc: PerfDocument) -> list[DrcViolation]:
 
 def _check_solder_trace_proximity(
     doc: PerfDocument,
+    lookup: FootprintLookup,
     node_index: Mapping[str, PhysicalNet],
 ) -> list[DrcViolation]:
     """The single most valuable rule in this file. At 2.54 mm pitch with ~1.9 mm
     pads the orthogonal-neighbour pad-edge gap is only ~0.6 mm (PLAN.md §4.6):
     easy to bridge by accident while dragging solder along a trace. For every
-    hole a solder trace touches, every orthogonal neighbour that belongs to a
-    DIFFERENT physical net is a measurable physical risk point, worth naming in
-    the build guide.
+    hole a solder trace touches, every orthogonal neighbour that carries a
+    DIFFERENT physical net ON A PART'S PIN is a measurable physical risk point,
+    worth naming in the build guide.
 
     A neighbour with no physical net at all (an empty, unused pad) is not a risk
     -- there is nothing there to bridge to. A neighbour that is part of the SAME
     physical net as the trace is a non-issue by definition: solder already
     legitimately joins them.
+
+    TWO SOLDER RUNS SIDE BY SIDE ARE NOT REPORTED, and that is a judgement about
+    attention rather than about millimetres -- the gap is the same 0.6 mm. A run
+    beside another run is one you are laying yourself, on the face you are looking
+    at, in the same phase, with both ends of the risk in front of you; running
+    parallel returns is how dense perfboard is built, and calling it out is the
+    tool objecting to ordinary practice. A run passing a PIN is the other thing
+    entirely: that pad belongs to a part soldered three phases ago, it has a lead
+    through it, solder wicks up the lead, and nobody is looking at it while they
+    drag the iron. Measured on the NE555 fixture routed with the solder-first
+    style -- the style a perfboard builder picks -- the rule fired 51 times on a
+    board the tool had just routed itself, and 30 of those were runs beside runs.
+    The router still PRICES the proximity (``RouterCosts.proximity_risk``) so it
+    steers around it where it can; it just no longer complains afterwards about
+    the arrangement the chosen style asked for.
+
+    ONE PHYSICAL PAIR IS ONE FINDING. Two pads either side of a 0.6 mm gap are one
+    risk, and this used to walk each conductor separately -- so a pair visible from
+    two runs was named twice, which is 20 of the 51 above.
 
     Assumes the board actually has copper at every hole (true of 'pad-per-hole',
     the v1 target board type -- see model.py BoardType).
@@ -722,6 +742,18 @@ def _check_solder_trace_proximity(
     """
     violations: list[DrcViolation] = []
 
+    # Which holes have a component's pin standing in them. A pin is what makes the
+    # neighbour worth naming: bare copper carrying a run of your own is the case above.
+    # Not per side -- a lead goes through the board, so it is on both.
+    pin_holes: set[str] = set()
+    for component in doc.components:
+        footprint = lookup(component.footprint_id)
+        if footprint is None:
+            continue
+        pin_holes.update(hole_key(hole) for _pin, hole in all_pin_holes(component, footprint))
+
+    #: Unordered, so the pair is named once however many runs can see it.
+    seen_pairs: set[tuple[str, str]] = set()
     for conductor in doc.conductors:
         if not is_solder_trace(conductor):
             continue
@@ -731,7 +763,6 @@ def _check_solder_trace_proximity(
         first_hole = path[0]
         own_net = node_index.get(_node_side_key(first_hole, conductor.side))
 
-        seen_pairs: set[str] = set()
         for hole in path:
             for neighbor in neighbors4(hole, doc.board):
                 neighbor_net = node_index.get(_node_side_key(neighbor, conductor.side))
@@ -739,8 +770,11 @@ def _check_solder_trace_proximity(
                     continue  # empty pad: nothing to bridge to
                 if own_net is not None and neighbor_net.id == own_net.id:
                     continue  # same net: legitimate
+                if hole_key(neighbor) not in pin_holes:
+                    continue  # another run of yours, in front of you: see the docstring
 
-                pair_key = f"{hole_key(hole)}|{hole_key(neighbor)}"
+                here, there = hole_key(hole), hole_key(neighbor)
+                pair_key = (here, there) if here <= there else (there, here)
                 if pair_key in seen_pairs:
                     continue
                 seen_pairs.add(pair_key)
@@ -1567,7 +1601,7 @@ def run_drc(
         *_check_crossing_conductors(doc, conductor_net_index),
         *_check_conductor_geometry_crossings(doc, conductor_net_index),
         *_check_solder_trace_paths(doc),
-        *_check_solder_trace_proximity(doc, node_index),
+        *_check_solder_trace_proximity(doc, lookup, node_index),
         *_check_mounting_hole_conflicts(doc, lookup),
         *_check_edge_connector_conflicts(doc, lookup),
         *_check_mounting_hole_clearance(doc, lookup),

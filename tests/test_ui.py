@@ -3097,7 +3097,7 @@ def test_the_blank_board_guidance_stops_once_a_part_has_ever_been_placed() -> No
 
 def _two_traces_side_by_side() -> PerfDocument:
     """Two solder traces on neighbouring rows, on different nets. The commonest shape on
-    a routed perfboard, and the one that floods the panel."""
+    a routed perfboard, and the one the rule stopped objecting to."""
     from perfstudio.model import ComponentInstance, DocumentMeta, Net, NetNode
 
     board = Board(
@@ -3132,23 +3132,80 @@ def _two_traces_side_by_side() -> PerfDocument:
     )
 
 
-def test_two_traces_side_by_side_are_one_row_each_not_sixteen() -> None:
-    """The rule is right and it is a WARNING, not an error -- but it fires once per pad
-    per trace, so eight pads of ordinary parallel routing put sixteen copies of one
-    sentence in the panel and scrolled everything else off the bottom.
+def test_two_traces_side_by_side_are_not_the_panel_any_more() -> None:
+    """Eight pads of ordinary parallel routing used to put SIXTEEN copies of one sentence
+    in the panel -- once per pad per trace, since both runs can see the same 0.6 mm gap --
+    and scrolled everything else off the bottom.
 
-    The engine's output cannot change: it is compared byte-for-byte against the reference
-    implementation this port is proved against. So the panel gathers them, and nothing is
-    dropped -- every pad is still there, one level down.
+    The panel gathering them was the first answer, and it was a workaround for the wrong
+    layer: the rule was objecting to how dense perfboard is built. It now reports a
+    physical pair ONCE, and only where the neighbour is a PIN -- see the rule's docstring
+    in drc.py for why a run beside a run is a different kind of risk from a run beside a
+    part somebody soldered three phases ago. What is left on this fixture is the two
+    places a run passes the other part's pin, which is the real thing.
     """
     window = _window_on(_two_traces_side_by_side())
+
+    proximity = _drc_group(window, "drc:solder-trace-proximity")
+    assert proximity is not None, "a run still passes a pin here"
+    findings = sum(proximity.child(i).childCount() or 1 for i in range(proximity.childCount()))
+
+    assert findings == 2, "the two runs passing each other's pins, and nothing else"
+    _close(window)
+
+
+def _trace_along_a_dip() -> PerfDocument:
+    """A solder run down the column beside a DIP-14's pin row: seven pins of another net,
+    each one an orthogonal neighbour. The shape the panel's gathering is actually for."""
+    from perfstudio.model import ComponentInstance, DocumentMeta, Net, NetNode
+
+    board = Board(
+        type="pad-per-hole", cols=20, rows=16, pitch=2.54, thickness=1.6,
+        material="FR4", pad_diameter=1.9, drill_diameter=0.8,
+    )
+    return PerfDocument(
+        meta=DocumentMeta(name="t", created="2024-01-01T00:00:00.000Z",
+                          modified="2024-01-01T00:00:00.000Z"),
+        board=board,
+        components=(
+            ComponentInstance(
+                id="cmp-U1", ref="U1", value="", footprint_id="dip-14",
+                anchor=HoleCoord(col=4, row=3),
+            ),
+        ),
+        nets=(
+            Net(id="n1", name="A", net_class="signal",
+                nodes=(NetNode(component_ref="U1", pin="8"),)),
+            Net(id="n2", name="B", net_class="signal",
+                nodes=tuple(
+                    NetNode(component_ref="U1", pin=str(n)) for n in range(1, 8)
+                )),
+        ),
+        conductors=(
+            SolderTraceConductor(
+                id="t1", kind="solder-trace", side="bottom", net_id="n1",
+                path=tuple(HoleCoord(col=5, row=r) for r in range(3, 10)),
+            ),
+        ),
+    )
+
+
+def test_a_run_past_a_row_of_pins_is_one_row_with_every_pad_underneath() -> None:
+    """What the gathering is for, now that the noisy case is gone from the engine.
+
+    Seven pins of one net down the side of a DIP, and a run passing every one of them:
+    seven findings that are one sentence about one run, which is a row in the panel with
+    all seven still reachable one level down. Nothing is dropped -- that was the whole
+    point of gathering rather than capping.
+    """
+    window = _window_on(_trace_along_a_dip())
 
     proximity = _drc_group(window, "drc:solder-trace-proximity")
     assert proximity is not None, "the fixture should trip the proximity rule"
     findings = sum(proximity.child(i).childCount() or 1 for i in range(proximity.childCount()))
 
-    assert proximity.childCount() == 2, "one row per trace"
-    assert findings == 16, "and every pad still reachable underneath"
+    assert proximity.childCount() == 1, "one row: one run"
+    assert findings == 7, "and every pad still reachable underneath"
     assert "–" in proximity.child(0).text(0), "named by where it runs"
     _close(window)
 

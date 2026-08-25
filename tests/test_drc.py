@@ -49,7 +49,12 @@ from perfstudio.drc import (
     run_drc,
 )
 from perfstudio.footprints import footprint_lookup, standard_footprints
-from perfstudio.geometry import convex_polygons_overlap, transform_offset
+from perfstudio.geometry import (
+    convex_polygons_overlap,
+    coord_to_hole_ref,
+    hole_key,
+    transform_offset,
+)
 from perfstudio.model import (
     HEAT_CLEARANCE_MM,
     VALID_ROTATIONS,
@@ -257,10 +262,25 @@ def _violation_to_jsonable(v: DrcViolation) -> dict[str, Any]:
 PYTHON_ONLY_RULES = frozenset({"conductor-crossing", "jumper-under-body"})
 
 
+def _finding_id(rule: str, holes: object, component_ids: object) -> tuple[str, tuple[str, ...]]:
+    """Name one finding the way the rest of this tool names things: its rule, and the
+    parts or the HOLE ADDRESSES it is about. Works on both a golden dict and a
+    `DrcViolation`, which is what lets the record below read the same either way."""
+    if component_ids:
+        return rule, tuple(str(c) for c in component_ids)  # type: ignore[union-attr]
+    refs: list[str] = []
+    for hole in holes:  # type: ignore[union-attr]
+        coord = HoleCoord(hole["col"], hole["row"]) if isinstance(hole, dict) else hole
+        refs.append(coord_to_hole_ref(coord))
+    return rule, tuple(refs)
+
+
 #: Findings the TypeScript engine reported and this one deliberately does not, dropped
-#: from the EXPECTED side of the comparison below. One entry, and it is the same kind of
-#: divergence as PYTHON_ONLY_RULES above, in the other direction: the port getting SHARPER
-#: rather than gaining a rule.
+#: from the EXPECTED side of the comparison below. The other direction of the same idea as
+#: PYTHON_ONLY_RULES above: the fixtures prove the port reproduces the original, and that
+#: cannot also mean it may never decide the original was wrong about something.
+#:
+#: Two decisions, eight findings, five distinct physical pairs, all named:
 #:
 #: `component-body-overlap` compared axis-aligned bounding boxes. A part turns only by a
 #: multiple of 90 degrees, so for a rectangular courtyard the box IS the polygon and the
@@ -268,32 +288,49 @@ PYTHON_ONLY_RULES = frozenset({"conductor-crossing", "jumper-under-body"})
 #: circular courtyards (`footprints._circle_outline`, a 24-gon), where a box is 29% more
 #: area than the shape, all of it in the corners. So a rectangle clipping the corner of a
 #: circle was reported as an overlap between two parts that genuinely clear each other,
-#: and reported as an ERROR -- which is how a findings panel becomes the thing people
-#: scroll past.
+#: and reported as an ERROR. 41 findings across the fixtures become 40, and the one that
+#: went is X3 (`r-axial-4`) against X6 (`c-elec-d5-p2`) on random-02.
 #:
-#: Across the 15 fixtures that is 41 body-overlap findings, of which 40 are still
-#: overlapping under an exact convex test and this ONE is not: X3 (`r-axial-4`, a
-#: rectangle) against X6 (`c-elec-d5-p2`, a 24-gon), whose boxes meet at a corner the
-#: circle does not reach into.
+#: `solder-trace-proximity` named two solder runs lying side by side, and named each pair
+#: TWICE -- once from each run, since both can see the gap. The rule now reports a
+#: physical pair once, and only where the neighbour is a component's PIN; see the rule's
+#: own docstring for why a run beside a run is a different kind of risk from a run beside
+#: a pin. That is L6-K6 on dense, V18-V19 on random-02, and three pairs on random-09
+#: named from both ends, which is why random-09 loses six entries for three gaps.
 #:
-#: Recorded here rather than edited into the .expected.json files, for the reason given
-#: above: those are dumps from the TypeScript engine and hand-editing one would make the
-#: next regeneration silently disagree. Pinned by
-#: test_the_sharper_overlap_rule_clears_a_pair_typescript_could_not below, so it is a
-#: divergence with a test attached rather than a filter.
-SHARPER_THAN_TYPESCRIPT: dict[str, frozenset[tuple[str, tuple[str, ...]]]] = {
-    "random-02": frozenset({("component-body-overlap", ("cmp-3", "cmp-6"))}),
+#: Recorded here rather than edited into the .expected.json files: those are dumps from
+#: the TypeScript engine and hand-editing one would make the next regeneration silently
+#: disagree. Every entry is pinned by a test below that asserts the reason -- the geometry,
+#: or what is standing in the neighbouring hole -- and not merely that the finding is gone.
+DIVERGES_FROM_TYPESCRIPT: dict[str, frozenset[tuple[str, tuple[str, ...]]]] = {
+    "dense": frozenset({("solder-trace-proximity", ("L6", "K6"))}),
+    "random-02": frozenset(
+        {
+            ("component-body-overlap", ("cmp-3", "cmp-6")),
+            ("solder-trace-proximity", ("V18", "V19")),
+        }
+    ),
+    "random-09": frozenset(
+        {
+            ("solder-trace-proximity", ("P10", "P11")),
+            ("solder-trace-proximity", ("P11", "P10")),
+            ("solder-trace-proximity", ("Q10", "Q11")),
+            ("solder-trace-proximity", ("Q11", "Q10")),
+            ("solder-trace-proximity", ("R10", "R11")),
+            ("solder-trace-proximity", ("R11", "R10")),
+        }
+    ),
 }
 
 
 @pytest.mark.parametrize("case_name", GOLDEN_CASE_NAMES)
 def test_matches_typescript_golden_drc(case_name: str) -> None:
     doc, expected_violations = _load_golden(case_name)
-    sharper = SHARPER_THAN_TYPESCRIPT.get(case_name, frozenset())
+    recorded = DIVERGES_FROM_TYPESCRIPT.get(case_name, frozenset())
     expected_violations = [
         v
         for v in expected_violations
-        if (v["rule"], tuple(v["componentIds"])) not in sharper
+        if _finding_id(v["rule"], v["holes"], v["componentIds"]) not in recorded
     ]
 
     actual_violations = [
@@ -1138,7 +1175,7 @@ def test_the_python_only_jumper_rule_fires_where_typescript_had_no_rule_at_all()
 
 
 def test_the_sharper_overlap_rule_clears_a_pair_typescript_could_not() -> None:
-    """Pins the one entry in SHARPER_THAN_TYPESCRIPT, from both ends.
+    """Pins the body-overlap entry in DIVERGES_FROM_TYPESCRIPT, from both ends.
 
     The TypeScript engine reported X3 against X6 on random-02 and this one does not, and
     the whole of the difference has to be the geometry claimed: their bounding boxes meet,
@@ -1181,6 +1218,59 @@ def test_the_sharper_overlap_rule_clears_a_pair_typescript_could_not() -> None:
         if v.rule == "component-body-overlap"
     )
     assert total == 40
+
+
+def test_a_run_beside_a_run_is_not_reported_and_a_run_beside_a_pin_still_is() -> None:
+    """Pins the proximity entries in DIVERGES_FROM_TYPESCRIPT, and the distinction they
+    rest on -- which is about attention, not millimetres. Both gaps are the same 0.6 mm.
+
+    A run beside another run is one you are laying yourself, on the face you are looking
+    at, in the same phase; running parallel returns is how dense perfboard is built. A run
+    beside a PIN is a pad belonging to a part soldered three phases ago, with a lead
+    through it for solder to wick up, that nobody is watching while they drag the iron.
+
+    Two boards, alike but for what is standing in the neighbouring hole.
+    """
+    run = solder_trace("t1", tuple(hole(c, 2) for c in range(1, 6)))
+
+    beside_a_run = make_doc(
+        conductors=(run, solder_trace("t2", tuple(hole(c, 3) for c in range(1, 6)))),
+    )
+    beside_a_pin = make_doc(
+        components=(make_component("c1", "U1", "r-axial-4", hole(2, 3)),),
+        conductors=(run,),
+    )
+
+    assert by_rule(run_drc(beside_a_run, _FOOTPRINT_LOOKUP), "solder-trace-proximity") == []
+    assert by_rule(run_drc(beside_a_pin, _FOOTPRINT_LOOKUP), "solder-trace-proximity")
+
+
+def test_one_gap_is_one_finding_however_many_runs_can_see_it() -> None:
+    """The other half, and not a judgement call at all: two pads either side of a 0.6 mm
+    gap are ONE risk.
+
+    The rule walked each conductor separately, so a pair both runs could see was named
+    twice -- 20 of the 51 findings the NE555 fixture produced when routed solder-first,
+    and all 6 of random-09's, which is why that fixture loses six entries for three gaps.
+    Here two parts sit in neighbouring rows with a run through each: every pair is a pin
+    facing a pin, visible from both sides.
+    """
+    doc = make_doc(
+        components=(
+            make_component("c1", "R1", "r-axial-4", hole(4, 2)),
+            make_component("c2", "R2", "r-axial-4", hole(4, 3)),
+        ),
+        conductors=(
+            solder_trace("t1", tuple(hole(c, 2) for c in range(2, 8))),
+            solder_trace("t2", tuple(hole(c, 3) for c in range(2, 8))),
+        ),
+    )
+
+    found = by_rule(run_drc(doc, _FOOTPRINT_LOOKUP), "solder-trace-proximity")
+    pairs = {tuple(sorted((hole_key(v.holes[0]), hole_key(v.holes[1])))) for v in found}
+
+    assert found, "the fixture should trip the rule at all"
+    assert len(found) == len(pairs), "a gap named twice is a gap named once too often"
 
 
 def test_two_courtyards_that_only_touch_are_not_overlapping() -> None:
