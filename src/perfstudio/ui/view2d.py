@@ -2225,7 +2225,7 @@ class BoardScene(QGraphicsScene):
                     net_class=net_class_by_id.get(conductor.net_id or ""),
                     signal_index=signal_index.get(conductor.net_id or "", 0),
                     hatch_far_side=self.hatch_far_side,
-                    stack=conductor_layers.get(conductor.id, 0),
+                    stack=conductor_layers.get(conductor.id, conductor.layer_z),
                 )
             )
 

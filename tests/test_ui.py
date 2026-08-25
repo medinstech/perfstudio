@@ -102,6 +102,15 @@ def _load_dense() -> PerfDocument:
     return result.document
 
 
+def _golden_document(name: str) -> PerfDocument:
+    """Any fixture from the golden set, for the tests that sweep all fifteen."""
+    result = persist.deserialize_document(
+        (GOLDEN.parent / f"{name}.perf").read_text(encoding="utf-8")
+    )
+    assert result.ok, f"{name}.perf failed to load: {result}"
+    return result.document
+
+
 def _new_bus(document: PerfDocument) -> CommandBus:
     return CommandBus(document, create_standard_registry(), CommandContext(next_id=create_id_generator()))
 
@@ -2295,6 +2304,115 @@ def test_a_run_swells_where_it_is_soldered_and_draws_in_between() -> None:
     between = swell[1::2]
     assert len(at_pads) == len(trace.path)
     assert min(at_pads) > max(between)
+
+
+def _segment_gap(p1, p2, q1, q2):
+    """Closest approach between two 3D segments, and where on the first it happens."""
+    import math
+
+    def sub(a, b):
+        return tuple(x - y for x, y in zip(a, b, strict=True))
+
+    def dot(a, b):
+        return sum(x * y for x, y in zip(a, b, strict=True))
+
+    u, v, w = sub(p2, p1), sub(q2, q1), sub(p1, q1)
+    a, b, c, d, e = dot(u, u), dot(u, v), dot(v, v), dot(u, w), dot(v, w)
+    denominator = a * c - b * b
+    if denominator < 1e-12:
+        s_at, t_at = 0.0, (d / b if abs(b) > 1e-12 else 0.0)
+    else:
+        s_at = (b * e - c * d) / denominator
+        t_at = (a * e - b * d) / denominator
+    s_at = min(1.0, max(0.0, s_at))
+    t_at = min(1.0, max(0.0, t_at))
+    offset = tuple(w[i] + s_at * u[i] - t_at * v[i] for i in range(3))
+    where = tuple(p1[i] + s_at * u[i] for i in range(3))
+    return math.sqrt(dot(offset, offset)), where
+
+
+def _as_drawn(cond, board, level):
+    """The centreline and per-point radius view3d actually tubes this conductor at."""
+    from perfstudio.model import contacts_every_path_hole
+    from perfstudio.ui.view3d import (
+        TRACE_WAIST_RATIO,
+        _conductor_centreline,
+        _trace_swell,
+        conductor_radius,
+        conductor_z,
+        pad_z,
+    )
+
+    is_trace = contacts_every_path_hole(cond)
+    line = _conductor_centreline(
+        cond, board, conductor_z(cond, board, level), pad_z(board, cond.side), is_trace
+    )
+    if is_trace:
+        waist = conductor_radius(cond) * TRACE_WAIST_RATIO
+        return line, [waist * value for value in _trace_swell(cond, line)]
+    return line, [conductor_radius(cond)] * len(line)
+
+
+@pytest.mark.parametrize("case", sorted(p.stem for p in GOLDEN.parent.glob("*.perf")))
+def test_no_two_conductors_are_drawn_in_the_same_place(case: str) -> None:
+    """THE test for this view, and the one that found every remaining fault in it.
+
+    Two pieces of copper cannot occupy one space. Squinting at a render does not settle
+    whether they do -- so this walks the centrelines `view3d` builds and the radii it
+    tubes them at, and measures. Anything closer than the two radii added together is two
+    solids in one place, and it is a bug however good the picture looks from the default
+    camera.
+
+    Soldered into ONE HOLE is not that: two conductors meeting at a pad become one joint,
+    which is why closeness within a pad's reach of a shared hole is excluded. Everywhere
+    else the finding is real, and running this over the fifteen fixtures is what turned up
+    both of the ones nothing else had:
+
+    * `stacking_layers` returned a level and `conductor_z` added the document's own
+      `layer_z` to it AGAIN, so a pair the stacker had deliberately separated -- one at
+      layer_z 1 and stack 0, the other at layer_z 0 and stack 1 -- came out at the same
+      height and was drawn straight through. Four fixtures had that pair.
+    * A wire's descent into its pad ramped as far as it dropped, so one coming down two
+      stacking levels swept almost four millimetres across the board, through whatever was
+      lying under it.
+    """
+    import itertools
+    import math
+
+    from perfstudio.geometry import hole_key
+    from perfstudio.occupancy import stacking_layers
+    from perfstudio.ui.view3d import _xy
+
+    doc = _golden_document(case)
+    if len(doc.conductors) < 2:
+        pytest.skip(f"{case} has nothing to collide")
+    levels = stacking_layers(doc)
+    drawn = {c.id: _as_drawn(c, doc.board, levels[c.id]) for c in doc.conductors}
+
+    for first, second in itertools.combinations(doc.conductors, 2):
+        if first.side != second.side:
+            continue  # a board's thickness is between them
+        shared = {hole_key(h) for h in first.path} & {hole_key(h) for h in second.path}
+        joints = [
+            _xy(doc.board, hole)
+            for hole in (*first.path, *second.path)
+            if hole_key(hole) in shared
+        ]
+        line_a, radii_a = drawn[first.id]
+        line_b, radii_b = drawn[second.id]
+        for i in range(len(line_a) - 1):
+            for j in range(len(line_b) - 1):
+                gap, where = _segment_gap(line_a[i], line_a[i + 1], line_b[j], line_b[j + 1])
+                needed = max(radii_a[i], radii_a[i + 1]) + max(radii_b[j], radii_b[j + 1])
+                if gap >= needed - 1e-9:
+                    continue
+                if any(math.dist(where[:2], at) < doc.board.pad_diameter for at in joints):
+                    continue  # soldered into the same hole: one joint, not two solids
+                pytest.fail(
+                    f"{case}: {first.id} ({first.kind}) and {second.id} ({second.kind}) are "
+                    f"{needed - gap:.2f} mm inside each other at "
+                    f"({where[0]:.1f}, {where[1]:.1f}, {where[2]:.1f}), sharing no pad there"
+                )
 
 
 def test_the_lights_travel_with_the_camera() -> None:

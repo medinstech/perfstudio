@@ -240,8 +240,16 @@ def stacking_layers(doc: PerfDocument) -> dict[ConductorId, int]:
       a pad stay level with each other; ``geometry.segments_touch`` already draws that
       line and DRC reads the same one.
 
-    Greedy in document order, taking the lowest free level: deterministic, and a board
-    where nothing crosses comes back entirely flat, which is what such a board looks like.
+    THE DOCUMENT'S OWN ``layer_z`` IS THE FLOOR, and the level returned is the WHOLE
+    answer -- not something a caller adds ``layer_z`` back onto. That was the shape of it,
+    and it put conductors this function had deliberately separated back in the same place:
+    one at ``layer_z`` 1 and stack 0, the other at ``layer_z`` 0 and stack 1, added up to
+    the same height and drawn straight through each other. Four of the fifteen golden
+    fixtures had exactly that pair.
+
+    Greedy in document order, taking the lowest free level at or above that floor:
+    deterministic, and a board where nothing crosses comes back entirely flat, which is
+    what such a board looks like.
 
     Pure, so both renderers can read it and neither can drift: a wire drawn passing over
     another in 3D is the one drawn over it in 2D.
@@ -249,14 +257,14 @@ def stacking_layers(doc: PerfDocument) -> dict[ConductorId, int]:
     layers: dict[ConductorId, int] = {}
     placed: list[tuple[Conductor, int]] = []
 
-    # The traces first, ALL of them, before any wire is placed. They are pinned to level 0
-    # and cannot move, so a wire has to be judged against every one of them and not merely
-    # against the ones that happen to come earlier in the document -- which is how a wire
-    # written before the run it crosses ended up buried in it.
+    # The traces first, ALL of them, before any wire is placed. They cannot move, so a wire
+    # has to be judged against every one of them and not merely against the ones that
+    # happen to come earlier in the document -- which is how a wire written before the run
+    # it crosses ended up buried in it.
     for conductor in doc.conductors:
         if contacts_every_path_hole(conductor) or len(conductor.path) < 2:
-            layers[conductor.id] = 0
-            placed.append((conductor, 0))
+            layers[conductor.id] = conductor.layer_z
+            placed.append((conductor, conductor.layer_z))
 
     for conductor in doc.conductors:
         if conductor.id in layers:
@@ -268,7 +276,7 @@ def stacking_layers(doc: PerfDocument) -> dict[ConductorId, int]:
             and _paths_may_meet(conductor.path, other.path)
             and paths_cross(conductor.path, other.path) is not None
         }
-        level = 0
+        level = conductor.layer_z
         while level in taken:
             level += 1
         layers[conductor.id] = level

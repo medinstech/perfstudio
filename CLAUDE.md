@@ -416,7 +416,14 @@ is what somebody following the guide does. Sizes live in `view3d`'s constants an
 they measure; the two end pads get a solid at exactly the tube's radius there, so a flat
 cap never shows.
 
-**How high a conductor sits is `occupancy.stacking_layers`, and both views read it.** Two
+**How high a conductor sits is `occupancy.stacking_layers` — the WHOLE answer, not
+something to add `layer_z` back onto.** The document's own `layer_z` is that function's
+floor; adding it again in `conductor_z` put conductors the stacker had deliberately
+separated back at one height, on four of the fifteen fixtures.
+`test_no_two_conductors_are_drawn_in_the_same_place` measures the drawn centrelines and
+radii against each other across every fixture and is what found it — reach for that test
+before trusting a render, because two solids in one place is a bug whatever the picture
+looks like from the default camera. Two
 crossing wires cannot occupy the same space; a solder trace never leaves the pads, because
 it *is* the copper. The level is computed from what actually crosses what (`paths_cross` —
 the same predicate DRC's `conductor-crossing` uses, so a shared endpoint stays a junction),

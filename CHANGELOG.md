@@ -79,6 +79,24 @@ closed without a bump.
 
 ### Fixed
 
+- **No two conductors are drawn in the same place, and there is a test that measures it.**
+  Squinting at a render does not settle whether two solids overlap, so
+  `test_no_two_conductors_are_drawn_in_the_same_place` walks the centrelines `view3d`
+  builds and the radii it tubes them at and measures segment to segment, across all
+  fifteen golden fixtures. Two conductors soldered into one hole are one joint and are
+  excluded; anything else closer than the sum of its radii is a bug however good the
+  picture looks from the default camera. It found both of the faults nothing else had:
+  - **`layer_z` was counted twice.** `stacking_layers` returned a level and `conductor_z`
+    added the document's own `layer_z` to it again — so a pair the stacker had deliberately
+    separated (one at `layer_z` 1 and stack 0, the other at `layer_z` 0 and stack 1) came
+    out at the same height and was drawn straight through. **Four of the fifteen fixtures
+    had exactly that pair.** `layer_z` is the stacker's *floor* now, and the level it
+    returns is the whole answer.
+  - **A wire's descent into its pad swept too far.** The bend was as long as it was deep,
+    so a wire coming down two stacking levels ramped nearly four millimetres across the
+    board, through whatever was lying under it. Held inside a third of a pitch now, where
+    the only other thing is something soldered to the same hole.
+
 - **A solder run is one piece of metal, a wire goes into its holes, and the holes are
   round.** The second pass over the same view, from a camera put close enough to see what
   it was actually drawing.

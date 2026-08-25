@@ -229,12 +229,12 @@ def conductor_z(cond: Conductor, board: Board, stack: int = 0) -> float:
     space, which is not a thing wire does and looked like a modelling error because it was
     one. See :data:`STACK_STEP_MM` for why the first attempt at fixing that did not.
     """
-    # Both in the same step, because they answer the same question: how far clear of what
-    # is underneath. ``layer_z`` is the document's own answer -- a level somebody assigned
-    # -- and ``stack`` is the one worked out from what actually crosses what. Charging
-    # 0.4 mm for the first and 0.94 for the second would mean a wire a user deliberately
-    # lifted still buried in the one below it.
-    lift = STACK_STEP_MM * (cond.layer_z + stack)
+    # ``stack`` is the WHOLE answer, from ``occupancy.stacking_layers``, which already has
+    # the document's own ``layer_z`` as its floor. Adding layer_z again here is what put
+    # conductors the stacker had deliberately separated back at one height -- one at
+    # layer_z 1 and stack 0, the other at layer_z 0 and stack 1 -- and drew them straight
+    # through each other on four of the fifteen golden fixtures.
+    lift = STACK_STEP_MM * stack
     # A RUN IS IN THE SURFACE; A WIRE IS ON IT. Solder wets the copper and stands as a
     # half-round ridge over it, so a run's centreline is the pad plane itself and only its
     # outer half shows -- which is also why a joint swells concentrically out of it instead
@@ -1301,8 +1301,14 @@ def _conductor_centreline(
         x, y, _ = flat[end]
         ix, iy, _ = flat[inward]
         span = math.hypot(ix - x, iy - y)
-        # A bend about as long as it is deep, clipped so it stays inside its own segment.
-        run_in = min(drop * 1.2, span * 0.4)
+        # SHORT, and kept near the pad. A bend as long as it is deep reads nicely and
+        # sweeps a long way: a wire coming down from two stacking levels ramped almost
+        # four millimetres across the board, through whatever was lying under it -- which
+        # is two of the fifteen golden fixtures. Held inside a third of a pitch, the
+        # descent stays over its own pad and its neighbours, where the only other thing
+        # is something soldered to the same hole. Never longer than the drop either, or a
+        # wire lying flat on the board acquires a bend it does not need.
+        run_in = min(drop, board.pitch / 3, span * 0.35)
         t = (run_in / span) if span else 0.0
         elbow = (x + (ix - x) * t, y + (iy - y) * t, run_z)
         out = (
@@ -1667,7 +1673,7 @@ def populate_renderer(
         for actor in build_conductor(
             cond,
             board,
-            stack=layers.get(cond.id, 0),
+            stack=layers.get(cond.id, cond.layer_z),
             net_class=net_class_by_id.get(cond.net_id or ""),
             signal_index=signal_index.get(cond.net_id or "", 0),
         ):
