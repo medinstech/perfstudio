@@ -20,6 +20,8 @@ closed without a bump.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-08-25
+
 ### Added
 
 - **PerfStudio can tell you a new version exists, and fetch it.** The last unwritten line
@@ -1759,7 +1761,8 @@ was introduced during 0.4.0 development, so they are accurate but were not writt
 release time. Their compare links point at commits rather than tags for the same reason;
 from v0.4.0 onwards every release is tagged.
 
-[Unreleased]: https://github.com/medinstech/perfstudio/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/medinstech/perfstudio/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/medinstech/perfstudio/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/medinstech/perfstudio/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/medinstech/perfstudio/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/medinstech/perfstudio/compare/e36ac8c...v0.4.0
