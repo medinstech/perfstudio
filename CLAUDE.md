@@ -136,6 +136,20 @@ tests pass". Three things depend on it:
 - `test_autoroute.py` — the golden routes reproduce only with the default cost table, so
   changing `DEFAULT_ROUTER_COSTS` is a deliberate act with fixture regeneration attached.
 
+**Two recorded divergences, both in `test_drc.py`, neither one a hole in the proof.** The
+fixtures prove the port reproduces the original; that cannot also mean the port may never
+improve on it. Each is named, excluded from the comparison rather than edited into an
+`.expected.json` (those are dumps from the TypeScript engine, and hand-editing one makes
+the next regeneration silently disagree), and pinned by its own test:
+
+- `PYTHON_ONLY_RULES` — rules the original never had (`conductor-crossing`,
+  `jumper-under-body`), so there is nothing for a fixture to record.
+- `SHARPER_THAN_TYPESCRIPT` — one finding the original reported and this engine does not:
+  `random-02`'s X3 against X6, a rectangle clipping the corner of an electrolytic's 24-gon
+  courtyard where the boxes meet and the shapes do not. 41 body-overlap findings across
+  the fixtures become 40. Adding to this dict needs a test asserting the GEOMETRY, not
+  just the absence.
+
 `persist.py` hand-rolls its JSON writer to match `JSON.stringify(x, null, 2)` byte for
 byte (whole-number floats print as `1`, not `1.0`), and every object's key order comes
 from an explicit `*_KEY_ORDER` tuple, never dict insertion order.
@@ -188,6 +202,14 @@ Three conventions here are load-bearing:
   resistor body is 5 mm long. Drawing the outline as the part draws a box half again too
   big — the specific mistake that made both renderers look wrong. The real body comes
   from `BodySpec.dims` via `bodies.placement_for`.
+  - **53 of the 61 outlines are rectangles and 8 are 24-gons** (`_circle_outline`: the
+    electrolytics and the LEDs), and rule 1 turns on that split. A part rotates only by a
+    multiple of 90°, so a rectangle never leaves the axes and its bounding box *is* its
+    courtyard — `drc._courtyards_overlap` keeps the box test for those on purpose (the
+    exact test's projections scale by an edge length, which can collapse a one-ULP
+    overlap the placer relies on) and reaches the exact convex test only for a circle.
+    `placer.pair_terms` takes the same two paths from the same predicate; the two must
+    never disagree about whether parts are in each other's way.
 - **Pin offsets are integer steps on `STANDARD_PITCH_MM`** regardless of the board's own
   pitch; `body_outline` and `body_height` are always millimetres.
 

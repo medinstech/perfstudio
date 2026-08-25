@@ -43,11 +43,16 @@ from perfstudio.drc import (
     DEFAULT_DRC_OPTIONS,
     DrcOptions,
     DrcViolation,
+    _aabb_of,
+    _aabb_overlap,
+    _component_courtyard,
     run_drc,
 )
-from perfstudio.footprints import footprint_lookup
+from perfstudio.footprints import footprint_lookup, standard_footprints
+from perfstudio.geometry import convex_polygons_overlap, transform_offset
 from perfstudio.model import (
     HEAT_CLEARANCE_MM,
+    VALID_ROTATIONS,
     Board,
     BoardSide,
     ComponentInstance,
@@ -252,9 +257,44 @@ def _violation_to_jsonable(v: DrcViolation) -> dict[str, Any]:
 PYTHON_ONLY_RULES = frozenset({"conductor-crossing", "jumper-under-body"})
 
 
+#: Findings the TypeScript engine reported and this one deliberately does not, dropped
+#: from the EXPECTED side of the comparison below. One entry, and it is the same kind of
+#: divergence as PYTHON_ONLY_RULES above, in the other direction: the port getting SHARPER
+#: rather than gaining a rule.
+#:
+#: `component-body-overlap` compared axis-aligned bounding boxes. A part turns only by a
+#: multiple of 90 degrees, so for a rectangular courtyard the box IS the polygon and the
+#: box test was already exact -- 53 of the 61 generated footprints. The other 8 are the
+#: circular courtyards (`footprints._circle_outline`, a 24-gon), where a box is 29% more
+#: area than the shape, all of it in the corners. So a rectangle clipping the corner of a
+#: circle was reported as an overlap between two parts that genuinely clear each other,
+#: and reported as an ERROR -- which is how a findings panel becomes the thing people
+#: scroll past.
+#:
+#: Across the 15 fixtures that is 41 body-overlap findings, of which 40 are still
+#: overlapping under an exact convex test and this ONE is not: X3 (`r-axial-4`, a
+#: rectangle) against X6 (`c-elec-d5-p2`, a 24-gon), whose boxes meet at a corner the
+#: circle does not reach into.
+#:
+#: Recorded here rather than edited into the .expected.json files, for the reason given
+#: above: those are dumps from the TypeScript engine and hand-editing one would make the
+#: next regeneration silently disagree. Pinned by
+#: test_the_sharper_overlap_rule_clears_a_pair_typescript_could_not below, so it is a
+#: divergence with a test attached rather than a filter.
+SHARPER_THAN_TYPESCRIPT: dict[str, frozenset[tuple[str, tuple[str, ...]]]] = {
+    "random-02": frozenset({("component-body-overlap", ("cmp-3", "cmp-6"))}),
+}
+
+
 @pytest.mark.parametrize("case_name", GOLDEN_CASE_NAMES)
 def test_matches_typescript_golden_drc(case_name: str) -> None:
     doc, expected_violations = _load_golden(case_name)
+    sharper = SHARPER_THAN_TYPESCRIPT.get(case_name, frozenset())
+    expected_violations = [
+        v
+        for v in expected_violations
+        if (v["rule"], tuple(v["componentIds"])) not in sharper
+    ]
 
     actual_violations = [
         _violation_to_jsonable(v)
@@ -313,6 +353,51 @@ def test_golden_fixtures_exercise_seven_of_fifteen_rules() -> None:
         "solder-trace-proximity",
         "solder-trace-too-long",
     }
+
+
+def test_a_rectangular_courtyard_is_its_own_bounding_box() -> None:
+    """What lets `_courtyards_overlap` keep its cheap path, and what bounds the other one.
+
+    A part turns only by a multiple of 90 degrees, so a four-vertex courtyard is never
+    rotated out of axis alignment: for those footprints a bounding box is not an
+    approximation of the polygon, it IS the polygon, and the box test is already the
+    exact one. That is 53 of the 61 generated footprints, and it is why the exact test is
+    reached only by the other 8 -- the circular courtyards, a 24-gon, where a box is 29%
+    more area than the shape and the whole of the difference is in the corners.
+
+    Asserted rather than written down because it is a property of two things that can
+    move independently: the rotations the model allows, and the shapes `footprints.py`
+    generates. A footprint given a hexagonal courtyard, or a 45-degree rotation, widens
+    the approximation from a corner to something nobody has measured.
+    """
+    rectangular = 0
+    circular = 0
+    for footprint in standard_footprints().values():
+        vertices = len(footprint.body_outline)
+        if vertices == 0:
+            continue
+        if vertices != 4:
+            assert vertices == 24, (
+                f"{footprint.id} has a {vertices}-vertex courtyard, which is neither the "
+                f"rectangle rule 1 is exact on nor the 24-gon its error is measured for"
+            )
+            circular += 1
+            continue
+        rectangular += 1
+        for rotation in VALID_ROTATIONS:
+            for mirrored in (False, True):
+                placed = [
+                    transform_offset(point.x, point.y, rotation, mirrored)
+                    for point in footprint.body_outline
+                ]
+                xs = {round(x, 12) for x, _ in placed}
+                ys = {round(y, 12) for _, y in placed}
+                assert len(xs) == 2 and len(ys) == 2, (
+                    f"{footprint.id} at {rotation} deg (mirrored={mirrored}) is no longer an "
+                    f"axis-aligned box, so rule 1 stopped being exact on it"
+                )
+
+    assert (rectangular, circular) == (53, 8)
 
 
 # ---------------------------------------------------------------------------
@@ -1050,6 +1135,67 @@ def test_the_python_only_jumper_rule_fires_where_typescript_had_no_rule_at_all()
         "random-11": 1,
         "random-12": 1,
     }
+
+
+def test_the_sharper_overlap_rule_clears_a_pair_typescript_could_not() -> None:
+    """Pins the one entry in SHARPER_THAN_TYPESCRIPT, from both ends.
+
+    The TypeScript engine reported X3 against X6 on random-02 and this one does not, and
+    the whole of the difference has to be the geometry claimed: their bounding boxes meet,
+    their courtyards do not. Asserting only "we no longer report it" would pass just as
+    well if the rule had stopped working, which is the failure this exists to catch.
+
+    Nothing else moved: 41 body-overlap findings across the fixtures become 40, and this
+    is the one that went.
+    """
+    doc, expected = _load_golden("random-02")
+    by_id = {c.id: c for c in doc.components}
+    x3, x6 = by_id["cmp-3"], by_id["cmp-6"]
+
+    typescript_reported = {
+        (v["rule"], tuple(v["componentIds"])) for v in expected
+    }
+    assert ("component-body-overlap", ("cmp-3", "cmp-6")) in typescript_reported
+
+    still_reported = {
+        tuple(v.component_ids)
+        for v in run_drc(doc, _FOOTPRINT_LOOKUP)
+        if v.rule == "component-body-overlap"
+    }
+    assert ("cmp-3", "cmp-6") not in still_reported
+    # And the pair really is the shape the exclusion says it is: a rectangle against a
+    # 24-gon, boxes meeting where the circle does not reach.
+    yards = {}
+    for component in (x3, x6):
+        footprint = _FOOTPRINT_LOOKUP(component.footprint_id)
+        assert footprint is not None
+        yards[component.id] = _component_courtyard(component, footprint, doc.board)
+    assert sorted(len(points) for points in yards.values()) == [4, 24]
+    assert _aabb_overlap(_aabb_of(yards["cmp-3"]), _aabb_of(yards["cmp-6"]))
+    assert not convex_polygons_overlap(yards["cmp-3"], yards["cmp-6"])
+
+    total = sum(
+        1
+        for case_name in GOLDEN_CASE_NAMES
+        for v in run_drc(_load_golden(case_name)[0], _FOOTPRINT_LOOKUP)
+        if v.rule == "component-body-overlap"
+    )
+    assert total == 40
+
+
+def test_two_courtyards_that_only_touch_are_not_overlapping() -> None:
+    """Strict on both paths, and it has to be: `placer` packs parts until their
+    courtyards meet and prices exactly this predicate, so a board it hands back as legal
+    must not come straight back here as an error."""
+    doc = make_doc(
+        components=(
+            # Two axial resistors end to end: rectangular courtyards, meeting exactly.
+            make_component("cmp-1", "R1", "r-axial-3", hole(4, 4)),
+            make_component("cmp-2", "R2", "r-axial-3", hole(8, 4)),
+        )
+    )
+
+    assert by_rule(run_drc(doc, _FOOTPRINT_LOOKUP), "component-body-overlap") == []
 
 
 def test_a_geometric_crossing_is_reported_as_an_error() -> None:

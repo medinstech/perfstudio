@@ -90,7 +90,12 @@ from .commands import (
     move_components,
 )
 from .connectivity import FootprintLookup
-from .geometry import format_hole, transform_offset
+from .geometry import (
+    convex_polygons_overlap,
+    format_hole,
+    is_axis_aligned_box,
+    transform_offset,
+)
 from .model import (
     HEAT_CLEARANCE_MM,
     HEAT_SENSITIVE_ARCHETYPES,
@@ -101,6 +106,7 @@ from .model import (
     ComponentId,
     HoleCoord,
     PerfDocument,
+    Point2,
     Rotation,
 )
 from .router import DEFAULT_ROUTER_COSTS
@@ -392,6 +398,25 @@ class _Box:
     max_y: float
 
 
+def _placed(
+    poly: tuple[Point2, ...] | None, box: _Box, x: float, y: float
+) -> tuple[Point2, ...]:
+    """One courtyard in board mm, from whichever of the two forms the part carries.
+
+    A part with no outline of its own is a rectangle, so its box is handed over as the
+    four corners it is -- which keeps the exact test's other operand honest without
+    storing a polygon for 53 of the 61 footprints that would only ever be their own box.
+    """
+    if poly is not None:
+        return tuple(Point2(p.x + x, p.y + y) for p in poly)
+    return (
+        Point2(box.min_x + x, box.min_y + y),
+        Point2(box.max_x + x, box.min_y + y),
+        Point2(box.max_x + x, box.max_y + y),
+        Point2(box.min_x + x, box.max_y + y),
+    )
+
+
 def _body_centre(box: _Box | None, anchor_x: float, anchor_y: float) -> tuple[float, float]:
     """Centre of a part's body in board mm, given its anchor.
 
@@ -427,6 +452,14 @@ class _Part:
     pin_offsets: tuple[tuple[tuple[int, int], ...], ...]
     #: Courtyard box per rotation index, relative to the anchor in mm.
     rel_box: tuple[_Box | None, ...]
+    #: Courtyard OUTLINE per rotation index, relative to the anchor in mm -- and ``None``
+    #: whenever the box above is already that outline exactly, which it is for 53 of the
+    #: 61 generated footprints (a part turns only by a multiple of 90 degrees, so a
+    #: rectangle never leaves the axes). Only the circular courtyards -- the electrolytics
+    #: and the LEDs -- carry one, and only they ever need one: a box round a 24-gon is 29%
+    #: more area, all of it in the corners. ``drc._courtyards_overlap`` takes the same two
+    #: paths for the same reason, and the two are not allowed to disagree.
+    rel_poly: tuple[tuple[Point2, ...] | None, ...]
     #: Legal anchor range per rotation index: (min_col, max_col, min_row, max_row).
     #: None when the part cannot fit on the board at that rotation at all.
     anchor_bounds: tuple[tuple[int, int, int, int] | None, ...]
@@ -455,6 +488,7 @@ def _build_parts(doc: PerfDocument, lookup: FootprintLookup) -> list[_Part]:
 
         offsets: list[tuple[tuple[int, int], ...]] = []
         boxes: list[_Box | None] = []
+        polys: list[tuple[Point2, ...] | None] = []
         bounds: list[tuple[int, int, int, int] | None] = []
         for rotation in VALID_ROTATIONS:
             placed = tuple(
@@ -467,15 +501,17 @@ def _build_parts(doc: PerfDocument, lookup: FootprintLookup) -> list[_Part]:
             offsets.append(placed)
 
             if footprint.body_outline:
-                xs: list[float] = []
-                ys: list[float] = []
-                for point in footprint.body_outline:
-                    tx, ty = transform_offset(point.x, point.y, rotation, component.mirrored)
-                    xs.append(tx)
-                    ys.append(ty)
+                outline = tuple(
+                    Point2(*transform_offset(point.x, point.y, rotation, component.mirrored))
+                    for point in footprint.body_outline
+                )
+                xs = [p.x for p in outline]
+                ys = [p.y for p in outline]
                 boxes.append(_Box(min(xs), max(xs), min(ys), max(ys)))
+                polys.append(None if is_axis_aligned_box(outline) else outline)
             else:
                 boxes.append(None)
+                polys.append(None)
 
             if placed:
                 min_dc = min(dc for dc, _ in placed)
@@ -500,6 +536,7 @@ def _build_parts(doc: PerfDocument, lookup: FootprintLookup) -> list[_Part]:
                 pin_numbers=tuple(p.number for p in footprint.pins),
                 pin_offsets=tuple(offsets),
                 rel_box=tuple(boxes),
+                rel_poly=tuple(polys),
                 anchor_bounds=tuple(bounds),
                 edge_seeking=archetype in EDGE_SEEKING_ARCHETYPES,
                 heat_source=archetype in HEAT_SOURCE_ARCHETYPES,
@@ -892,8 +929,18 @@ class _Scorer:
     def pair_terms(self, state: _State, a: int, b: int) -> tuple[int, float, float]:
         """(overlapping? 0/1, courtyard overlap mm^2, heat proximity mm) for one pair.
 
-        The 0/1 is ``drc._aabb_overlap`` spelled out: strict inequality on all four
-        sides, so this module and DRC never disagree about whether two parts touch.
+        The 0/1 is ``drc._courtyards_overlap`` spelled out, both of its paths, because
+        this module and DRC are not allowed to disagree about whether two parts are in
+        each other's way: the boxes first, with strict inequality on all four sides so
+        that parts packed until their courtyards meet are correct rather than one ULP
+        inside an error; then, only when a circular courtyard is involved, the exact
+        convex test. A rectangle clipping the corner of an electrolytic is the case that
+        separates the two, and scoring it as an overlap DRC will not confirm means the
+        annealer moves parts apart to satisfy nobody.
+
+        The AREA stays the boxes' intersection: it is the annealer's gradient, not a
+        verdict, and it is charged only for a pair the verdict above says overlaps -- so
+        it never prices a square millimetre of overlap that does not exist.
         """
         part_a, part_b = state.parts[a], state.parts[b]
         box_a = part_a.rel_box[state.rot[a]]
@@ -909,8 +956,17 @@ class _Scorer:
             dx = min(box_a.max_x + ax, box_b.max_x + bx) - max(box_a.min_x + ax, box_b.min_x + bx)
             dy = min(box_a.max_y + ay, box_b.max_y + by) - max(box_a.min_y + ay, box_b.min_y + by)
             if dx > 0 and dy > 0:
-                touching = 1
-                overlap = dx * dy
+                poly_a = part_a.rel_poly[state.rot[a]]
+                poly_b = part_b.rel_poly[state.rot[b]]
+                if poly_a is None and poly_b is None:
+                    inside = True  # Both boxes ARE their courtyards; the answer is exact.
+                else:
+                    inside = convex_polygons_overlap(
+                        _placed(poly_a, box_a, ax, ay), _placed(poly_b, box_b, bx, by)
+                    )
+                if inside:
+                    touching = 1
+                    overlap = dx * dy
 
         heat = 0.0
         hot = (part_a.heat_source and part_b.heat_sensitive) or (

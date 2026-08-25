@@ -41,6 +41,37 @@ closed without a bump.
     digits absorbs ten of those and still fails on a tenth of a millimetre. The other three
     formats print to one decimal place and are compared as text.
 
+### Fixed
+
+- **A resistor sitting diagonally off an electrolytic is no longer a DRC error.** Rule 1
+  (`component-body-overlap`) compared axis-aligned bounding boxes, and the note in the
+  source called what was missing "a true rotated-polygon intersection test" — which
+  pointed at a problem this project does not have. A part turns only by a multiple of 90
+  degrees, so a rectangular courtyard never leaves the axes: for **53 of the 61** generated
+  footprints the box *is* the polygon and the check was already exact. The other 8 are the
+  circular courtyards — the electrolytics and the LEDs, a 24-gon from `_circle_outline` —
+  where a box is **29% more area**, all of it in the corners. So the entire defect was a
+  rectangle clipping the corner of a circle and being reported as an **error** on two
+  parts that genuinely clear each other, which is how a findings panel becomes the thing
+  people scroll past.
+  - Both paths are kept, and deliberately: the boxes still decide for two rectangles,
+    because the separating-axis projections multiply by an edge length and scaling can
+    collapse two floats that differed — which would move the verdict on a pair overlapping
+    by one ULP. The placer packs parts until their courtyards meet, so that pair is not
+    hypothetical.
+  - `placer` reads the same predicate, out of `geometry.convex_polygons_overlap`, because
+    an optimiser that scores an overlap its own checker will not confirm moves parts apart
+    to satisfy nobody. Its overlap AREA — the annealer's gradient — is charged only for a
+    pair the verdict says overlaps, so it never prices a square millimetre that is not
+    there.
+  - **One recorded divergence from the TypeScript engine**, and it is the first in that
+    direction: `random-02`'s X3 against X6, listed by name in `SHARPER_THAN_TYPESCRIPT` and
+    pinned by a test that asserts the geometry — boxes meeting, courtyards clear — rather
+    than merely that the finding is gone. Across the 15 fixtures, 41 body-overlap findings
+    become 40. Recorded in the test rather than edited into the `.expected.json` files, for
+    the same reason `PYTHON_ONLY_RULES` is: those are dumps from the engine this one is a
+    port of, and hand-editing one would make the next regeneration silently disagree.
+
 ### Changed
 
 - **The placer knows what a stripboard is.** `striproute.py` has said so in its own

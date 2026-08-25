@@ -43,12 +43,14 @@ from .connectivity import FootprintLookup, PhysicalNet, PhysicalPinRef, extract_
 from .geometry import (
     all_pin_holes,
     consumed_holes,
+    convex_polygons_overlap,
     copper_gap_mm,
     edge_connector_holes,
     format_hole,
     hole_key,
     hole_to_mm,
     holes_under_line,
+    is_axis_aligned_box,
     is_inside_board,
     manhattan,
     mounting_head_covers,
@@ -330,53 +332,110 @@ class _Aabb:
     max_y: float
 
 
+def _component_courtyard(
+    component: ComponentInstance, footprint: Footprint, board: Board
+) -> tuple[Point2, ...]:
+    """A component's courtyard outline placed on the board, in board-space mm.
+
+    The COURTYARD, not the body: `footprints.py` pads it by `COURTYARD_MARGIN_MM` on
+    every side, so two of these touching means the parts still have their clearance.
+    """
+    anchor_mm = hole_to_mm(component.anchor, board)
+    placed: list[Point2] = []
+    for p in footprint.body_outline:
+        tx, ty = transform_offset(p.x, p.y, component.rotation, component.mirrored)
+        placed.append(Point2(anchor_mm.x + tx, anchor_mm.y + ty))
+    return tuple(placed)
+
+
+def _aabb_of(points: Sequence[Point2]) -> _Aabb:
+    xs = [p.x for p in points]
+    ys = [p.y for p in points]
+    return _Aabb(min(xs), max(xs), min(ys), max(ys))
+
+
 def _component_aabb(
     component: ComponentInstance, footprint: Footprint, board: Board
 ) -> _Aabb | None:
-    """Bounding box of a component's transformed body outline, in board-space mm.
+    """The courtyard's bounding box, for the two rules that want a box and not a shape.
 
-    NOTE: axis-aligned bounding box only. A true rotated-polygon intersection test
-    is future work; for v1 this is an acceptable (slightly conservative)
-    approximation -- it can over-report on two skewed, non-rectangular bodies that
-    are close but not truly touching, but it will never miss a genuine overlap
-    between axis-aligned bodies, which covers the overwhelming majority of
-    through-hole footprints.
+    `heat-proximity` measures between box CENTRES -- and must keep doing exactly that,
+    because `placer` measures the same pair the same way and the two are not allowed to
+    disagree -- and `mounting-hole-clearance` asks for the nearest point of a part to a
+    screw. Neither is asking whether two shapes intersect, which is the question
+    :func:`_courtyards_overlap` had to get exact.
     """
     if len(footprint.body_outline) == 0:
         return None
-    anchor_mm = hole_to_mm(component.anchor, board)
-    min_x = math.inf
-    max_x = -math.inf
-    min_y = math.inf
-    max_y = -math.inf
-    for p in footprint.body_outline:
-        tx, ty = transform_offset(p.x, p.y, component.rotation, component.mirrored)
-        x = anchor_mm.x + tx
-        y = anchor_mm.y + ty
-        min_x = min(min_x, x)
-        max_x = max(max_x, x)
-        min_y = min(min_y, y)
-        max_y = max(max_y, y)
-    return _Aabb(min_x, max_x, min_y, max_y)
+    return _aabb_of(_component_courtyard(component, footprint, board))
 
 
 def _aabb_overlap(a: _Aabb, b: _Aabb) -> bool:
     return a.min_x < b.max_x and a.max_x > b.min_x and a.min_y < b.max_y and a.max_y > b.min_y
 
 
+@dataclass(frozen=True, slots=True)
+class _Courtyard:
+    """One placed courtyard, with the two facts the overlap test needs about it."""
+
+    points: tuple[Point2, ...]
+    box: _Aabb
+    #: Whether the box IS the polygon, in which case the cheap test is the exact one.
+    is_box: bool
+
+
+def _courtyards_overlap(a: _Courtyard, b: _Courtyard) -> bool:
+    """Whether two placed courtyards share any area. Strict: touching is not overlapping.
+
+    THREE PATHS, and which one a pair takes is the whole story of this rule.
+
+    The bounding boxes are tried first because they reject most pairs on a real board for
+    four comparisons. Then: a part turns only by a multiple of 90 degrees, so a
+    RECTANGULAR courtyard is never rotated out of axis alignment -- for two of those the
+    box is not an approximation of the polygon, it IS the polygon, and the answer is
+    already exact. That covers 53 of the 61 generated footprints, and it is deliberately
+    the same arithmetic as before rather than the general test applied to a special case:
+    the separating-axis projections multiply by an edge length, and scaling can collapse
+    two floats that differed, which would move the verdict on a pair overlapping by one
+    ULP. `placer` prices exactly this predicate and packs parts until their courtyards
+    meet, so that pair is not hypothetical.
+
+    Only the circular courtyards -- the electrolytics and the LEDs, a 24-gon from
+    `footprints._circle_outline` -- reach the exact test, and only they ever needed it: a
+    box is 29% more area than the circle inside it, all of it in the corners, so a
+    rectangle clipping the corner of a circle was reported as an overlap where the parts
+    genuinely clear each other. Measured across the 15 golden fixtures: 41 hits, 40 of
+    them real, 1 (`random-02`, X3 against X6) the box alone. That one case is the
+    deliberate, recorded divergence from the TypeScript engine this one is a port of --
+    see `SHARPER_THAN_TYPESCRIPT` in `tests/test_drc.py`, which names it rather than
+    letting it slip past the differential proof unremarked.
+    """
+    if not _aabb_overlap(a.box, b.box):
+        return False
+    if a.is_box and b.is_box:
+        return True
+    return convex_polygons_overlap(a.points, b.points)
+
+
 def _check_component_body_overlap(doc: PerfDocument, lookup: FootprintLookup) -> list[DrcViolation]:
-    boxes: list[tuple[ComponentInstance, _Aabb]] = []
+    courtyards: list[tuple[ComponentInstance, _Courtyard]] = []
     for component in doc.components:
         footprint = lookup(component.footprint_id)
-        if footprint is None:
+        if footprint is None or len(footprint.body_outline) == 0:
             continue
-        box = _component_aabb(component, footprint, doc.board)
-        if box is not None:
-            boxes.append((component, box))
+        points = _component_courtyard(component, footprint, doc.board)
+        courtyards.append(
+            (
+                component,
+                _Courtyard(
+                    points=points, box=_aabb_of(points), is_box=is_axis_aligned_box(points)
+                ),
+            )
+        )
 
     violations: list[DrcViolation] = []
-    for (a_component, a_box), (b_component, b_box) in itertools.combinations(boxes, 2):
-        if not _aabb_overlap(a_box, b_box):
+    for (a_component, a_yard), (b_component, b_yard) in itertools.combinations(courtyards, 2):
+        if not _courtyards_overlap(a_yard, b_yard):
             continue
         violations.append(
             DrcViolation(
@@ -385,7 +444,7 @@ def _check_component_body_overlap(doc: PerfDocument, lookup: FootprintLookup) ->
                 message=(
                     f"Component {a_component.ref} (anchored at {_safe_hole(a_component.anchor)}) and "
                     f"{b_component.ref} (anchored at {_safe_hole(b_component.anchor)}) have overlapping "
-                    f"body outlines [axis-aligned bounding-box check]."
+                    f"body outlines."
                 ),
                 holes=(a_component.anchor, b_component.anchor),
                 component_ids=(a_component.id, b_component.id),

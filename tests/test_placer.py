@@ -362,6 +362,48 @@ def test_overlap_is_counted_by_exactly_the_predicate_drc_uses() -> None:
     assert len(overlaps) == plan.after.overlap_pairs
 
 
+def test_a_rectangle_clipping_the_corner_of_a_circle_is_nobodys_overlap() -> None:
+    """The other half of the same agreement, on the pair that separates the two paths.
+
+    A courtyard is a rectangle for 53 of the 61 generated footprints and a 24-gon for the
+    other 8 -- the electrolytics and the LEDs -- and a box round a 24-gon is 29% more
+    area, all of it in the corners. So a resistor can sit diagonally off an electrolytic
+    with their BOXES overlapping and their courtyards clear of each other. This is the
+    exact placement `random-02` puts X3 and X6 in, and it is the one finding
+    `SHARPER_THAN_TYPESCRIPT` in test_drc.py records.
+
+    Scoring it as an overlap would have the annealer move parts apart to satisfy a rule
+    that never fires, which is worse than either module being wrong on its own: the user
+    sees a board rearranged for no reason they can find in the findings panel.
+    """
+    registry = footprint_lookup()
+    doc = make_doc(
+        components=(
+            dataclasses.replace(
+                component("X3", "r-axial-4", hole(11, 12)), rotation=180, mirrored=True
+            ),
+            component("X6", "c-elec-d5-p2", hole(16, 14)),
+        ),
+        board=dataclasses.replace(BOARD, cols=30, rows=20),
+    )
+    state, scorer = _scorer_for(doc, registry, PlacementWeights())
+    part_a, part_b = state.parts
+
+    # Not vacuous: the two boxes really do overlap, which is what used to be reported.
+    box_a = part_a.rel_box[state.rot[0]]
+    box_b = part_b.rel_box[state.rot[1]]
+    assert box_a is not None and box_b is not None
+    ax, ay = state.col[0] * doc.board.pitch, state.row[0] * doc.board.pitch
+    bx, by = state.col[1] * doc.board.pitch, state.row[1] * doc.board.pitch
+    assert min(box_a.max_x + ax, box_b.max_x + bx) > max(box_a.min_x + ax, box_b.min_x + bx)
+    assert min(box_a.max_y + ay, box_b.max_y + by) > max(box_a.min_y + ay, box_b.min_y + by)
+
+    cost = scorer.full(state)
+    assert cost.overlap_pairs == 0
+    assert cost.overlap_mm2 == 0.0
+    assert [v for v in run_drc(doc, registry) if v.rule == "component-body-overlap"] == []
+
+
 def test_it_clears_the_drc_errors_it_is_responsible_for() -> None:
     """The dense fixture starts with six overlapping pairs. A placer that cannot fix
     that is not doing the job the user pressed the button for."""

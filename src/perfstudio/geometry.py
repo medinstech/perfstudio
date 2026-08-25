@@ -18,6 +18,7 @@ from __future__ import annotations
 import dataclasses
 import math
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal
 
@@ -823,6 +824,62 @@ def neighbors8(c: HoleCoord, board: Board) -> list[HoleCoord]:
         HoleCoord(c.col - 1, c.row - 1),
     )
     return [n for n in candidates if is_inside_board(n, board)]
+
+
+# ---------------------------------------------------------------------------
+# Courtyards: whether two parts are in each other's way
+# ---------------------------------------------------------------------------
+#
+# Two consumers, and they must never disagree: `drc.component-body-overlap` reports the
+# pair, and `placer` refuses to hand back a placement containing one. An optimiser that
+# scores an overlap its own checker will not confirm separates parts for nothing; one
+# that misses an overlap the checker reports hands over a board with an error in it.
+
+
+def is_axis_aligned_box(points: Sequence[Point2]) -> bool:
+    """Whether a polygon is a rectangle with its sides on the axes.
+
+    Worth asking because the answer is yes for 53 of the 61 generated footprints, and
+    because a part turns only by a multiple of 90 degrees -- so for those a bounding box
+    is not an approximation of the courtyard, it IS the courtyard, and the cheap overlap
+    test is the exact one. `footprints._circle_outline` is what makes the other 8
+    different.
+    """
+    if len(points) != 4:
+        return False
+    return len({p.x for p in points}) == 2 and len({p.y for p in points}) == 2
+
+
+def convex_polygons_overlap(a: Sequence[Point2], b: Sequence[Point2]) -> bool:
+    """Whether two convex polygons share any area, by separating axes.
+
+    STRICT: two courtyards that touch exactly do not overlap, which is the same
+    convention as the bounding-box test it refines (`a.min_x < b.max_x`, not `<=`) and
+    the one both callers already used. Parts packed until their courtyards meet are
+    correct rather than one ULP inside an error.
+
+    Only the edge normals of the two polygons are tested, which is the whole of the
+    separating-axis theorem for CONVEX shapes and is why the caller must not pass a
+    concave one. Every courtyard `footprints.py` generates is a rectangle or a regular
+    24-gon, and `test_a_rectangular_courtyard_is_its_own_bounding_box` is what keeps that
+    from drifting quietly.
+    """
+    for subject, other in ((a, b), (b, a)):
+        count = len(subject)
+        for index in range(count):
+            here = subject[index]
+            next_point = subject[(index + 1) % count]
+            # The outward normal of this edge, unnormalised: scaling an axis cannot move
+            # a projection across another, so there is nothing to be gained by dividing.
+            axis_x, axis_y = -(next_point.y - here.y), next_point.x - here.x
+            subject_projections = [axis_x * p.x + axis_y * p.y for p in subject]
+            other_projections = [axis_x * p.x + axis_y * p.y for p in other]
+            # One axis they are apart on is all it takes.
+            if max(subject_projections) <= min(other_projections):
+                return False
+            if max(other_projections) <= min(subject_projections):
+                return False
+    return True
 
 
 # ---------------------------------------------------------------------------
