@@ -73,6 +73,11 @@ closed without a bump.
   from the same host over the same connection as the installer, so it says the download
   came through intact, not that GitHub handed out the file this project built. That second
   claim needs the code signing §12 has not bought.
+  - The job that builds it now runs on a **dry run** as well, with every step that
+    publishes gated individually. It was skipped there, which left three globs that must
+    each match exactly one file as the only thing in the release path never executed
+    anywhere but on the tag — and `docs/RELEASING.md` exists to say that the tag is the
+    worst place to meet a first run.
 
 - **The build guide is compared against a known-good one** (`tests/test_guide_golden.py`,
   `tests/guide_golden/`). All four exports of the routed NE555 fixture — JSON, the

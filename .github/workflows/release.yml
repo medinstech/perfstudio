@@ -380,9 +380,13 @@ jobs:
   # with half its assets and the wrong notes. It is a job of its own rather than a step on
   # the end of each build so that the three bundles still build side by side.
   attach-bundles:
-    name: Attach the other bundles
+    name: The checksums, and the other bundles
     needs: [windows, linux, macos]
-    if: startsWith(github.ref, 'refs/tags/') && !inputs.dry_run
+    # Runs on a dry run as well, and everything that PUBLISHES is gated step by step
+    # instead. The whole job used to be skipped, which left the checksum file below as the
+    # one thing in the release path that had never been executed anywhere except on the
+    # tag itself -- and the tag is the worst possible place to meet a first run.
+    if: startsWith(github.ref, 'refs/tags/') || inputs.dry_run
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -405,14 +409,11 @@ jobs:
           name: perfstudio-windows-installer
           path: releases
 
-      # Two steps and in this order, deliberately: the bundles are what somebody is
-      # waiting for, and a failure while hashing must not be able to leave a published
-      # release with no Linux or macOS build on it.
       - name: Attach the Linux and macOS bundles
+        if: startsWith(github.ref, 'refs/tags/') && !inputs.dry_run
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          ls -l releases/
           gh release upload "$GITHUB_REF_NAME" \
             releases/*.AppImage releases/*.dmg --clobber \
             --repo "$GITHUB_REPOSITORY"
@@ -421,12 +422,24 @@ jobs:
       # release notes tell a person to run by hand. Hashed from inside `releases/` so the
       # file records bare names -- `sha256sum -c SHA256SUMS` then works in the folder the
       # files were downloaded into, which is the only place anybody will run it.
-      - name: Attach the checksums
-        env:
-          GH_TOKEN: ${{ github.token }}
+      #
+      # Built on a dry run too, and this step is the reason the job now runs on one: three
+      # globs that must each match exactly one file is the kind of thing that is either
+      # right or completely wrong, and it costs seconds to find out here.
+      - name: Build the checksums
         run: |
+          ls -l releases/
           cd releases
           sha256sum -- *.exe *.AppImage *.dmg > SHA256SUMS
           cat SHA256SUMS
-          gh release upload "$GITHUB_REF_NAME" SHA256SUMS --clobber \
+
+      # Ordered after the bundles deliberately: those are what somebody is waiting for,
+      # and nothing about the checksum file may be able to leave a published release with
+      # no Linux or macOS build on it.
+      - name: Attach the checksums
+        if: startsWith(github.ref, 'refs/tags/') && !inputs.dry_run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "$GITHUB_REF_NAME" releases/SHA256SUMS --clobber \
             --repo "$GITHUB_REPOSITORY"
