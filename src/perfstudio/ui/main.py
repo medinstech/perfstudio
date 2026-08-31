@@ -20,6 +20,7 @@ document.
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import datetime
 import math
@@ -193,6 +194,7 @@ from perfstudio.placer import (
     summarize_changes as summarize_placement,
 )
 from perfstudio.ratsnest import NetRatsnest, ratsnest, summarize
+from perfstudio.recovery import RecoveryRecord, is_worth_offering
 from perfstudio.router import RoutingStyle, options_for_style
 from perfstudio.schematic import build_schematic
 from perfstudio.schematic_export import drawing_to_svg
@@ -204,6 +206,8 @@ from perfstudio.version import __version__
 from perfstudio.version import describe as describe_version
 
 from . import icons, updater, view3d
+from .autosave import INTERVAL_MS as AUTOSAVE_INTERVAL_MS
+from .autosave import Autosave, disk_state
 from .boardcolors import SCHEMES as BOARD_SCHEMES
 from .boardcolors import choose as choose_board_colour
 from .boardcolors import chosen_key as chosen_board_colour
@@ -232,6 +236,11 @@ def app_settings() -> QSettings:
 
 
 RECENT_FILES_KEY = "recentFiles"
+
+#: How long after the window appears the recovery question is asked. Long enough for the
+#: board to be drawn -- a modal over a blank window looks like a startup error -- and far
+#: shorter than the update check, because this one is about work that already exists.
+RECOVERY_OFFER_DELAY_MS = 400
 
 
 def _stored_bool(settings: QSettings, key: str, default: bool) -> bool:
@@ -1847,6 +1856,20 @@ class MainWindow(QMainWindow):
         #: The document as it last passed through the file: written by a save, filled by
         #: a load. What lets the file watcher tell somebody else's write from our own.
         self._disk_text: str | None = None
+        #: Crash recovery. Built here and STARTED FROM ``main()``, the same discipline the
+        #: update check follows and for a related reason: a suite that builds a great many
+        #: windows has no business leaving a great many files in the user's profile, and a
+        #: constructor that wrote to disk would make every test that opens a window a test
+        #: that writes one. ``test_building_a_window_saves_nothing`` is what holds it.
+        self._autosave = Autosave()
+        self._autosave_timer = QTimer(self)
+        self._autosave_timer.setInterval(AUTOSAVE_INTERVAL_MS)
+        self._autosave_timer.timeout.connect(self._on_autosave_tick)
+        #: Said once, not every thirty seconds. A window that cannot write its recovery
+        #: file has to say so -- silently failing to protect somebody's work is the one
+        #: failure this feature cannot have -- but saying so repeatedly would make the
+        #: status bar useless for anything else.
+        self._autosave_complained = False
         # PLAN.md §9.3 -- the window notices when the file changes underneath it, so an
         # agent that only writes files is a participant rather than a source of stale
         # screens. See _reload_if_changed for what it does about it.
@@ -6150,9 +6173,130 @@ class MainWindow(QMainWindow):
             # the transfer's own cancel path does that, and nothing else will.
             if self._update_checker is not None:
                 self._update_checker.cancel()
+            # A window closed on purpose has nothing to recover: either the work was saved
+            # or the user said discard, and both are decisions. Leaving the record would
+            # offer it back at the next start and ask them the same question again.
+            self._autosave_timer.stop()
+            self._autosave.clear()
             event.accept()
         else:
             event.ignore()
+
+    # -- crash recovery ------------------------------------------------------
+    #
+    # The file watcher already refuses to reload over unsaved edits, because losing
+    # somebody's work to a background event is the one outcome that must not happen. This
+    # is the other half of that sentence: the process can stop without asking anybody, and
+    # until now everything since the last Ctrl+S went with it.
+
+    def start_autosave(self) -> None:
+        """Begin protecting this window's work. Called by ``main()``, never a constructor."""
+        self._autosave_timer.start()
+
+    def _on_autosave_tick(self) -> None:
+        """Write the board if there is anything to lose, and tidy up if there is not."""
+        if not self.is_modified:
+            if self._autosave.written:
+                self._autosave.clear()
+            return
+        text = persist.serialize_document(self.bus.document)
+        if self._autosave.write(text, self.current_path):
+            return
+        if not self._autosave_complained:
+            self._autosave_complained = True
+            self.statusBar().showMessage(
+                t("Could not write the recovery file — save your work yourself."), 0
+            )
+
+    def offer_recovery(self) -> None:
+        """Ask about work left behind by a session that did not come back.
+
+        NOTHING IS RESTORED WITHOUT BEING ASKED, and the default answer restores nothing.
+        The same shape the update check takes with an installer it declines to run, and it
+        matters more here: what is at risk is the user's own board, and a recovery that
+        guessed wrong would put an older document in front of somebody who then presses
+        Ctrl+S over the good one. There is no way back from that, so the decision is
+        theirs.
+        """
+        # Here rather than in ``start_autosave``: this is the one moment the directory is
+        # already being read, it runs off the event loop so it cannot delay the window
+        # appearing, and a fortnight-old record was never urgent.
+        self._autosave.prune()
+        for path, record in self._autosave.records():
+            text, modified = disk_state(record.document_path)
+            if not is_worth_offering(record, text, modified):
+                # Nothing was lost: the save landed and the crash beat the deletion to it.
+                # Removed quietly, because there is no decision here to trouble anybody with.
+                with contextlib.suppress(OSError):
+                    path.unlink(missing_ok=True)
+                continue
+
+            box = QMessageBox(self)
+            box.setIcon(QMessageBox.Icon.Question)
+            box.setWindowTitle(t("Unsaved work was found"))
+            box.setText(f"<b>{record.name}</b>")
+            box.setInformativeText(
+                t(
+                    "PerfStudio stopped without saving this board. A copy from {when} is "
+                    "still here. Opening it does not touch the file on disk — you decide "
+                    "whether to save over it."
+                ).format(when=record.saved_at.replace("T", " ")[:19])
+            )
+            recover = box.addButton(t("Open the Recovered Board"), QMessageBox.ButtonRole.AcceptRole)
+            discard = box.addButton(t("Discard It"), QMessageBox.ButtonRole.DestructiveRole)
+            later = box.addButton(t("Decide Later"), QMessageBox.ButtonRole.RejectRole)
+            box.setDefaultButton(later)
+            box.exec()
+
+            if box.clickedButton() is recover:
+                if self._load_recovered(record):
+                    # Handed over. Keeping it would offer the same board again next time,
+                    # on top of whatever the user does with it now.
+                    with contextlib.suppress(OSError):
+                        path.unlink(missing_ok=True)
+                return
+            if box.clickedButton() is discard:
+                with contextlib.suppress(OSError):
+                    path.unlink(missing_ok=True)
+            else:
+                # Decide later: left exactly where it is, and asked again next time. The
+                # safe answer has to be the one that destroys nothing.
+                return
+
+    def _load_recovered(self, record: RecoveryRecord) -> bool:
+        """Put a recovered document in the window, MODIFIED and unsaved.
+
+        Deliberately not ``_load_path``: this document is not what is on disk, and saying
+        it was would be the one lie that matters here. It comes in dirty, so the title
+        carries the marker, closing asks, and Ctrl+S writes it back to the file it came
+        from -- which is the whole gesture the user is being offered.
+        """
+        result = persist.deserialize_document(record.document)
+        if not result.ok:
+            QMessageBox.critical(
+                self,
+                t("Open failed"),
+                f"[{result.code}] {result.message}",
+            )
+            return False
+        self.current_path = Path(record.document_path) if record.document_path else None
+        # NOT the recovered text: this field is "what our own write put on disk", and the
+        # watcher uses it to tell our save from somebody else's. The recovered document has
+        # never been written anywhere.
+        self._disk_text = None
+        self.bus = self._new_bus(result.document)
+        self._subscribe_bus()
+        self.scene.bus = self.bus
+        self.on_bus_changed(self.bus.document, None)
+        self.view.fit_board()
+        # Marked as unsaved by leaving _saved_document alone: it still points at whatever
+        # this window started with, which is a different object, so `is_modified` is true.
+        self._refresh_title()
+        self._watch_current_path()
+        self.statusBar().showMessage(
+            t("Recovered {name}. It has not been saved yet.").format(name=record.name), 0
+        )
+        return True
 
     # -- what the window remembers between runs ------------------------------
     #
@@ -6223,6 +6367,8 @@ class MainWindow(QMainWindow):
         self._mark_saved()
         self._remember_path(path)
         self._watch_current_path()
+        # The record exists to say "there was unsaved work". There is not, now.
+        self._autosave.clear()
         self.statusBar().showMessage(f"Saved {path}")
 
     def on_export_pdf(self) -> None:
@@ -6692,6 +6838,12 @@ def main() -> int:
     # loop rather than in line: the first thing somebody should see is their board, and
     # the reply to an update check arrives on the loop this call is scheduled on.
     QTimer.singleShot(UPDATE_CHECK_DELAY_MS, window.consider_checking_for_updates)
+    # Before the update check and on a shorter fuse, because it is about work that already
+    # exists: a board somebody spent an evening on is a more urgent thing to put in front
+    # of them than a release. Still through the event loop, so the window is up and the
+    # question arrives over a board rather than instead of one.
+    window.start_autosave()
+    QTimer.singleShot(RECOVERY_OFFER_DELAY_MS, window.offer_recovery)
     return app.exec()
 
 

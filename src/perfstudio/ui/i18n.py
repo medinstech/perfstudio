@@ -528,6 +528,24 @@ TURKISH: Mapping[str, str] = {
     "&Copy This Finding": "Bu Bulguyu &Kopyala",
     "Copy &All Findings": "&Tüm Bulguları Kopyala",
     "findings copied to the clipboard": "bulgu panoya kopyalandı",
+    # -- crash recovery ---------------------------------------------------------
+    "Unsaved work was found": "Kaydedilmemiş çalışma bulundu",
+    "PerfStudio stopped without saving this board. A copy from {when} is "
+    "still here. Opening it does not touch the file on disk — you decide "
+    "whether to save over it.": (
+        "PerfStudio bu kartı kaydetmeden durdu. {when} tarihli bir kopyası hâlâ burada. "
+        "Onu açmak diskteki dosyaya dokunmaz — üzerine yazıp yazmayacağınıza siz "
+        "karar verirsiniz."
+    ),
+    "Open the Recovered Board": "Kurtarılan Kartı Aç",
+    "Discard It": "At",
+    "Decide Later": "Sonra Karar Ver",
+    "Recovered {name}. It has not been saved yet.": (
+        "{name} kurtarıldı. Henüz kaydedilmedi."
+    ),
+    "Could not write the recovery file — save your work yourself.": (
+        "Kurtarma dosyası yazılamadı — çalışmanızı kendiniz kaydedin."
+    ),
     # -- a part the library does not have --------------------------------------
     #
     # The families and their measurements. Not identifiers: the IDENTIFIER a custom part

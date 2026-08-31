@@ -63,6 +63,31 @@ closed without a bump.
     print and the resize. Asking for an alpha channel forces greyscale antialiasing;
     `test_an_exported_png_has_no_subpixel_colour_fringes` measures it, because nothing in
     the code says "no ClearType".
+- **Crash recovery.** The window has always refused to reload over unsaved edits, because
+  losing somebody's work to a background event is the one outcome that must not happen. The
+  process stopping without asking anybody was the other half of that sentence, and until now
+  everything since the last Ctrl+S went with it. A modified board is now written to the
+  user's own data directory every thirty seconds, and the next start offers it back.
+  - **It protects work and never restores any.** The recovered board is offered, the default
+    answer is *Decide Later*, and the file on disk is not touched until the user saves — the
+    same position `ui/updater.py` takes with an installer it declines to run, and it matters
+    more here. What is at risk is somebody's own board, and a restore that guessed wrong
+    would put an older document in front of them that they would then save over the good
+    one. There is nothing to undo that with, so the decision is theirs.
+  - **Two things are checked before anything is offered**, because a crash can land in the
+    gap between a save and the deletion that follows it: a record identical to the file means
+    nothing was lost and is dropped without a question, and a record OLDER than the file is
+    the stale copy and is never offered at all.
+  - **Records live in the user's data directory, never beside the board.** A sidecar file
+    would be litter in a folder somebody curates, would fail on a read-only or network
+    location, and — the case that matters most — has nowhere to go at all for a board that
+    was never saved, which is precisely the board with the most to lose.
+  - **The write is atomic and cannot raise into the window.** A crash during the write must
+    not leave a half-file where the good one was, and a full disk or a locked profile must
+    not take the board down *from the code that exists to protect it*; the window says so
+    once and carries on. `recovery.py` is pure and `ui/autosave.py` is the host, the same
+    split as `updates.py` against `ui/updater.py`, so what a record means is decided by
+    functions a test can hand a string to.
 - **A part the library does not have: Custom Part…, in the Parts dock and in Add a Part.**
   Sixty-one footprints is a good library and not every part anybody owns, and until now a
   part that was not in it could not be placed at all — the board could not be built, and the

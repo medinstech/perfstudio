@@ -21,7 +21,7 @@ python -m perfstudio.ui.main --headless tools/diffcheck/golden/dense.perf
 python -m perfstudio.mcp          # the MCP server (docs/MCP.md)
 ```
 
-The suite is ~1360 tests in about 40 seconds, so run all of it; there is no reason to
+The suite is ~2000 tests in under a minute, so run all of it; there is no reason to
 narrow to one file except while iterating.
 
 **`mypy --strict src`, never `src tests`.** The engine is strict-clean and must stay
@@ -607,6 +607,39 @@ unsaved it reloads itself when the file changes; with unsaved edits it refuses a
 so, because losing somebody's work to a background event is the one outcome that must not
 happen. A save does not trigger a reload — `_disk_text` is what tells our own write from
 somebody else's.
+
+**Crash recovery is the other half of that sentence**, because the process can also stop
+without asking anybody. `recovery.py` is pure — what a record contains and whether one is
+worth offering back are questions about strings — and `ui/autosave.py` is the host with the
+clock, the directory and the writes. The same split as `updates.py` / `ui/updater.py`, and
+it takes the same final position: **it protects work and never restores any.** A recovered
+document is offered, the default answer is "Decide Later", and the file on disk is not
+touched until the user saves. An automatic restore that guessed wrong would put an older
+board in front of somebody who then presses Ctrl+S, and there is no way back from that.
+
+Five decisions carry it, each with a test:
+
+- **A record's existence means "there was unsaved work".** One is written only while the
+  document differs from disk and deleted on every save and every clean close, which is what
+  makes the question at startup simple.
+- **`is_worth_offering` still checks two things**, because a crash can land between a save
+  and the deletion after it: a record identical to the file means nothing was lost, and a
+  record OLDER than the file is the stale copy. The second is the one that must not be got
+  wrong.
+- **Records live in the user's data directory, never beside the board.** A sidecar would be
+  litter in a curated folder, would fail on a read-only location, and has nowhere to go at
+  all for a board that was never saved — the board with the most to lose.
+- **The write is atomic and never raises.** A crash during the write must not leave a
+  half-file where the good one was, and a full disk must not take the board down *from the
+  code meant to protect it*; `Autosave.write` returns a bool and the window says so once.
+- **Nothing starts from the constructor** (`test_building_a_window_saves_nothing`), the same
+  rule the update check follows: a suite that builds a great many windows must not leave a
+  great many files in somebody's profile. `main()` starts the timer; `offer_recovery` runs
+  off the event loop and prunes there, where it cannot delay the window appearing.
+
+`_load_recovered` is deliberately **not** `_load_path`: the document did not come from the
+file it names, so it arrives modified with `_disk_text = None`, and Ctrl+S is the gesture
+that puts it back.
 
 **`router.py` keys its own sets on `(col, row)` tuples, not `geometry.hole_key`**, and
 memoises the R5' proximity answer per hole. Both are measured (33% off a 100 × 60 board;

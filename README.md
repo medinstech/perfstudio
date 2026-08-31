@@ -220,7 +220,7 @@ src/perfstudio/ui/         Qt application: 2D editor, VTK 3D view, 1:1 PDF expor
                            and headless.py, the no-display run CI checks the output with
 src/perfstudio/mcp/        the MCP server (docs/MCP.md)
 examples/                  a netlist to import
-tests/                     1363 tests; the engine is mypy --strict clean
+tests/                     2009 tests; the engine is mypy --strict clean
 packages/                  the original TypeScript engine, kept as the reference the
                            Python port is proved against
 ```

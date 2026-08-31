@@ -94,6 +94,23 @@ def _settings_in_a_temp_file(tmp_path, monkeypatch):
     yield store
 
 
+@pytest.fixture(autouse=True)
+def _recovery_in_a_temp_dir(tmp_path, monkeypatch):
+    """Keep autosave records out of the real user data directory.
+
+    The same argument as ``_settings_in_a_temp_file`` above and one step sharper: every
+    window built here constructs an ``Autosave``, and closing one deletes its record, so
+    without this the suite would be creating and unlinking files in the developer's own
+    profile -- in the one directory whose whole purpose is to hold work that must not be
+    lost.
+    """
+    from perfstudio.ui import autosave as autosave_module
+
+    directory = tmp_path / "recovery"
+    monkeypatch.setattr(autosave_module, "default_directory", lambda: directory)
+    yield directory
+
+
 def _load_dense() -> PerfDocument:
     text = GOLDEN.read_text(encoding="utf-8")
     result = persist.deserialize_document(text)
@@ -5037,3 +5054,283 @@ def test_editing_a_custom_part_does_not_turn_it_into_a_resistor() -> None:
     document = _custom_document()
     dialog = AddPartDialog(document)
     dialog.select_footprint("box-4x2-p1-r3-15x10x8")
+    assert dialog.chosen_footprint_id() == "box-4x2-p1-r3-15x10x8"
+    dialog.deleteLater()
+def _dirty(window) -> None:
+    """Move a part, so the window differs from what is on disk.
+
+    Through the bus like everything else here, because ``is_modified`` compares the
+    document by IDENTITY -- and a command is the only thing that makes a new one.
+    """
+    component = window.bus.document.components[0]
+    anchor = HoleCoord(component.anchor.col + 1, component.anchor.row)
+    result = window.bus.dispatch(
+        "component.move", MoveComponentPayload(id=component.id, anchor=anchor)
+    )
+    assert result.ok, result.message
+
+
+# ---------------------------------------------------------------------------
+# Crash recovery
+# ---------------------------------------------------------------------------
+#
+# The file watcher already refuses to reload over unsaved edits, because losing somebody's
+# work to a background event is the one outcome that must not happen. This is the other
+# half of that sentence: the process can stop without asking anybody.
+
+
+def test_building_a_window_saves_nothing(_recovery_in_a_temp_dir) -> None:
+    """The same rule the update check follows, and for a related reason: a suite that
+    builds a great many windows has no business leaving a great many files in somebody's
+    profile. The timer is started by ``main()``, not by a constructor."""
+    window = _window_on(_load_dense())
+    try:
+        assert not _recovery_in_a_temp_dir.exists()
+        assert not window._autosave_timer.isActive()
+    finally:
+        _close(window)
+
+
+def test_a_tick_writes_the_board_only_when_there_is_something_to_lose() -> None:
+    """Unmodified means the file on disk already has it, and a record then says something
+    untrue: that there was unsaved work. The next start would offer it back."""
+    window = _window_on(_load_dense())
+    try:
+        window._on_autosave_tick()
+        assert not window._autosave.written
+
+        _dirty(window)
+        window._on_autosave_tick()
+        assert window._autosave.written
+        assert window._autosave.path.exists()
+    finally:
+        _close(window)
+
+
+def test_a_tick_tidies_up_after_the_work_stops_being_unsaved() -> None:
+    """Undo your way back to where you started and there is nothing to recover any more."""
+    window = _window_on(_load_dense())
+    try:
+        _dirty(window)
+        window._on_autosave_tick()
+        assert window._autosave.path.exists()
+
+        window.on_undo()
+        window._on_autosave_tick()
+        assert not window._autosave.path.exists()
+    finally:
+        _close(window)
+
+
+def test_saving_removes_the_recovery_record(tmp_path) -> None:
+    """A record's existence means "there was unsaved work". After a save there is not."""
+    window = _window_on(_load_dense())
+    try:
+        _dirty(window)
+        window._on_autosave_tick()
+        assert window._autosave.path.exists()
+
+        window._save_to(tmp_path / "board.perf")
+        assert not window._autosave.path.exists()
+    finally:
+        _close(window)
+
+
+def test_closing_cleanly_removes_the_recovery_record() -> None:
+    """Either the work was saved or the user said discard, and both are decisions. Leaving
+    the record would ask them the same question again at the next start."""
+    window = _window_on(_load_dense())
+    _dirty(window)
+    window._on_autosave_tick()
+    path = window._autosave.path
+    assert path.exists()
+
+    _close(window)
+    assert not path.exists()
+
+
+def test_a_recovered_board_arrives_unsaved_and_pointed_at_its_own_file(tmp_path) -> None:
+    """Recovering is not opening. The document did not come from the file it names, so
+    saying it did would be the one lie that matters here: the title would show no marker,
+    closing would not ask, and the next crash would take it again."""
+    from perfstudio.recovery import RecoveryRecord
+
+    board = tmp_path / "amp.perf"
+    text = persist.serialize_document(_load_dense())
+    board.write_text("a different, older board", encoding="utf-8")
+
+    window = _window_on(_load_dense())
+    try:
+        record = RecoveryRecord(
+            session="gone", document_path=str(board),
+            saved_at="2026-08-31T14:00:00.000Z", version="0.9.0", document=text,
+        )
+        assert window._load_recovered(record) is True
+
+        assert window.current_path == board
+        assert window.is_modified, "a recovered board has not been saved anywhere"
+        assert len(window.bus.document.components) == len(_load_dense().components)
+        # THE FILE IS UNTOUCHED. Recovery offers work; it does not write any.
+        assert board.read_text(encoding="utf-8") == "a different, older board"
+    finally:
+        _close(window)
+
+
+def test_a_record_the_file_already_has_is_dropped_without_asking(tmp_path) -> None:
+    """The save landed and the crash beat the deletion to it. There is no decision here, so
+    there is no question -- and the record goes, rather than being offered every start."""
+    from perfstudio.recovery import RecoveryRecord, format_record
+    from perfstudio.ui.autosave import Autosave
+
+    board = tmp_path / "amp.perf"
+    text = persist.serialize_document(_load_dense())
+    board.write_text(text, encoding="utf-8")
+
+    window = _window_on(_load_dense())
+    try:
+        directory = window._autosave.directory
+        directory.mkdir(parents=True, exist_ok=True)
+        stale = directory / "gone.perfrecover"
+        stale.write_text(
+            format_record(
+                RecoveryRecord(
+                    session="gone", document_path=str(board),
+                    saved_at="2026-08-31T14:00:00.000Z", version="0.9.0", document=text,
+                )
+            ),
+            encoding="utf-8",
+        )
+        assert len(Autosave(directory).records()) == 1
+
+        # No dialog is reached, so no monkeypatching is needed: a message box here would
+        # hang the run, which is itself the assertion.
+        window.offer_recovery()
+        assert not stale.exists()
+    finally:
+        _close(window)
+def _answer_recovery(monkeypatch, label: str) -> list[str]:
+    """Press one of the recovery dialog's buttons without a person.
+
+    BY LABEL, not by position. Qt lays a message box out in the platform's own button
+    order, so an index would be testing this machine's conventions rather than the
+    branch -- and would pass on one operating system while pressing Discard on another.
+    """
+    from PySide6.QtWidgets import QMessageBox
+
+    offered: list[str] = []
+
+    def fake_exec(self):
+        offered.extend(button.text() for button in self.buttons())
+        self._chosen = next(b for b in self.buttons() if b.text() == label)
+        return 0
+
+    monkeypatch.setattr(QMessageBox, "exec", fake_exec)
+    monkeypatch.setattr(QMessageBox, "clickedButton", lambda self: self._chosen)
+    return offered
+
+
+def _leave_a_record(window, board: pathlib.Path, document_text: str) -> pathlib.Path:
+    """A record from a session that did not come back, for ``board``."""
+    from perfstudio.recovery import RecoveryRecord, format_record
+
+    directory = window._autosave.directory
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / "gone.perfrecover"
+    path.write_text(
+        format_record(
+            RecoveryRecord(
+                session="gone",
+                document_path=str(board),
+                saved_at="2099-01-01T00:00:00.000Z",
+                version="0.9.0",
+                document=document_text,
+            )
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_accepting_the_offer_opens_the_recovered_board_and_leaves_the_file_alone(
+    tmp_path, monkeypatch
+) -> None:
+    """The whole gesture, end to end: work is found, offered, opened -- and the file it
+    came from is exactly as it was until the user saves."""
+    board = tmp_path / "amp.perf"
+    board.write_text("an older board that never parsed", encoding="utf-8")
+    recovered = persist.serialize_document(_load_dense())
+
+    from perfstudio.commands import create_starter_document
+    from perfstudio.model import DocumentMeta
+
+    window = _window_on(
+        create_starter_document(DocumentMeta(name="untitled", created="", modified=""))
+    )
+    try:
+        record_path = _leave_a_record(window, board, recovered)
+        offered = _answer_recovery(monkeypatch, "Open the Recovered Board")
+
+        window.offer_recovery()
+
+        assert sorted(offered) == ["Decide Later", "Discard It", "Open the Recovered Board"]
+        assert window.current_path == board
+        assert window.is_modified
+        assert len(window.bus.document.components) == len(_load_dense().components)
+        assert board.read_text(encoding="utf-8") == "an older board that never parsed"
+        # Handed over. Keeping it would offer the same board again next time, on top of
+        # whatever the user does with it now.
+        assert not record_path.exists()
+    finally:
+        _close(window)
+
+
+def test_deciding_later_destroys_nothing(tmp_path, monkeypatch) -> None:
+    """The default answer, and it has to be the one that cannot lose anything: the board
+    stays where it is and the question comes back at the next start."""
+    board = tmp_path / "amp.perf"
+    board.write_text("an older board", encoding="utf-8")
+
+    from perfstudio.commands import create_starter_document
+    from perfstudio.model import DocumentMeta
+
+    window = _window_on(
+        create_starter_document(DocumentMeta(name="untitled", created="", modified=""))
+    )
+    try:
+        record_path = _leave_a_record(window, board, persist.serialize_document(_load_dense()))
+        started_with = window.bus.document
+        _answer_recovery(monkeypatch, "Decide Later")
+
+        window.offer_recovery()
+
+        assert record_path.exists()
+        assert window.bus.document is started_with
+        assert board.read_text(encoding="utf-8") == "an older board"
+    finally:
+        _close(window)
+
+
+def test_discarding_the_offer_takes_the_record_and_nothing_else(
+    tmp_path, monkeypatch
+) -> None:
+    board = tmp_path / "amp.perf"
+    board.write_text("an older board", encoding="utf-8")
+
+    from perfstudio.commands import create_starter_document
+    from perfstudio.model import DocumentMeta
+
+    window = _window_on(
+        create_starter_document(DocumentMeta(name="untitled", created="", modified=""))
+    )
+    try:
+        record_path = _leave_a_record(window, board, persist.serialize_document(_load_dense()))
+        started_with = window.bus.document
+        _answer_recovery(monkeypatch, "Discard It")
+
+        window.offer_recovery()
+
+        assert not record_path.exists()
+        assert window.bus.document is started_with
+        assert board.read_text(encoding="utf-8") == "an older board"
+    finally:
+        _close(window)

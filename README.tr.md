@@ -223,7 +223,7 @@ src/perfstudio/ui/         Qt uygulaması: 2D editör, VTK 3D görünüm, 1:1 PD
                            ve headless.py: CI'ın çıktısını denetlediği ekransız koşu
 src/perfstudio/mcp/        MCP sunucusu (docs/MCP.md)
 examples/                  içe aktarılacak bir netlist
-tests/                     1363 test; motor mypy --strict temiz
+tests/                     2009 test; motor mypy --strict temiz
 packages/                  Python portunun karşısında kanıtlandığı referans olarak
                            saklanan orijinal TypeScript motoru
 ```
