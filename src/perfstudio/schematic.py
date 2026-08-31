@@ -300,6 +300,49 @@ class SchematicDrawing:
 
 
 # ---------------------------------------------------------------------------
+# What a renderer has to be told
+# ---------------------------------------------------------------------------
+
+#: The bars of a ground glyph: how wide each is as a fraction of ``RAIL_GLYPH_MM``, and how
+#: far along the stub it sits as a fraction of ``RAIL_GLYPH_DEPTH_MM``. Three shrinking bars
+#: is the convention, and the shrinking is what makes the glyph read as a ground rather than
+#: as three wires that happen to be stacked.
+_GROUND_BARS: tuple[tuple[float, float], ...] = ((1.0, 0.0), (0.6, 0.35), (0.25, 0.70))
+
+
+def rail_glyph_bars(rail: Rail) -> tuple[tuple[Point2, Point2], ...]:
+    """The bars to draw at ``rail.at``: one for power, three shrinking ones for ground.
+
+    ONE FACT, TWO RENDERERS. ``ui/viewsch.py`` paints these on screen and
+    ``schematic_export.py`` writes them into an SVG that becomes the printed sheet. A glyph
+    drawn one way in the panel and another on paper would be two answers to "which rail is
+    this", which is the one question the glyph exists to answer.
+
+    The bars stay inside the box the LAYOUT cleared -- ``RAIL_GLYPH_MM`` across the stub and
+    ``RAIL_GLYPH_DEPTH_MM`` along it -- because that box is the only reason no wire is lying
+    where they go; ``test_nothing_is_drawn_through_a_rail_glyph`` measures the layout half of
+    that bargain. They use 0.7 of the depth rather than all of it: the next lane is one track
+    pitch away and a bar reaching for it reads as touching.
+
+    ``direction`` is honoured rather than assumed. Every ground rail this module emits points
+    down and every power rail up, because ``rail_channel`` picks the channel from the net
+    class -- so this is the reading that stays correct if that ever stops being true, not a
+    case anybody has seen.
+    """
+    x, y = rail.at.x, rail.at.y
+    if rail.net_class == "power":
+        return ((Point2(x=x - RAIL_GLYPH_MM, y=y), Point2(x=x + RAIL_GLYPH_MM, y=y)),)
+    sign = 1.0 if rail.direction == "down" else -1.0
+    return tuple(
+        (
+            Point2(x=x - RAIL_GLYPH_MM * shrink, y=y + sign * RAIL_GLYPH_DEPTH_MM * step),
+            Point2(x=x + RAIL_GLYPH_MM * shrink, y=y + sign * RAIL_GLYPH_DEPTH_MM * step),
+        )
+        for shrink, step in _GROUND_BARS
+    )
+
+
+# ---------------------------------------------------------------------------
 # Symbols, generated from the footprint registry
 # ---------------------------------------------------------------------------
 #

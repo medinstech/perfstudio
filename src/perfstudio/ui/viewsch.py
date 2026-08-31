@@ -51,12 +51,11 @@ from PySide6.QtWidgets import (
 
 from perfstudio.model import Point2
 from perfstudio.schematic import (
-    RAIL_GLYPH_DEPTH_MM,
-    RAIL_GLYPH_MM,
     Rail,
     SchematicDrawing,
     Symbol,
     Wire,
+    rail_glyph_bars,
 )
 
 from . import theme
@@ -89,11 +88,10 @@ BODY_MM = 0.40
 HIGHLIGHT_MM = 0.85
 
 #: Junction dot radius, in millimetres of sheet, so it is part of the drawing rather than
-#: of the zoom. The rail glyph's half-width is NOT a decision this file gets to make: the
-#: layout keeps wires ``RAIL_GLYPH_MM`` clear of every rail anchor, so drawing the bars any
-#: wider would put them through wires the sheet believes it cleared.
+#: of the zoom. The rail glyph gets no constant here at all: its bars sit in room the LAYOUT
+#: cleared, so ``schematic.rail_glyph_bars`` owns them and both renderers ask it rather than
+#: each holding a half-width that could drift wider than the clearance.
 DOT_MM = 0.75
-GLYPH_MM = RAIL_GLYPH_MM
 
 REF_PX = 11
 VALUE_PX = 10
@@ -226,25 +224,18 @@ class SheetItem(QGraphicsItem):
         Two glyphs rather than one coloured one: a schematic is read at a glance and often
         printed in black, and a reader should not have to know a colour convention to tell
         the rail that sinks from the rail that sources.
+
+        WHERE the bars are is not this file's to decide -- ``schematic.rail_glyph_bars``
+        answers that for the exported sheet too, and a glyph drawn one way on screen and
+        another on paper would be two answers to the question the glyph exists to answer.
         """
         lit = rail.net_id in self.highlight_nets
         pen = QPen(QColor(HIGHLIGHT if lit else _class_colour(rail.net_class)))
         pen.setWidthF(HIGHLIGHT_MM if lit else BODY_MM)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         painter.setPen(pen)
-        x, y = rail.at.x, rail.at.y
-        if rail.net_class == "power":
-            painter.drawLine(QPointF(x - GLYPH_MM, y), QPointF(x + GLYPH_MM, y))
-            return
-        # Three bars inside 0.7 of the depth the layout cleared, not all of it. The lane
-        # below is one track pitch away and a bar that reached for it would read as
-        # touching, which is the whole thing the clearance is for.
-        for index, shrink in enumerate((1.0, 0.6, 0.25)):
-            offset = index * RAIL_GLYPH_DEPTH_MM * 0.35
-            painter.drawLine(
-                QPointF(x - GLYPH_MM * shrink, y + offset),
-                QPointF(x + GLYPH_MM * shrink, y + offset),
-            )
+        for start, end in rail_glyph_bars(rail):
+            painter.drawLine(_point(start), _point(end))
 
     def _symbol(self, painter: QPainter, symbol: Symbol) -> None:
         lit = symbol.ref in self.highlight_refs

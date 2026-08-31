@@ -182,6 +182,7 @@ from perfstudio.placer import (
 from perfstudio.ratsnest import NetRatsnest, ratsnest, summarize
 from perfstudio.router import RoutingStyle, options_for_style
 from perfstudio.schematic import build_schematic
+from perfstudio.schematic_export import drawing_to_svg
 from perfstudio.stripboard import is_stripboard
 from perfstudio.striproute import StripboardPlan, plan_stripboard
 from perfstudio.striproute import describe_plan as describe_strip_plan
@@ -195,6 +196,7 @@ from .boardcolors import choose as choose_board_colour
 from .boardcolors import chosen_key as chosen_board_colour
 from .clipboard import block_from_json, block_to_json, paste_payload, paste_position
 from .export_pdf import export_pdf
+from .export_schematic import SchematicRenderError, svg_to_pdf, svg_to_png
 from .i18n import language as current_language
 from .i18n import set_language, t
 from .theme import ERROR, OK, STYLESHEET, TEXT_DIM, WARNING
@@ -1932,6 +1934,15 @@ class MainWindow(QMainWindow):
             )
         )
         act_guide.triggered.connect(self.on_export_guide)
+        act_sheet = file_menu.addAction(t("Export Sc&hematic…"))
+        self.act_export_schematic = act_sheet
+        act_sheet.setToolTip(
+            t(
+                "Write the circuit as a sheet: SVG to embed or edit, PDF to print, PNG to "
+                "paste into a message asking somebody what is wrong with it."
+            )
+        )
+        act_sheet.triggered.connect(self.on_export_schematic)
         act_pdf = file_menu.addAction(t("Export 1:1 PDF (component + solder side)…"))
         act_pdf.triggered.connect(self.on_export_pdf)
         act_png = file_menu.addAction(t("Export 3D Snapshot PNG…"))
@@ -2928,6 +2939,16 @@ class MainWindow(QMainWindow):
         )
         fit.clicked.connect(self.schematic_view.fit)
         bottom_row.addWidget(fit)
+
+        export_sheet = QPushButton(t("Export…"))
+        export_sheet.setToolTip(
+            t(
+                "Write the sheet beside the document as SVG, PDF and PNG. All three are "
+                "drawn from the same file, so they cannot disagree about the circuit."
+            )
+        )
+        export_sheet.clicked.connect(self.on_export_schematic)
+        bottom_row.addWidget(export_sheet)
         layout.addLayout(bottom_row)
 
         dock = QDockWidget(t("Schematic"), self)
@@ -5873,23 +5894,81 @@ class MainWindow(QMainWindow):
             )
         self._offer_to_open(written)
 
-    def _offer_to_open(self, written: list[Path]) -> None:
-        """Four files, and a way to reach them.
+    def on_export_schematic(self) -> None:
+        """Write the circuit as a sheet beside the document: SVG, PDF and PNG.
+
+        Three files for the reason the guide writes four -- they get used in different
+        places. The SVG is the drawing itself, vector, editable in any illustration tool and
+        embeddable in a page; the PDF is the one you print and put next to the board; the
+        PNG is what gets pasted into the message that asks somebody why the circuit does not
+        work, which is the single most useful thing to attach to that message.
+
+        ALL THREE COME OUT OF THE SVG (``ui/export_schematic.py``), so they cannot disagree
+        about what the circuit is. And the sheet is built here rather than read off the
+        panel: the panel may never have been opened, and the export must not depend on
+        whether somebody looked at it first.
+        """
+        base = self.current_path.with_suffix("") if self.current_path else Path.cwd() / "board"
+        drawing = build_schematic(self.bus.document, self.lookup)
+        if not drawing.symbols:
+            QMessageBox.information(
+                self, t("Nothing to export"), t("This document has no parts to draw yet.")
+            )
+            return
+
+        svg = drawing_to_svg(drawing, title=self.bus.document.meta.name)
+        written: list[Path] = []
+        try:
+            sheet = base.with_name(base.name + "_schematic.svg")
+            sheet.write_text(svg, encoding="utf-8")
+            written.append(sheet)
+            written.append(
+                svg_to_pdf(
+                    svg,
+                    base.with_name(base.name + "_schematic.pdf"),
+                    title=self.bus.document.meta.name,
+                )
+            )
+            written.append(svg_to_png(svg, base.with_name(base.name + "_schematic.png")))
+        except (OSError, SchematicRenderError) as err:
+            QMessageBox.critical(
+                self, t("Export failed"), f"Could not write the schematic: {err}"
+            )
+            return
+
+        self.statusBar().showMessage(
+            f"{len(drawing.symbols)} part(s) — {written[0].name} and {len(written) - 1} more",
+            8000,
+        )
+        self._offer_to_open(
+            written, title=t("Schematic written"), open_label=t("Open the Sheet")
+        )
+
+    def _offer_to_open(
+        self, written: list[Path], title: str | None = None, open_label: str | None = None
+    ) -> None:
+        """Several files, and a way to reach them.
 
         The export used to end at a line in the status bar naming a file in a directory
         the user then had to go and find. The guide is the thing this whole application
         is for -- somebody is standing at a bench about to solder -- so the last step of
-        producing it should not be a file-manager expedition.
+        producing it should not be a file-manager expedition. The schematic export borrows
+        it with its own two words, because the same objection applies to a sheet.
+
+        ``written[0]`` is the one the Open button opens, so a caller puts the file a person
+        would actually read first in the list.
         """
         box = QMessageBox(self)
-        box.setWindowTitle(t("Build guide written"))
+        box.setWindowTitle(title or t("Build guide written"))
         box.setText(f"<b>{written[0].name}</b>")
         box.setInformativeText(
             t("Written to {folder}, with {count} other files.").format(
                 folder=written[0].parent, count=len(written) - 1
             )
         )
-        open_it = box.addButton(t("Open the Guide"), QMessageBox.ButtonRole.AcceptRole)
+        open_it = box.addButton(
+            open_label or t("Open the Guide"), QMessageBox.ButtonRole.AcceptRole
+        )
         show_it = box.addButton(t("Show the Folder"), QMessageBox.ButtonRole.ActionRole)
         box.addButton(t("Close"), QMessageBox.ButtonRole.RejectRole)
         box.exec()

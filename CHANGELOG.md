@@ -20,6 +20,59 @@ closed without a bump.
 
 ## [Unreleased]
 
+### Added
+
+- **The schematic leaves the window: File ▸ Export Schematic…, and the button beside Fit
+  the Sheet.** 0.8.0 gave the circuit a picture and left it on the screen — the sheet could
+  be looked at and not printed, embedded, attached to a forum post or handed to anyone who
+  was not sitting at the machine. Three files land beside the document: `_schematic.svg`,
+  `_schematic.pdf` and `_schematic.png`.
+  - **One renderer, three formats.** `schematic_export.py` writes the SVG and
+    `ui/export_schematic.py` asks Qt to paginate or rasterise *that string* — it draws
+    nothing itself. Three writers over one `SchematicDrawing` would be three chances for
+    the printed sheet, the emailed PNG and the embedded SVG to disagree about what the
+    circuit is, and one export that contradicts another is worse than no export.
+  - **The writer is an engine module**, so it is pure and its output is comparable: both
+    frozen sheets in `tests/schematic_golden/` now have an `.svg` beside the text dump,
+    blessed by the same `PERFSTUDIO_BLESS_SCHEMATIC=1`, because they describe one drawing
+    and blessing half of it would leave the two disagreeing. Every board in the repository
+    is checked for well-formed XML and for dropping nothing on the way out — a wire, a
+    junction dot or a whole symbol kind quietly not handled still looks like a schematic.
+  - **It is not a copy of the panel, and the two differences are the point.** Screen labels
+    hold a pixel size, because a reference that shrank to nothing when the sheet was fitted
+    would make the fitted view the one view that says nothing; paper labels are millimetres
+    of sheet, because paper does not zoom. And the panel is light ink on a dark sheet, which
+    is right at midnight and wrong on every printer, so the export is black on white —
+    monochrome, because the rail glyphs already say which rail sinks and which sources and a
+    photocopier keeps shapes rather than colours. `SheetInk` keeps the three net classes as
+    separate fields for a caller who knows its output is a screen.
+  - **What they must NOT decide separately is geometry.** The rail glyph's bars moved into
+    `schematic.rail_glyph_bars`, which the panel and the writer both call. They sit in room
+    the *layout* cleared on the strength of `RAIL_GLYPH_MM`, so a renderer holding its own
+    half-width could draw bars through wires the sheet believed it had cleared. The shared
+    function also honours the rail's own direction rather than assuming downward — no board
+    here produces an upward ground rail, so that is the reading that stays correct rather
+    than a bug anybody has seen.
+  - **Two Qt traps are written down where they bite.** Qt's SVG support is SVG Tiny 1.2,
+    which has no `dominant-baseline` — and Qt is what makes the PDF, so the writer computes
+    text baselines itself; an attribute nothing implements is ignored rather than refused,
+    and every reference would land on top of its own symbol on paper while the browser
+    preview looked perfect. And text painted onto `Format_RGB32` on Windows gets ClearType,
+    which draws black text as orange and blue pixels because it exploits one monitor's
+    stripe order — fine as a rendering trick, wrong as file contents, since it survives the
+    print and the resize. Asking for an alpha channel forces greyscale antialiasing;
+    `test_an_exported_png_has_no_subpixel_colour_fringes` measures it, because nothing in
+    the code says "no ClearType".
+- **`render_schematic`, the MCP server's third picture.** `render_2d_view` and
+  `render_3d_view` both show COPPER, which is what a circuit was turned *into*; an agent
+  that had just called `connect_pins` eleven times had changed the thing this application
+  exists to build and no tool would show it. The notes travel back with the image, because
+  a pin the netlist names that the footprint does not have is a hole in the design that a
+  picture alone would hide. It needs no GL, so it works where `render_3d_view` cannot.
+- **`--headless` writes the sheet too.** It is the only place the SVG writer, Qt's SVG
+  renderer and a real board meet on all three operating systems: the goldens prove the
+  writer says the same thing everywhere, and this proves what it says can still be turned
+  into a page.
 ## [0.8.1] - 2026-08-31
 
 ### Fixed

@@ -41,6 +41,9 @@ from .test_gl import requires_offscreen_gl
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 GOLDEN = REPO_ROOT / "tools" / "diffcheck" / "golden" / "ne555.perf"
+
+#: The first four bytes of every PNG file.
+PNG_MAGIC = bytes.fromhex("89504e47")
 NETLIST = REPO_ROOT / "examples" / "ne555-astable.net"
 
 
@@ -648,12 +651,37 @@ def test_the_tool_surface_is_registered_and_stays_narrow() -> None:
     # because add/update/delete/list is the irreducible set for a thing an agent creates,
     # place_parts is one command for the whole layout (one per part is one undo press per
     # part), and unplace_component is its inverse and lives on the board side.
-    assert len(tools) <= 50, f"{len(tools)} tools; see the note in server.py before adding more"
+    #
+    # And 51, for the sheet: render_schematic. This is where PLAN.md Sec 9.2's argument
+    # about pictures reaches last and hardest -- render_2d_view and render_3d_view both
+    # show COPPER, which is what a circuit was turned INTO, so an agent that has just
+    # called connect_pins eleven times has changed the thing this application exists to
+    # build and had no way to look at it. One tool rather than a family because the sheet
+    # is GENERATED: there is nothing to configure and no stored layout, and the three
+    # files the GUI writes all come out of one string, so an agent needs the picture and
+    # nothing else.
+    assert len(tools) <= 51, f"{len(tools)} tools; see the note in server.py before adding more"
     for critical in ("render_2d_view", "render_3d_view", "snapshot", "restore"):
         assert critical in names, f"{critical} is named in PLAN.md Sec 9.2 as load-bearing"
     assert all(tool.description for tool in tools), "a tool with no description is unusable"
 
 
+def test_an_agent_can_look_at_the_circuit_and_not_only_at_the_copper(
+    loaded: BoardSession,
+) -> None:
+    """``render_schematic`` returns a real PNG and says what the sheet could not draw.
+
+    The notes travel with the picture on purpose. They are where a pin the netlist names
+    and the footprint does not, or a part nothing defines, is recorded -- an agent reading
+    only the image would be reading a drawing of a circuit nobody has, which is the thing
+    ``SchematicDrawing`` keeps the field to prevent.
+    """
+    png, meta = loaded.render_schematic(px_per_mm=4)
+
+    assert png[:4] == PNG_MAGIC, "that is not a PNG"
+    assert meta["parts"] > 0
+    assert meta["width_px"] > 0 and meta["height_px"] > 0
+    assert isinstance(meta["notes"], list)
 def test_nothing_in_the_mcp_package_writes_to_stdout() -> None:
     """On stdio, stdout IS the protocol. One stray print corrupts the stream and the
     client reports something baffling and unrelated -- PLAN.md Sec 9.1's named trap."""

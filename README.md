@@ -96,6 +96,13 @@ It also cross-probes: click a symbol and that part is selected on the board, cli
 and its net lights up in both places. LVS saying *net VOUT is open* is a great deal more
 useful when you can look at VOUT.
 
+**And it leaves the window.** *File ▸ Export Schematic…* writes the sheet beside the
+document three ways: SVG to embed or edit, PDF to print and keep next to the board, PNG to
+paste into the message that asks somebody why the circuit does not work. All three come out
+of the same SVG, so they cannot disagree about what the circuit is — and the exported sheet
+is black on white rather than the panel's light-on-dark, because the rail symbols already
+say which rail sinks and which sources, and a photocopier keeps shapes rather than colours.
+
 ## The guide has an order, and you can watch it
 
 ![The NE555 board assembling itself: parts first, then the board turns over and the copper goes on](https://raw.githubusercontent.com/medinstech/perfstudio/main/docs/images/assembly.gif)

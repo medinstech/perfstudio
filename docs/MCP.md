@@ -89,7 +89,7 @@ conductor at a time.
 |---|---|
 | **Reading** | `get_status` · `get_board_info` · `list_components` · `get_component` · `list_parts` · `get_nets` · `get_net_connections` · `list_footprints` |
 | **The design** | `add_part` · `update_part` · `delete_part` · `place_parts` · `unplace_component` |
-| **Seeing** | `render_2d_view` · `render_3d_view` |
+| **Seeing** | `render_2d_view` · `render_3d_view` · `render_schematic` |
 | **Documents** | `new_document` · `open_document` · `save_document` · `import_netlist` |
 | **Netlist** | `create_net` · `connect_pins` · `disconnect_pins` · `update_net` · `delete_net` |
 | **The board** | `set_board` · `add_mounting_hole` · `add_edge_connector` · `cut_track` · `remove_board_feature` |
@@ -127,11 +127,21 @@ solder-side render in particular shows what you would actually see holding the b
 which is where people make mistakes. And `snapshot` / `restore`, because it has to be
 able to try something drastic and get back out.
 
+`render_schematic` is the third picture and it answers a different question from the
+other two. They show COPPER, which is what a circuit was turned *into*; an agent that has
+just called `connect_pins` eleven times has changed the circuit itself and, until this
+tool, had no way to look at what it built. The sheet is generated from the nets every
+time and nothing about it is stored (see PLAN.md D3), so there is no layout to keep in
+step — and the notes come back beside the picture, because a pin the netlist names that
+the footprint does not have is a hole in the design that a drawing alone would hide.
+
 ## Things worth knowing
 
-**Rendering needs Qt.** `render_2d_view`, `render_3d_view` and `export_pdf` import
-PySide6 and VTK lazily, so a headless or engine-only install still gets every other
-tool; the render tools report their absence instead of taking the server down at import.
+**Rendering needs Qt.** `render_2d_view`, `render_3d_view`, `render_schematic` and
+`export_pdf` import PySide6 and VTK lazily, so a headless or engine-only install still
+gets every other tool; the render tools report their absence instead of taking the server
+down at import. Only the 3D one needs GL — the schematic is drawn as an SVG by a pure
+engine module and rasterised by Qt, so it works where `render_3d_view` cannot.
 
 **A netlist no longer has to come from KiCad.** `create_net` / `connect_pins` build one
 up on the board itself, which is what makes `autoroute` and `run_lvs` reachable on a

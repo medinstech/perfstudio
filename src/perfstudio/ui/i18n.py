@@ -59,6 +59,14 @@ TURKISH: Mapping[str, str] = {
     "&Clear List": "Listeyi &Temizle",
     "&Import KiCad Netlist…": "KiCad Netlist &İçe Aktar…",
     "Export &Build Guide…": "&Montaj Rehberini Dışa Aktar…",
+    # Ş rather than S: "&Son Kullanılanlar" has S in this menu, and Turkish treats the two
+    # as different letters -- which is exactly what makes it a free accelerator here.
+    "Export Sc&hematic…": "&Şemayı Dışa Aktar…",
+    "Write the circuit as a sheet: SVG to embed or edit, PDF to print, PNG to "
+    "paste into a message asking somebody what is wrong with it.": (
+        "Devreyi bir sayfa olarak yaz: gömmek ya da düzenlemek için SVG, basmak için PDF, "
+        "birine neyin yanlış olduğunu sormak üzere mesaja yapıştırmak için PNG."
+    ),
     "Export 1:1 PDF (component + solder side)…": "1:1 PDF Dışa Aktar (komponent + lehim yüzü)…",
     "Export 3D Snapshot PNG…": "3D Görüntü PNG Dışa Aktar…",
     "&Quit": "&Çıkış",
@@ -439,6 +447,12 @@ TURKISH: Mapping[str, str] = {
         "kart üzerinde seçer, bir hatta tıklamak ait olduğu neti vurgular."
     ),
     "Fit the Sheet": "Sayfayı Sığdır",
+    "Export…": "Dışa Aktar…",
+    "Write the sheet beside the document as SVG, PDF and PNG. All three are "
+    "drawn from the same file, so they cannot disagree about the circuit.": (
+        "Sayfayı belgenin yanına SVG, PDF ve PNG olarak yazar. Üçü de aynı dosyadan "
+        "çizilir, bu yüzden devre konusunda birbiriyle çelişemezler."
+    ),
     "Add Part…": "Parça Ekle…",
     "Put a part in the design without deciding where it goes on the board yet.": (
         "Kart üzerinde nereye geleceğine karar vermeden tasarıma bir parça ekler."
@@ -504,6 +518,10 @@ TURKISH: Mapping[str, str] = {
         "{folder} içine yazıldı, {count} dosya daha."
     ),
     "Open the Guide": "Rehberi Aç",
+    "Schematic written": "Şema yazıldı",
+    "Open the Sheet": "Sayfayı Aç",
+    "Nothing to export": "Dışa aktarılacak bir şey yok",
+    "This document has no parts to draw yet.": "Bu belgede henüz çizilecek parça yok.",
     "Show the Folder": "Klasörü Göster",
     "Close": "Kapat",
     # -- right-click -----------------------------------------------------------

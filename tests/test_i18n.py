@@ -187,7 +187,8 @@ def test_no_two_entries_in_a_menu_claim_the_same_accelerator() -> None:
     groups = {
         "file": ["&New Board…", "&Open…", "Open &Recent", "&Save", "Save &As…",
                  "Re&load from Disk", "&Board Setup…", "Board &Features…",
-                 "&Import KiCad Netlist…", "Export &Build Guide…", "&Quit"],
+                 "&Import KiCad Netlist…", "Export &Build Guide…",
+                 "Export Sc&hematic…", "&Quit"],
         "help": ["&Keyboard Shortcuts…", "Check for &Updates…",
                  "Check Automatically at &Startup", "&About PerfStudio"],
         "edit": ["&Undo", "&Redo", "Cop&y", "&Paste", "Dupl&icate", "Rotate &Clockwise",

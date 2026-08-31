@@ -1413,6 +1413,41 @@ class BoardSession:
             "height_px": image.height(),
         }
 
+    def render_schematic(self, px_per_mm: int = 8) -> tuple[bytes, dict[str, Any]]:
+        """A PNG of the CIRCUIT rather than of the board. Returns (png_bytes, metadata).
+
+        The counterpart of ``render_2d`` for the half of the document a board picture cannot
+        show. An agent that has just called ``connect_pins`` eleven times has changed the
+        thing this application exists to build and has, until now, had no way to look at it
+        -- the board renders show copper, and copper is what the circuit was turned INTO.
+
+        The notes come back with the picture on purpose. They are where a pin the netlist
+        names and the footprint does not, or a part nothing defines, is recorded, and an
+        agent reading only the image would be reading a drawing of a circuit nobody has --
+        the exact thing ``schematic.py`` keeps the field to prevent.
+
+        Eight pixels per millimetre rather than the board renderer's twelve: a sheet is
+        two or three times the size of the board it becomes, and the text on it is
+        millimetres of sheet rather than a fixed pixel size, so it stays legible as the
+        picture gets smaller.
+        """
+        from perfstudio.schematic import build_schematic
+        from perfstudio.schematic_export import drawing_to_svg
+        from perfstudio.ui.export_schematic import svg_to_image
+
+        _ensure_qt_application()
+        drawing = build_schematic(self.document, self.lookup)
+        svg = drawing_to_svg(drawing, title=self.document.meta.name)
+        image = svg_to_image(svg, px_per_mm=px_per_mm)
+        return _png_bytes(image), {
+            "parts": len(drawing.symbols),
+            "nets_drawn": len(drawing.wires) + len(drawing.rails),
+            "rails": len(drawing.rails),
+            "width_px": image.width(),
+            "height_px": image.height(),
+            "notes": list(drawing.notes),
+        }
+
     def render_3d(self, flipped: bool = False) -> tuple[bytes, dict[str, Any]]:
         """A PNG of the 3D view, component side or turned over."""
         import tempfile

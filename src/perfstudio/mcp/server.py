@@ -163,6 +163,27 @@ def render_2d_view(side: str = "top", px_per_mm: int = 12) -> Image:
 
 
 @mcp.tool()
+def render_schematic(px_per_mm: int = 8) -> Image:
+    """A picture of the CIRCUIT: symbols, wires, junctions, ground and power glyphs.
+
+    What the board is a way of BUILDING, drawn from the nets themselves. Use it after
+    wiring to check that what you connected is the circuit you meant — the board renders
+    show copper, which is what the circuit was turned into, not what it is.
+
+    The sheet is generated from the document every time; nothing about it is stored, so
+    there is no layout to keep in step and no way for it to disagree with the netlist.
+    """
+    png, meta = session.render_schematic(px_per_mm=px_per_mm)
+    log.info(
+        "rendered schematic: %s part(s), %s rail(s), %sx%s",
+        meta["parts"], meta["rails"], meta["width_px"], meta["height_px"],
+    )
+    for note in meta["notes"]:
+        log.info("schematic note: %s", note)
+    return Image(data=png, format="png")
+
+
+@mcp.tool()
 def render_3d_view(flipped: bool = False) -> Image:
     """A 3D picture of the assembled board, component side or turned over. Use it to
     check that parts look right and that nothing is somewhere absurd."""

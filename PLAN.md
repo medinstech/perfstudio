@@ -514,7 +514,7 @@ CC-BY-SA-4.0 yükümlülüğü Apache-2.0 kodu bulaştırmaz ama ayrı lisanslı
 | Linux WebKitGTK'da WebGL yetersiz | Orta | M0'da ölç; platform adaptörü sayesinde Electron'a geçiş günler sürer |
 | Autorouter beklenti tuzağı | **Yüksek** | "Interaktif asistan" konumlandırması; route edilemeyen netler açıkça raporlanır, sessizce bırakılmaz |
 | 3D'de fotogerçekçilik scope creep | Orta | Hedef sabit: "doğru ve anlaşılır". Basit materyal, gölge bütçesi sınırlı |
-| MCP tool sayısı patlaması | Orta | **Gerçekleşen: 50 tool.** Tavan tutmadı, kural tuttu: her tool `docs/MCP.md`'de bir gruba ve bir gerekçeye bağlı (11 grup; sonuncusu "tasarım", D3 notuna bak). ~25 sayısı yüzey bilinmeden atılmış bir tahmindi; korumaya çalıştığı şey sayı değil gerekçe zorunluluğuydu ve o yürürlükte |
+| MCP tool sayısı patlaması | Orta | **Gerçekleşen: 51 tool.** Tavan tutmadı, kural tuttu: her tool `docs/MCP.md`'de bir gruba ve bir gerekçeye bağlı (11 grup; sonuncusu "tasarım", D3 notuna bak). ~25 sayısı yüzey bilinmeden atılmış bir tahmindi; korumaya çalıştığı şey sayı değil gerekçe zorunluluğuydu ve o yürürlükte |
 | Lisans kirlenmesi (GPL'li rakip kod) | **Yüksek** | Clean-room: DIYLC/VeroRoute kaynağına bakılmayacak. Sadece striprouter (MIT) referans alınabilir |
 | Kapsamın 3 kart tipine yayılması | Orta | v1 sadece pad-per-hole. Stripboard artık uçtan uca: `stripboard.py` geometri, `striproute.py` router, 2D'de kesme modu, ve `placer.py` strip hizasını skorluyor |
 | **Lehim yolu güvenilirliği**: araç kullanıcıyı kırılgan yapıya teşvik edebilir | **Yüksek** | DRC bilgilendirir, engellemez: uzun saf yolda omurga önerir, FR-2'de ısı uyarısı verir, R5' risklerini test adımına çevirir. Karar kullanıcının, veri aracın |

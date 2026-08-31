@@ -99,6 +99,13 @@ Ayrıca çapraz izleme yapar: bir sembole tıklayın, o parça kart üzerinde se
 tıklayın, ait olduğu net iki yerde birden vurgulansın. LVS'in *VOUT neti açık* demesi,
 VOUT'a bakabildiğinizde çok daha işe yarar.
 
+**Ve pencereden çıkar.** *Dosya ▸ Şemayı Dışa Aktar…* sayfayı belgenin yanına üç biçimde
+yazar: gömmek ya da düzenlemek için SVG, basıp kartın yanında tutmak için PDF, devrenin
+neden çalışmadığını sorduğunuz mesaja yapıştırmak için PNG. Üçü de aynı SVG'den üretilir,
+dolayısıyla devre konusunda birbirleriyle çelişemezler — ve dışa aktarılan sayfa panelin
+koyu zemini yerine beyaz üzerine siyahtır: hangi hattın kaynak hangisinin toprak olduğunu
+zaten hat sembolleri söylüyor, fotokopi ise rengi değil biçimi taşıyor.
+
 ## Rehberin bir sırası var, ve onu izleyebilirsiniz
 
 ![NE555 kartı kendini kuruyor: önce parçalar, sonra kart çevriliyor ve bakır işleniyor](./docs/images/assembly.gif)

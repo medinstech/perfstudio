@@ -1,11 +1,12 @@
 """The headless run: every output this application can produce, with no display.
 
 ``python -m perfstudio.ui.main --headless board.perf`` renders the 2D editor view, both
-1:1 PDFs, the 3D view from each face, the build guide with its step images, and prints
-DRC, LVS, ratsnest, autoroute, style-sweep and placement timings.
+1:1 PDFs, the schematic as SVG/PDF/PNG, the 3D view from each face, the build guide with
+its step images, and prints DRC, LVS, ratsnest, autoroute, style-sweep and placement
+timings.
 
 WHY IT MATTERS MORE THAN A CLI USUALLY DOES. It is the only thing that exercises 2D, 3D
-and the PDF export against a real board rather than against assertions about one, which
+and both exports against a real board rather than against assertions about one, which
 makes it what CI runs and the fastest way to find out whether a rendering change still
 draws a board. It also INSPECTS a document and never edits one -- nothing here dispatches
 a command, so it cannot be the thing that broke a file.
@@ -43,10 +44,13 @@ from perfstudio.lvs import run_lvs
 from perfstudio.placer import describe as describe_placement
 from perfstudio.placer import plan_placement
 from perfstudio.ratsnest import ratsnest, summarize
+from perfstudio.schematic import build_schematic
+from perfstudio.schematic_export import drawing_to_svg
 from perfstudio.version import describe as describe_version
 
 from . import view3d
 from .export_pdf import export_pdf, verify_scale
+from .export_schematic import svg_to_pdf, svg_to_png
 from .view2d import RULER_MARGIN_MM, BoardScene
 
 
@@ -152,6 +156,28 @@ def headless(argv: list[str]) -> int:
     pdf_solder = export_pdf(board, print_bottom, out_dir / "board_1to1_solder_side.pdf", mirrored=True)
     print(f"PDF          {pdf_component.stat().st_size / 1024:.0f} KB -> {pdf_component.name}")
     print(f"PDF mirrored {pdf_solder.stat().st_size / 1024:.0f} KB -> {pdf_solder.name}")
+
+    # --- The schematic, exported. Here rather than left to the GUI because this is the
+    # only place the SVG writer, Qt's SVG renderer and a real board meet on all three
+    # operating systems: the goldens prove the writer says the same thing everywhere, and
+    # this proves what it says can still be turned into a page. It is also the one export
+    # that needs no GL, so it runs on the machines where the 3D section does not.
+    t0 = time.perf_counter()
+    drawing = build_schematic(doc, lookup)
+    sheet_svg = drawing_to_svg(drawing, title=doc.meta.name)
+    (out_dir / "schematic.svg").write_text(sheet_svg, encoding="utf-8")
+    sheet_pdf = svg_to_pdf(sheet_svg, out_dir / "schematic.pdf", title=doc.meta.name)
+    sheet_png = svg_to_png(sheet_svg, out_dir / "schematic.png")
+    t_sheet = (time.perf_counter() - t0) * 1000
+    print()
+    print(
+        f"schematic    {t_sheet:6.1f} ms   {len(drawing.symbols)} symbol(s), "
+        f"{len(drawing.wires)} wire(s), {len(drawing.rails)} rail(s) on a "
+        f"{drawing.width:.0f} x {drawing.height:.0f} mm sheet"
+    )
+    print(f"             schematic.svg, {sheet_pdf.name}, {sheet_png.name}")
+    for note in drawing.notes:
+        print(f"             note: {note}")
 
     # --- DRC / LVS, timed. This is the number that matters for "is DRC fast enough to
     # run after every drag": see the docstring on view2d.BoardScene.mouseReleaseEvent

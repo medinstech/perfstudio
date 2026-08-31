@@ -46,11 +46,12 @@ type an agent asked for from a check that raises nothing.
 `ruff format` would still rewrite 40 of the 57 files and point every line of blame in the
 repository at a reformat. That is its own decision, not a side effect of another change.
 
-`--headless` (`ui/headless.py`) renders 2D/3D/PDF into `headless_out/`, runs DRC + LVS
-and prints timings with no display. It is the only step that exercises 2D, 3D and the PDF
-export against a real board end to end, and the fastest way to check that a rendering
-change did not crash. It inspects a document and never edits one. What the render LOOKS
-like is a separate question, answered by `tests/test_render_golden.py` below.
+`--headless` (`ui/headless.py`) renders 2D/3D/PDF and the schematic (SVG + PDF + PNG) into
+`headless_out/`, runs DRC + LVS and prints timings with no display. It is the only step
+that exercises 2D, 3D and both exports against a real board end to end, and the fastest
+way to check that a rendering change did not crash. It inspects a document and never edits
+one. What the render LOOKS like is a separate question, answered by
+`tests/test_render_golden.py` below.
 
 CI runs the full three-OS matrix on every push. It was Linux-only off `main` while the
 repository was private and minutes were metered; standard runners are free on public
@@ -406,6 +407,38 @@ Four decisions carry it, and each has a test that would notice it going:
 - **Everything is deterministic.** BFS layering, barycentre sweeps and track packing each
   have ties, and every one is broken by reference or net id — otherwise the goldens are
   unblessable and the sheet rearranges itself between runs.
+
+**The sheet leaves as SVG, and the PDF and the PNG are made out of that SVG.**
+`schematic_export.py` is the only thing that turns a `SchematicDrawing` into a picture for
+paper — an engine module, so a whole exported sheet is frozen in `tests/schematic_golden/`
+beside the text dumps and blessed by the same `PERFSTUDIO_BLESS_SCHEMATIC=1`.
+`ui/export_schematic.py` renders nothing: it hands that string to Qt to paginate or
+rasterise. Three writers over one drawing would be three chances for the printed sheet, the
+emailed PNG and the embedded SVG to disagree about what the circuit is.
+
+Three things there are load-bearing:
+
+- **It is NOT a second copy of the panel, and the two differences are measurable.** Screen
+  labels hold a PIXEL size (`ui/scenetext.py` argues it at length); paper labels are
+  millimetres of sheet, the same split `export_pdf` already makes. And the panel is light
+  ink on a dark sheet, which is right at midnight and wrong on every printer, so the export
+  defaults to black on white — monochrome, because the rail glyphs already say which rail
+  sinks and which sources and a photocopier keeps shapes and not colours. What the two must
+  NOT decide separately is geometry: the glyph's bars come from `schematic.rail_glyph_bars`,
+  which both call.
+- **Qt's SVG support is SVG Tiny 1.2**, so `dominant-baseline` does not exist there — and Qt
+  is what produces the PDF. The writer computes text baselines itself for that reason; an
+  attribute nothing implements is ignored rather than refused, and every reference lands on
+  top of its own symbol on paper while the browser preview looks perfect.
+- **`svg_to_image` asks for `Format_ARGB32` on purpose.** Text painted onto `Format_RGB32`
+  on Windows gets ClearType — subpixel antialiasing, which draws black text as orange and
+  blue pixels because it exploits one monitor's stripe order. In a *file* that is wrong
+  data: it survives the print and the resize. An alpha channel forces greyscale
+  antialiasing. `test_an_exported_png_has_no_subpixel_colour_fringes` is the measurement,
+  because nothing in the code says "no ClearType".
+
+`--headless` writes the sheet too. It is the only place the writer, Qt's SVG renderer and a
+real board meet on all three operating systems, and the only export that needs no GL.
 
 Clicking cross-probes: a symbol selects that part on the board, a wire selects its net in
 the Nets dock (which is what already lights it on the board). Routed through that one
