@@ -158,18 +158,30 @@ platform with no bundle falls back to, and `ui/updater.py` already sends a `pip`
 to `pip install -U perfstudio` rather than offering it a download.
 
 **Uploading uses trusted publishing, so there is no API token anywhere in this
-repository.** That has to be configured once, on PyPI, by an owner of the project:
+repository.** That has to be configured once, on PyPI, by an account that will own the
+project. **Which of the two forms you want depends on whether the project exists yet, and
+the first release is the case people get wrong** — there is no project to attach a
+publisher to, so the project-scoped form is not the one:
 
-> pypi.org → *Your projects* → **perfstudio** → *Publishing* → **Add a new publisher**
-> (or, before the first release, *Your account* → *Publishing* → **Add a pending
-> publisher**), with:
+> **Before the first release** — pypi.org → *Your account* → *Publishing* → **Add a new
+> pending publisher**:
 >
 > | field | value |
 > |---|---|
+> | PyPI Project Name | `perfstudio` |
 > | Owner | `medinstech` |
-> | Repository | `perfstudio` |
+> | Repository name | `perfstudio` |
 > | Workflow name | `release.yml` |
 > | Environment name | `pypi` |
+>
+> **Afterwards** — pypi.org → *Your projects* → **perfstudio** → *Publishing* → **Add a
+> new publisher**, which is the same four fields without the project name, because the
+> project is the page you are on.
+
+The pending publisher becomes the project's own on the first successful upload, so this is
+done once either way. The **project name field is the tell**: if the form you are looking
+at does not ask for one, you are on some existing project's page and the publisher will be
+attached to that project instead — where it silently does nothing for this one.
 
 The environment name is not optional here: the job declares `environment: pypi`, and a
 publisher configured without one will refuse the token request. The GitHub environment
