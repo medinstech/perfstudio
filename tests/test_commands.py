@@ -34,11 +34,13 @@ from perfstudio.commands import (
     AddConductorsPayload,
     AddCutPayload,
     AddNetPayload,
+    AddPartPayload,
     ComponentPlacement,
     ConnectPinsPayload,
     DeleteComponentPayload,
     DeleteConductorsPayload,
     DeleteNetPayload,
+    DeletePartPayload,
     DisconnectPinsPayload,
     MirrorComponentPayload,
     MoveComponentPayload,
@@ -47,13 +49,17 @@ from perfstudio.commands import (
     NewSolderTraceConductor,
     NewStripConductor,
     NewWireConductor,
+    PartPlacement,
     PlaceComponentPayload,
+    PlacePartsPayload,
     ReplaceConductorsPayload,
     RotateComponentPayload,
     SetBoardPayload,
     SetHeightLimitPayload,
+    UnplaceComponentPayload,
     UpdateComponentPayload,
     UpdateNetPayload,
+    UpdatePartPayload,
     create_document_id_generator,
     create_empty_document,
     create_standard_registry,
@@ -1388,3 +1394,273 @@ def test_a_hand_built_netlist_survives_a_save_and_a_load():
     reloaded = parse_document_or_throw(serialize_document(bus.document))
 
     assert reloaded.nets == bus.document.nets
+
+
+# ---------------------------------------------------------------------------
+# Schematic parts: the design before the board
+# ---------------------------------------------------------------------------
+#
+# The other order of work, and the one every other EDA tool uses. Until these commands
+# existed, every route a part had into a document ended in `component.place`, which needs
+# a hole -- so the circuit could not be drawn before the layout was.
+
+
+def add_part(bus: CommandBus, ref: str = "R1", footprint_id: str = "r-axial-3", value: str = "10k"):
+    return bus.dispatch(
+        "part.add", AddPartPayload(ref=ref, footprint_id=footprint_id, value=value)
+    )
+
+
+def test_a_part_can_enter_the_design_without_a_place_on_the_board():
+    """The whole point. A hole is a decision about layout, and the circuit comes first."""
+    bus = new_bus()
+
+    result = add_part(bus)
+
+    assert result.ok, result.message
+    assert bus.document.components == ()
+    assert len(bus.document.parts) == 1
+    part = bus.document.parts[0]
+    assert (part.ref, part.value, part.footprint_id) == ("R1", "10k", "r-axial-3")
+
+
+def test_a_reference_is_unique_across_the_board_and_the_design():
+    """One namespace, not two. Every net node is a (ref, pin) pair, so two R1s would be a
+    netlist that cannot say which one it wired -- which is why this is checked in both
+    directions rather than within each list."""
+    bus = new_bus()
+    place_r1(bus)
+
+    refused = add_part(bus, ref="R1")
+
+    assert not refused.ok
+    assert refused.code == "duplicate-ref"
+
+    bus_two = new_bus()
+    add_part(bus_two, ref="R1")
+    also_refused = place_r1(bus_two)
+    assert not also_refused.ok
+    assert also_refused.code == "duplicate-ref"
+    # The refusal points at the fix rather than merely naming the clash.
+    assert "part.place" in also_refused.message
+
+
+def test_wiring_a_part_that_is_not_on_the_board_is_ordinary():
+    """`assert_pins_free` deliberately does not check that a component exists, and this is
+    the workflow that depends on it: draw the circuit, then place it."""
+    bus = new_bus()
+    add_part(bus, ref="R1")
+    add_part(bus, ref="R2")
+
+    result = bus.dispatch(
+        "net.add",
+        AddNetPayload(name="OUT", nodes=(NetNode("R1", "2"), NetNode("R2", "1"))),
+    )
+
+    assert result.ok, result.message
+    assert len(bus.document.nets[0].nodes) == 2
+
+
+def test_renaming_a_part_carries_its_wiring_with_it():
+    """A reference is the only name a net has for a part, so renaming the part IS renaming
+    what the net points at. It did not always do this: R1 wired into six nets and then
+    relabelled came out the other side connected to nothing."""
+    bus = new_bus()
+    add_part(bus, ref="R1")
+    bus.dispatch("net.add", AddNetPayload(name="OUT", nodes=(NetNode("R1", "2"),)))
+
+    result = bus.dispatch(
+        "part.update", UpdatePartPayload(id=bus.document.parts[0].id, ref="R7")
+    )
+
+    assert result.ok, result.message
+    assert bus.document.nets[0].nodes == (NetNode("R7", "2"),)
+
+
+def test_renaming_a_placed_component_carries_its_wiring_too():
+    """The same rule on the board, because it is the same wart. The properties dialog used
+    to have to warn people to rename before importing a netlist rather than after."""
+    bus = new_bus()
+    place_r1(bus)
+    bus.dispatch("net.add", AddNetPayload(name="OUT", nodes=(NetNode("R1", "2"),)))
+
+    result = bus.dispatch(
+        "component.update", UpdateComponentPayload(id=bus.document.components[0].id, ref="R7")
+    )
+
+    assert result.ok, result.message
+    assert bus.document.nets[0].nodes == (NetNode("R7", "2"),)
+
+
+def test_a_rename_that_would_put_one_pin_on_two_nets_is_refused():
+    """The one thing carrying the wiring must not do. R9.2 is already wired, so renaming
+    R1 to R9 would merge them -- and a pin belongs to exactly one net."""
+    bus = new_bus()
+    add_part(bus, ref="R1")
+    bus.dispatch("net.add", AddNetPayload(name="A", nodes=(NetNode("R1", "2"),)))
+    bus.dispatch("net.add", AddNetPayload(name="B", nodes=(NetNode("R9", "2"),)))
+
+    refused = bus.dispatch(
+        "part.update", UpdatePartPayload(id=bus.document.parts[0].id, ref="R9")
+    )
+
+    assert not refused.ok
+    assert refused.code == "pin-collision"
+    assert "R9.2" in refused.message
+
+
+def test_placing_parts_moves_them_onto_the_board_in_one_step():
+    """One command however many parts: a thirty-part circuit dispatched one at a time takes
+    thirty presses of Ctrl+Z, each leaving a board that is half laid out."""
+    bus = new_bus()
+    add_part(bus, ref="R1")
+    add_part(bus, ref="R2")
+    ids = [part.id for part in bus.document.parts]
+
+    result = bus.dispatch(
+        "part.place",
+        PlacePartsPayload(
+            placements=(
+                PartPlacement(id=ids[0], anchor=HoleCoord(2, 2)),
+                PartPlacement(id=ids[1], anchor=HoleCoord(2, 6), rotation=90),
+            )
+        ),
+    )
+
+    assert result.ok, result.message
+    assert bus.document.parts == ()
+    assert [c.ref for c in bus.document.components] == ["R1", "R2"]
+    assert bus.document.components[1].rotation == 90
+    # The value and the footprint come across; nothing has to be typed twice.
+    assert bus.document.components[0].value == "10k"
+
+    bus.undo()
+    assert len(bus.document.parts) == 2 and bus.document.components == ()
+
+
+def test_a_placed_part_keeps_its_identity():
+    """The journal and the undo history refer to it by id, and a part that changed identity
+    when it was placed would make a replayed journal describe two different things."""
+    bus = new_bus()
+    add_part(bus, ref="R1")
+    part_id = bus.document.parts[0].id
+
+    bus.dispatch(
+        "part.place",
+        PlacePartsPayload(placements=(PartPlacement(id=part_id, anchor=HoleCoord(2, 2)),)),
+    )
+
+    assert bus.document.components[0].id == part_id
+
+
+def test_placing_a_part_off_the_board_is_refused_and_nothing_moves():
+    bus = new_bus()
+    add_part(bus, ref="R1")
+
+    refused = bus.dispatch(
+        "part.place",
+        PlacePartsPayload(
+            placements=(PartPlacement(id=bus.document.parts[0].id, anchor=HoleCoord(999, 999)),)
+        ),
+    )
+
+    assert not refused.ok
+    assert len(bus.document.parts) == 1
+    assert bus.document.components == ()
+
+
+def test_unplacing_keeps_the_part_and_its_wiring():
+    """Putting a part in the wrong hole must not delete the circuit around it. The inverse
+    of part.place, and the whole difference from component.delete."""
+    bus = new_bus()
+    place_r1(bus)
+    bus.dispatch("net.add", AddNetPayload(name="OUT", nodes=(NetNode("R1", "2"),)))
+
+    result = bus.dispatch(
+        "component.unplace", UnplaceComponentPayload(id=bus.document.components[0].id)
+    )
+
+    assert result.ok, result.message
+    assert bus.document.components == ()
+    assert [(p.ref, p.value, p.footprint_id) for p in bus.document.parts] == [
+        ("R1", "10k", "r-axial-5")
+    ]
+    assert bus.document.nets[0].nodes == (NetNode("R1", "2"),)
+
+
+def test_unplacing_takes_the_lead_bends_with_it_and_leaves_the_routing():
+    """Exactly what component.delete does, and for the same reason: a lead bend is a length
+    of the part's own leg, while somebody's routing is not this command's to throw away."""
+    bus = new_bus()
+    place_r1(bus)
+    component_id = bus.document.components[0].id
+    bus.dispatch(
+        "conductor.add",
+        AddConductorPayload(
+            conductor=NewLeadBendConductor(
+                path=(HoleCoord(2, 2), HoleCoord(3, 2)),
+                component_id=component_id,
+                pin_number="1",
+            )
+        ),
+    )
+    bus.dispatch(
+        "conductor.add",
+        AddConductorPayload(conductor=NewWireConductor(path=(HoleCoord(8, 8), HoleCoord(9, 8)))),
+    )
+
+    bus.dispatch("component.unplace", UnplaceComponentPayload(id=component_id))
+
+    assert [c.kind for c in bus.document.conductors] == ["bare-wire"]
+
+
+def test_a_locked_part_is_not_unplaced():
+    bus = new_bus()
+    place_r1(bus)
+    component_id = bus.document.components[0].id
+    bus.dispatch("component.update", UpdateComponentPayload(id=component_id, locked=True))
+
+    refused = bus.dispatch("component.unplace", UnplaceComponentPayload(id=component_id))
+
+    assert not refused.ok
+    assert refused.code == "component-locked"
+
+
+def test_deleting_a_part_takes_its_connections_with_it():
+    """The one place this differs from component.delete on purpose. Deleting a COMPONENT
+    takes it off the board and the schematic still asks for it -- LVS is right to report
+    the gap. Deleting a schematic PART means the design does not have it, so a net still
+    naming its pins would be asking for something nothing has heard of."""
+    bus = new_bus()
+    add_part(bus, ref="R1")
+    add_part(bus, ref="R2")
+    bus.dispatch(
+        "net.add", AddNetPayload(name="OUT", nodes=(NetNode("R1", "2"), NetNode("R2", "1")))
+    )
+
+    result = bus.dispatch("part.delete", DeletePartPayload(id=bus.document.parts[0].id))
+
+    assert result.ok, result.message
+    assert result.description == "Delete R1 and its 1 connection(s)"
+    assert bus.document.nets[0].nodes == (NetNode("R2", "1"),)
+
+
+def test_a_whole_circuit_drawn_before_the_board_survives_a_save_and_a_load():
+    """The feature, end to end: parts and nets with nothing placed, written out and read
+    back. Fifteen golden fixtures have no `parts` key at all, so the array is omitted when
+    empty -- this is the other half of that."""
+    bus = new_bus()
+    add_part(bus, ref="U1", footprint_id="dip-8", value="NE555")
+    add_part(bus, ref="R1", footprint_id="r-axial-3", value="10k")
+    bus.dispatch(
+        "net.add",
+        AddNetPayload(name="DISCH", nodes=(NetNode("U1", "7"), NetNode("R1", "2"))),
+    )
+
+    text = serialize_document(bus.document)
+    reloaded = parse_document_or_throw(text)
+
+    assert reloaded == bus.document
+    assert '"parts"' in text
+    # ...and a board with nothing in the design does not gain the key.
+    assert '"parts"' not in serialize_document(create_empty_document(META))

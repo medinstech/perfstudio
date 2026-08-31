@@ -430,6 +430,65 @@ TURKISH: Mapping[str, str] = {
     # and one English key cannot carry two meanings in a catalogue whose keys ARE the
     # English strings. Saying what the number counts is better English anyway.
     "To route": "Kalan",
+    # -- the schematic, in the window ------------------------------------------
+    "Schematic": "Şema",
+    "Show &Schematic": "&Şemayı Göster",
+    "The netlist drawn as a circuit, generated from the document. Clicking a "
+    "symbol selects that part on the board; clicking a wire highlights its net.": (
+        "Netlist'in devre olarak çizimi; belgeden üretilir. Bir sembole tıklamak o parçayı "
+        "kart üzerinde seçer, bir hatta tıklamak ait olduğu neti vurgular."
+    ),
+    "Fit the Sheet": "Sayfayı Sığdır",
+    "Add Part…": "Parça Ekle…",
+    "Put a part in the design without deciding where it goes on the board yet.": (
+        "Kart üzerinde nereye geleceğine karar vermeden tasarıma bir parça ekler."
+    ),
+    "Wire": "Bağla",
+    "Click a pin, then the pin it joins. Neither on a net yet? One gets made. "
+    "Exactly what the board's connect tool does, because it is the same code.": (
+        "Bir pine tıklayın, sonra birleşeceği pine. İkisi de bir nette değilse yeni bir net "
+        "oluşur. Kartın bağlama aracıyla birebir aynı davranış — çünkü aynı kod."
+    ),
+    "Take the selected part out of the design, along with its connections. A "
+    "part that is on the board comes off it and stays in the design instead.": (
+        "Seçili parçayı bağlantılarıyla birlikte tasarımdan çıkarır. Kart üzerindeki bir "
+        "parça ise karttan alınır ve tasarımda kalır."
+    ),
+    "Place on the Board": "Kart Üzerine Yerleştir",
+    "Move every part that is only in the design onto the board, in a grid to "
+    "drag from. One undo step for the lot. Auto-place (Ctrl+Shift+A) arranges "
+    "them properly afterwards.": (
+        "Yalnızca tasarımda olan her parçayı, sürüklemeye hazır bir ızgara hâlinde kart "
+        "üzerine taşır. Tamamı tek geri alma adımı. Sonrasında düzgün yerleşimi "
+        "Otomatik Yerleştir (Ctrl+Shift+A) yapar."
+    ),
+    "Every part in the design is already on the board.": (
+        "Tasarımdaki her parça zaten kart üzerinde."
+    ),
+    "No room on this board for the parts in the design. Make it bigger, or "
+    "place them one at a time.": (
+        "Bu kartta tasarımdaki parçalar için yer yok. Kartı büyütün ya da parçaları "
+        "teker teker yerleştirin."
+    ),
+    "Cancelled.": "İptal edildi.",
+    "Add a Part": "Parça Ekle",
+    "Edit a Part": "Parçayı Düzenle",
+    "Filter parts…  (resistor, dip-8, TO-220)": "Parça filtrele…  (direnç, dip-8, TO-220)",
+    "The designator this part is known by, on the schematic and on the board. "
+    "It has to be free on both — the two are one namespace.": (
+        "Bu parçanın hem şemada hem kartta bilindiği ad. İkisinde de boş olmalı — "
+        "ikisi tek bir ad uzayı."
+    ),
+    "What is printed on the part. It reaches the bill of materials, the guide's "
+    "step text and a resistor's colour bands in 3D, so it is worth filling in.": (
+        "Parçanın üzerinde yazan değer. Malzeme listesine, rehberin adım metnine ve 3D'de "
+        "bir direncin renk bantlarına kadar gider; doldurmaya değer."
+    ),
+    "Put the whole schematic back in the panel. The sheet is not re-fitted "
+    "when the board changes, so an edit cannot move what you were looking at.": (
+        "Şemanın tamamını panele geri sığdırır. Kart değiştiğinde sayfa yeniden "
+        "sığdırılmaz; böylece bir düzenleme baktığınız yeri kaydıramaz."
+    ),
     # -- the build guide, in the window ----------------------------------------
     "Build Guide": "Montaj Rehberi",
     "Show &Build Guide": "&Montaj Rehberini Göster",

@@ -46,23 +46,29 @@ from perfstudio.commands import (
     AddEdgeConnectorPayload,
     AddMountingHolePayload,
     AddNetPayload,
+    AddPartPayload,
     ConnectPinsPayload,
     DeleteComponentPayload,
     DeleteCutPayload,
     DeleteEdgeConnectorPayload,
     DeleteMountingHolePayload,
     DeleteNetPayload,
+    DeletePartPayload,
     DisconnectPinsPayload,
     ImportNetlistPayload,
     MoveComponentPayload,
     NewSolderTraceConductor,
     NewWireConductor,
+    PartPlacement,
     PlaceComponentPayload,
+    PlacePartsPayload,
     RotateComponentPayload,
     SetBoardPayload,
     SetHeightLimitPayload,
+    UnplaceComponentPayload,
     UpdateComponentPayload,
     UpdateNetPayload,
+    UpdatePartPayload,
     create_document_id_generator,
     create_empty_document,
     create_standard_registry,
@@ -97,6 +103,7 @@ from perfstudio.model import (
     NetNode,
     PerfDocument,
     Rotation,
+    SchematicPart,
     SpineSpec,
 )
 from perfstudio.placer import PlacementOptions, plan_placement
@@ -247,6 +254,11 @@ class BoardSession:
             "board": f"{self.document.board.cols}x{self.document.board.rows} "
             f"{self.document.board.material}",
             "components": len(self.document.components),
+            # Parts in the design and not on the board. Reported beside the components
+            # rather than folded into them, because "the circuit is drawn and nothing is
+            # placed" and "the board is empty" look identical from a component count and
+            # call for opposite next moves.
+            "parts_not_placed": len(self.document.parts),
             "conductors": len(self.document.conductors),
             "schematic_nets": len(self.document.nets),
             "drc": {
@@ -634,6 +646,133 @@ class BoardSession:
                 id=self._net_id_strict(net), nodes=tuple(_pin(spec) for spec in pins)
             ),
         )
+
+    # -- the design, before the board ----------------------------------------
+    #
+    # THE ORDER EVERY OTHER EDA TOOL WORKS IN, and the one an agent could not follow here:
+    # every route a part had into a document ended in ``place_component``, which needs a
+    # hole. So an agent asked to "design a 555 astable" had to invent a layout before it
+    # had finished inventing the circuit, and then live with it -- or place everything in
+    # a corner and move it afterwards, which is the same thing with extra steps.
+    #
+    # Now: ``add_part`` for each part, ``connect_pins`` to wire them (which never required
+    # a part to be on the board), ``place_parts`` when the circuit is settled, and
+    # ``optimize_placement`` to arrange it.
+
+    def add_part(self, ref: str, footprint_id: str, value: str = "") -> dict[str, Any]:
+        """Put a part in the DESIGN without deciding where on the board it goes.
+
+        The footprint is asked for now rather than at placement because everything else
+        needs it: the symbol this part is drawn as is derived from it, and so are its pins,
+        its 3D body and its line in the bill of materials.
+        """
+        if self.lookup(footprint_id) is None:
+            raise SessionError(
+                f"No footprint {footprint_id!r} in the library. Call list_footprints to see "
+                "what is available."
+            )
+        return self._dispatch(
+            "part.add", AddPartPayload(ref=ref, footprint_id=footprint_id, value=value)
+        )
+
+    def update_part(
+        self,
+        ref: str,
+        new_ref: str | None = None,
+        value: str | None = None,
+        footprint_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Rename a part in the design, or change what it is. Omitted fields are left alone.
+
+        A rename CARRIES THE WIRING: a reference is the only name a net has for a part, so
+        renaming the part renames what the net points at. It is refused if that would put
+        one pin on two nets.
+        """
+        if footprint_id is not None and self.lookup(footprint_id) is None:
+            raise SessionError(f"No footprint {footprint_id!r} in the library.")
+        return self._dispatch(
+            "part.update",
+            UpdatePartPayload(
+                id=self._require_part(ref).id,
+                ref=new_ref,
+                value=value,
+                footprint_id=footprint_id,
+            ),
+        )
+
+    def delete_part(self, ref: str) -> dict[str, Any]:
+        """Take a part out of the design, ALONG WITH its connections.
+
+        Different from ``delete_component``, which takes a part off the board and leaves
+        the schematic still asking for it — an open LVS reports. This says the design does
+        not have the part, so a net still naming its pins would be asking for something
+        nothing in the document has heard of.
+        """
+        return self._dispatch("part.delete", DeletePartPayload(id=self._require_part(ref).id))
+
+    def place_parts(self, placements: list[dict[str, Any]]) -> dict[str, Any]:
+        """Move parts from the design onto the board, all as ONE undo step.
+
+        Each placement is ``{"ref": "R1", "at": "C7", "rotation": 90}``; rotation is
+        optional and defaults to 0. One command however many parts, because laying out a
+        drawn circuit is one decision — dispatched one at a time it takes one undo press
+        per part, each leaving a board that is half laid out.
+        """
+        if not placements:
+            raise SessionError("place_parts needs at least one placement.")
+        specs: list[PartPlacement] = []
+        for entry in placements:
+            ref = entry.get("ref")
+            at = entry.get("at")
+            if not isinstance(ref, str) or not isinstance(at, str):
+                raise SessionError(
+                    'Each placement needs a "ref" and an "at", e.g. {"ref": "R1", "at": "C7"}.'
+                )
+            specs.append(
+                PartPlacement(
+                    id=self._require_part(ref).id,
+                    anchor=_hole(at),
+                    rotation=_rotation(int(entry.get("rotation", 0))),
+                )
+            )
+        return self._dispatch("part.place", PlacePartsPayload(placements=tuple(specs)))
+
+    def unplace_component(self, ref: str) -> dict[str, Any]:
+        """Take a part off the board and keep it in the design, wiring intact.
+
+        The inverse of ``place_parts``, and what to reach for instead of
+        ``delete_component`` when the part belongs in the circuit and not in that hole.
+        """
+        return self._dispatch(
+            "component.unplace", UnplaceComponentPayload(id=self._require_component(ref).id)
+        )
+
+    def list_parts(self) -> dict[str, Any]:
+        """Every part in the design that is not on the board yet."""
+        return {
+            "ok": True,
+            "parts": [
+                {
+                    "ref": part.ref,
+                    "value": part.value,
+                    "footprint": part.footprint_id,
+                    "pins": [pin.number for pin in footprint.pins] if footprint else [],
+                }
+                for part in self.document.parts
+                for footprint in (self.lookup(part.footprint_id),)
+            ],
+        }
+
+    def _require_part(self, ref: str) -> SchematicPart:
+        for part in self.document.parts:
+            if part.ref == ref:
+                return part
+        known = ", ".join(p.ref for p in self.document.parts) or "(nothing is waiting)"
+        on_board = any(c.ref == ref for c in self.document.components)
+        extra = (
+            f" {ref} IS on the board; unplace_component takes it off." if on_board else ""
+        )
+        raise SessionError(f"No part called {ref!r} in the design. Waiting: {known}.{extra}")
 
     def _unplaced(self, nodes: tuple[NetNode, ...]) -> list[str]:
         """Which of these pins name a part that is not on the board yet.

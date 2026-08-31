@@ -889,12 +889,16 @@ def next_reference(document: PerfDocument, footprint_id: str) -> str:
     across undo, redo, save, load and a part being deleted from the middle of a sequence -- a
     duplicate ref is refused by the bus, and being refused because a hidden counter disagreed
     with the document would be baffling.
+
+    THE DESIGN COUNTS AS WELL AS THE BOARD. A reference is unique across both lists (see
+    ``commands.assert_ref_free``), so counting only the placed parts would offer R1 to
+    somebody who has just drawn R1 on the schematic and then have the bus refuse it.
     """
     from perfstudio.footprints import get_footprint
 
     footprint = get_footprint(footprint_id)
     prefix = reference_prefix(footprint) if footprint is not None else "X"
-    used = {c.ref for c in document.components}
+    used = {c.ref for c in document.components} | {part.ref for part in document.parts}
     index = 1
     while f"{prefix}{index}" in used:
         index += 1
@@ -946,6 +950,59 @@ def next_net_name(document: PerfDocument) -> str:
     while f"N{index}" in used:
         index += 1
     return f"N{index}"
+
+
+def net_holding(document: PerfDocument, ref: str, pin: str) -> Net | None:
+    for net in document.nets:
+        if any((node.component_ref, node.pin) == (ref, pin) for node in net.nodes):
+            return net
+    return None
+
+
+def join_pins(
+    bus: Any, first: tuple[str, str], second: tuple[str, str]
+) -> tuple[Any | None, str | None]:
+    """Join two pins, or say why not. Returns ``(dispatch result, refusal)``.
+
+    ONE FUNCTION FOR TWO SURFACES. The board joins pins by clicking two pads and the
+    schematic sheet joins them by clicking two symbol pins, and the two must not be able
+    to disagree about what a click on each does -- especially about the three cases that
+    are not "make a net": one pin already on a rail, both already on the same net, and
+    both on DIFFERENT nets, which is refused because merging two nets is a decision about
+    the circuit rather than about two clicks.
+
+    Module level and untyped in the bus, because ``CommandBus`` lives above this file in
+    the import order and the alternative is a cycle for one parameter.
+    """
+    document: PerfDocument = bus.document
+    net_a = net_holding(document, *first)
+    net_b = net_holding(document, *second)
+    a = NetNode(component_ref=first[0], pin=first[1])
+    b = NetNode(component_ref=second[0], pin=second[1])
+
+    if net_a is not None and net_b is not None:
+        if net_a.id == net_b.id:
+            return None, (
+                f"{first[0]}.{first[1]} and {second[0]}.{second[1]} are both already on "
+                f"{net_a.name}."
+            )
+        return None, (
+            f"{first[0]}.{first[1]} is on {net_a.name} and {second[0]}.{second[1]} is "
+            f"on {net_b.name}. Joining two nets is a change to the circuit — "
+            f"disconnect one of the pins first."
+        )
+
+    if net_a is not None:
+        return bus.dispatch("net.connect", ConnectPinsPayload(id=net_a.id, nodes=(b,))), None
+    if net_b is not None:
+        return bus.dispatch("net.connect", ConnectPinsPayload(id=net_b.id, nodes=(a,))), None
+    return (
+        bus.dispatch(
+            "net.add",
+            AddNetPayload(name=next_net_name(document), net_class="signal", nodes=(a, b)),
+        ),
+        None,
+    )
 
 
 def _pin_holes_of(
@@ -2836,35 +2893,17 @@ class BoardScene(QGraphicsScene):
     def _join_pins(
         self, first: tuple[str, str], second: tuple[str, str]
     ) -> DispatchResult | None:
+        """The scene's half: turn the shared decision into this scene's signals.
+
+        The decision itself is ``join_pins`` above, shared with the schematic sheet so
+        that clicking two pads and clicking two symbol pins cannot mean different things.
+        """
         if self.bus is None:
             return None
-        net_a = self._net_holding(*first)
-        net_b = self._net_holding(*second)
-        a = NetNode(component_ref=first[0], pin=first[1])
-        b = NetNode(component_ref=second[0], pin=second[1])
-
-        if net_a is not None and net_b is not None:
-            if net_a.id == net_b.id:
-                self.netPinRejected.emit(
-                    f"{first[0]}.{first[1]} and {second[0]}.{second[1]} are both already on "
-                    f"{net_a.name}."
-                )
-            else:
-                self.netPinRejected.emit(
-                    f"{first[0]}.{first[1]} is on {net_a.name} and {second[0]}.{second[1]} is "
-                    f"on {net_b.name}. Joining two nets is a change to the circuit — "
-                    f"disconnect one of the pins first."
-                )
-            return None
-
-        if net_a is not None:
-            return self.bus.dispatch("net.connect", ConnectPinsPayload(id=net_a.id, nodes=(b,)))
-        if net_b is not None:
-            return self.bus.dispatch("net.connect", ConnectPinsPayload(id=net_b.id, nodes=(a,)))
-        return self.bus.dispatch(
-            "net.add",
-            AddNetPayload(name=next_net_name(self.document), net_class="signal", nodes=(a, b)),
-        )
+        result, refusal = join_pins(self.bus, first, second)
+        if refusal is not None:
+            self.netPinRejected.emit(refusal)
+        return cast("DispatchResult | None", result)
 
     def commit_net_pins(self) -> DispatchResult | None:
         """Dispatch ONE ``net.connect`` for everything picked. Nothing picked is a cancel.

@@ -22,6 +22,108 @@ closed without a bump.
 
 ### Added
 
+- **The circuit has a picture now: View ▸ Show Schematic (`Ctrl+5`).** The board has always
+  answered "where does this go" and the ratsnest has always drawn what is still owed, but
+  the thing the board is a way of BUILDING — the circuit — existed only as a tree of net
+  names in a dock. LVS would say *net VOUT is open* to somebody with no way to look at what
+  VOUT is. The new panel draws `doc.nets` as a schematic: symbols, orthogonal wires,
+  junction dots, ground and power glyphs, references and values.
+  - **It is generated, not stored, and that is the same decision footprints made** (PLAN.md
+    D6, and D3 for why this is a view and not an editor). A `.perf` file carries no symbol
+    positions and neither does a KiCad netlist, so there is nothing to read; putting them in
+    would reopen the byte-for-byte format for something no user edits, and would be a
+    schematic editor arriving one dataclass at a time. `schematic.py` is an engine module
+    and obeys the engine's rule — no clock, no RNG, no filesystem, no Qt — so the whole
+    layout is reachable from a test that hands it a document, and two sheets are frozen
+    whole in `tests/schematic_golden/` the way the build guide is.
+  - **Ground and power become rail glyphs rather than wires**, which is the single largest
+    difference between a readable sheet and a hairball: a GND net touching eleven pins drawn
+    as wires is eleven lines crossing everything. The classes were already in the document —
+    `Net.net_class`, filled in on import by `parsers.kicad.infer_net_class` — so it costs
+    nothing. Rails are also kept out of the layering graph, because a net touching every
+    part would otherwise make every part adjacent to every other and collapse the columns:
+    the same hairball, arriving by the back door. `SchematicOptions.rail_classes` turns it
+    off for a four-part circuit where the glyphs are more ceremony than the sheet needs.
+  - **No wire can cross a symbol, and that is a consequence rather than a tuning
+    parameter.** Symbols sit in a column/row grid; verticals run only in the channel between
+    two columns and horizontal trunks only in the channel between two rows, each channel
+    widened to fit the tracks a left-edge sweep assigns it. Rail anchors come out of the same
+    track pool as the trunks, so a wire can never be drawn along the bars of a ground symbol
+    — a crossing carries no dot and reads correctly, a line lying ON the glyph does not.
+    Both properties are measured on all nineteen boards in the repository, not on a chosen
+    one, because "holds by construction" is a claim about every input.
+  - **A symbol gets its real shape only where the registry knows what each lead IS.** A
+    resistor, capacitor, electrolytic, diode, LED, crystal and potentiometer are drawn as
+    themselves; polarity comes from the registry's own pin names with pin 1 as the cathode
+    for an unnamed polarised part — exactly the rule `guide._polarity_note` follows, and for
+    the reason it exists: an LED's pin 1 is its anode and a diode's is its cathode, so a
+    convention keyed on pin 1 draws one of the two backwards on the screen and then on the
+    bench. A TO-92 has no E/B/C anywhere in this codebase, so it is a labelled box with
+    numbered pins. Drawing a transistor symbol would assert a pinout nothing here holds.
+  - **Clicking it moves the same selection everything else shares.** A symbol selects that
+    part on the board and centres the view on it; double-clicking opens its properties; a
+    wire selects its net in the Nets dock, which is what already lights the net up on the
+    board. A part named by the netlist and missing from the board is drawn dashed and says
+    so rather than selecting nothing. Cross-probing is the whole reason the sheet is in the
+    window instead of an exported file.
+  - Like the 3D and build-guide panels it fills itself only while open, and a redraw leaves
+    the viewpoint alone — the rule `view3d.populate_renderer` follows about the camera, so
+    editing one net cannot throw away the part of the sheet you were reading.
+
+- **The circuit can be drawn before the board exists.** The order every other EDA tool
+  works in, and the one this application could not do: every route a part had into a
+  document ended in `component.place`, which needs a hole — so you had to choose where a
+  resistor went before you had finished deciding there was a resistor. Now the schematic
+  panel adds parts, wires them and hands the finished design to the board.
+  - **`doc.parts` is the design; `doc.components` is the board.** A `SchematicPart` has a
+    reference, a value and a footprint, and no anchor. It is a SEPARATE list rather than a
+    `ComponentInstance` with an optional anchor, and that is the whole safety of it: DRC,
+    occupancy, connectivity, the router, the placer, the guide, the 1:1 PDF and both
+    renderers all iterate `doc.components` and are right to assume every entry has a
+    position. An optional anchor would have made sixty-odd sites responsible for
+    remembering that a part might be nowhere, and the first one to forget would either
+    crash or quietly treat the part as sitting at hole A1. The cost is one rule instead —
+    **a reference is unique across both lists**, because every net node is a `(ref, pin)`
+    pair and two R4s is a netlist that cannot say which one it wired.
+  - Six commands: `part.add`, `part.update`, `part.delete`, `part.place` (a whole design in
+    one undo step) and `component.unplace`, the inverse. Placing is a MOVE between the two
+    lists that keeps the part's id, so a replayed journal still describes one thing.
+    `net.connect` needed no change at all — `assert_pins_free` has always said in its
+    docstring that it does not check whether a component exists, and this is the workflow
+    that was waiting for it.
+  - **Removing means two different things and the button knows which.** `part.delete`
+    takes the net nodes with it, because a net naming a part the design does not have is
+    asking for something nothing has heard of. `component.delete` still does not, because
+    off the board is an LVS open the schematic is right to keep asking about. Clicking
+    Remove on a placed part unplaces it, since "wrong hole" is what that almost always
+    means and deleting the circuit around it would be a much larger answer.
+  - **Renaming now carries the wiring**, for a schematic part and a placed component
+    alike. It did not before: R1 wired into six nets and relabelled R7 came out the other
+    side connected to nothing, and the properties dialog carried a tooltip warning people
+    to rename before importing a netlist rather than after. That was a wart, not a
+    decision — a reference is the only name a net has for a part. Refused, rather than
+    silently merging two parts, when the new reference already has those pins wired.
+  - **Joining two pins is one function now** (`view2d.join_pins`), shared by the board's
+    connect tool and the sheet's. The board joins pads and the sheet joins symbol pins,
+    and the two must not disagree about the cases that are not "make a net": one pin
+    already on a rail, both already on the same net, both on different nets — refused,
+    because merging two nets is a decision about the circuit rather than about two clicks.
+  - The panel gained **Add Part**, **Wire**, **Remove** and **Place on the Board**. Placing
+    lands the parts in a grid and says to press Ctrl+Shift+A next rather than quietly
+    optimising: arranging a board is a second of annealing and the one step somebody most
+    wants to watch and re-run.
+  - **The agent surface keeps parity**, which is the rule this project holds itself to:
+    `add_part`, `update_part`, `delete_part`, `list_parts`, `place_parts` and
+    `unplace_component`, plus `parts_not_placed` in `get_status` — because "the circuit is
+    drawn and nothing is placed" and "the board is empty" look identical from a component
+    count and call for opposite next moves.
+  - **PLAN.md D3 is intact rather than reversed**, and the note under it now says where it
+    landed. What D3 declined to write was a *geometric* schematic editor — symbols you drag,
+    wire corners you break, sheet coordinates in the file. There are still none of those:
+    every sheet is derived from the document by `schematic.py`, so there is no second truth
+    to keep in step with the netlist. `.perf` gains one optional `parts` array, omitted when
+    empty, and all fifteen golden fixtures are byte-for-byte unchanged.
+
 - **`pip install perfstudio`.** The application has been telling people to do this since
   0.7.0 — `ui/updater.py` offers a `pip` install no download at all, on the grounds that
   "its update is `pip install -U perfstudio`" — and there was nothing on PyPI to install.

@@ -31,6 +31,17 @@ doğruluğunu makine ile kanıtla, ve kullanıcının eline **adım adım lehiml
 | D7 | 3D kapsamı | **Tam** — montaj animasyonu + patlatılmış görünüm dahil | 3D'yi dekorasyondan öğretim aracına çeviren şey bu |
 | D8 | Lehim yolu | **Birinci sınıf yol çekme primitifi** (cezalı özel durum değil) | TR delikli plaket pratiğinde asıl yöntem; güç/toprak rayları böyle çekiliyor |
 
+**D3 nerede durdu.** Karar aynen geçerli ve genişledi: **devre önce çizilir, kart sonra
+yerleştirilir** — diğer her EDA aracının çalıştığı sıra. `doc.parts` karta konmamış
+parçaları tutar (`part.add` / `part.update` / `part.delete` / `part.place`,
+`component.unplace`), `net.connect` bir parçanın kart üzerinde olmasını hiç istemiyordu,
+ve şema paneli (`Ctrl+5`) bu ikisini bir araya getiriyor. D3'ün yazmamaya karar verdiği
+şey hâlâ yazılmadı ve yazılmayacak: **geometrik şema editörü** — sembolü sürüklediğiniz,
+telin köşesini kendiniz kırdığınız, sayfa koordinatını dosyaya yazan tür. Sayfa her
+seferinde `schematic.py` tarafından belgeden türetiliyor; saklanan hiçbir çizim koordinatı
+yok, dolayısıyla netlist ile senkron tutulacak ikinci bir gerçek de yok. Kazanılan LVS
+gücü aynen duruyor, üstelik artık KiCad'siz de.
+
 **Ek kararlar (tartışmaya açık ama varsayılan):**
 - Uygulama içi AI paneli **v1 kapsamında değil**. Çekirdek motor asla AI'a bağımlı olmayacak — API anahtarı olmadan araç tam işlevli kalır.
 - MCP tool sayısı hedefi **~25**, kasıtlı olarak dar (context tüketimini kontrol altında tutmak için).
@@ -469,7 +480,7 @@ Git-diff'lenebilir. Uygulama dosyayı izler ve hot-reload eder →
 | **M3** Router + yerleştirme | 6 hf | A\*/Lee + rip-up&reroute, **lehim yolu primitifi + ray stratejisi**, SA yerleştirme, maliyet modeli ayarı, interaktif yeniden route | Property test: 100 rastgele netlist, autoroute sonrası %100 LVS geçiyor. Sürükleme < 100 ms. GND/V+ otomatik ray olarak çekiliyor |
 | **M4** 3D tam | 4 hf | Montaj animasyonu, patlatılmış görünüm, yükseklik/çarpışma DRC, headless render | Rehber adımları 3D'de oynatılabiliyor, adım görselleri otomatik üretiliyor |
 | **M5** Lehim rehberi | 4 hf | Sıralama motoru, adım kartları, tel kesim listesi, **doğrulama kontrol noktaları**, HTML+PDF+CSV | Gerçek bir devre bu rehberle sıfırdan lehimlenip çalıştırıldı (dogfood testi) |
-| **M6** MCP + CLI sertleştirme | 2 hf | ~25 tool (gerçekleşen: 44 — §13'e bak), iki taşıma, dosya izleme, snapshot/restore | Claude Code **ve** Antigravity'den uçtan uca bir kart tasarlanıp rehber üretiliyor |
+| **M6** MCP + CLI sertleştirme | 2 hf | ~25 tool (gerçekleşen: 50 — §13'e bak), iki taşıma, dosya izleme, snapshot/restore | Claude Code **ve** Antigravity'den uçtan uca bir kart tasarlanıp rehber üretiliyor |
 | **M7** Lansman | 3 hf | TR/EN i18n, dokümantasyon, örnek projeler, CI, paketleme, imzalama | GitHub'da yayında |
 
 **Takvim:** paralel şeritlerle ~**5-5.5 ay** part-time. Şeritler serileşirse ~7 ay.
@@ -503,7 +514,7 @@ CC-BY-SA-4.0 yükümlülüğü Apache-2.0 kodu bulaştırmaz ama ayrı lisanslı
 | Linux WebKitGTK'da WebGL yetersiz | Orta | M0'da ölç; platform adaptörü sayesinde Electron'a geçiş günler sürer |
 | Autorouter beklenti tuzağı | **Yüksek** | "Interaktif asistan" konumlandırması; route edilemeyen netler açıkça raporlanır, sessizce bırakılmaz |
 | 3D'de fotogerçekçilik scope creep | Orta | Hedef sabit: "doğru ve anlaşılır". Basit materyal, gölge bütçesi sınırlı |
-| MCP tool sayısı patlaması | Orta | **Gerçekleşen: 44 tool.** Tavan tutmadı, kural tuttu: her tool `docs/MCP.md`'de bir gruba ve bir gerekçeye bağlı (10 grup). ~25 sayısı yüzey bilinmeden atılmış bir tahmindi; korumaya çalıştığı şey sayı değil gerekçe zorunluluğuydu ve o yürürlükte |
+| MCP tool sayısı patlaması | Orta | **Gerçekleşen: 50 tool.** Tavan tutmadı, kural tuttu: her tool `docs/MCP.md`'de bir gruba ve bir gerekçeye bağlı (11 grup; sonuncusu "tasarım", D3 notuna bak). ~25 sayısı yüzey bilinmeden atılmış bir tahmindi; korumaya çalıştığı şey sayı değil gerekçe zorunluluğuydu ve o yürürlükte |
 | Lisans kirlenmesi (GPL'li rakip kod) | **Yüksek** | Clean-room: DIYLC/VeroRoute kaynağına bakılmayacak. Sadece striprouter (MIT) referans alınabilir |
 | Kapsamın 3 kart tipine yayılması | Orta | v1 sadece pad-per-hole. Stripboard artık uçtan uca: `stripboard.py` geometri, `striproute.py` router, 2D'de kesme modu, ve `placer.py` strip hizasını skorluyor |
 | **Lehim yolu güvenilirliği**: araç kullanıcıyı kırılgan yapıya teşvik edebilir | **Yüksek** | DRC bilgilendirir, engellemez: uzun saf yolda omurga önerir, FR-2'de ısı uyarısı verir, R5' risklerini test adımına çevirir. Karar kullanıcının, veri aracın |

@@ -92,22 +92,28 @@ from perfstudio.commands import (
     AddEdgeConnectorPayload,
     AddMountingHolesPayload,
     AddNetPayload,
+    AddPartPayload,
     ApplyBoardPresetPayload,
     DeleteComponentPayload,
     DeleteConductorsPayload,
     DeleteEdgeConnectorPayload,
     DeleteMountingHolePayload,
     DeleteNetPayload,
+    DeletePartPayload,
     DisconnectPinsPayload,
     ImportNetlistPayload,
     MirrorComponentPayload,
+    PartPlacement,
     PlaceBlockPayload,
     PlaceComponentPayload,
+    PlacePartsPayload,
     RotateComponentPayload,
     SetBoardPayload,
     SetHeightLimitPayload,
+    UnplaceComponentPayload,
     UpdateComponentPayload,
     UpdateNetPayload,
+    UpdatePartPayload,
     create_document_id_generator,
     create_empty_document,
     create_standard_registry,
@@ -175,6 +181,7 @@ from perfstudio.placer import (
 )
 from perfstudio.ratsnest import NetRatsnest, ratsnest, summarize
 from perfstudio.router import RoutingStyle, options_for_style
+from perfstudio.schematic import build_schematic
 from perfstudio.stripboard import is_stripboard
 from perfstudio.striproute import StripboardPlan, plan_stripboard
 from perfstudio.striproute import describe_plan as describe_strip_plan
@@ -191,7 +198,8 @@ from .export_pdf import export_pdf
 from .i18n import language as current_language
 from .i18n import set_language, t
 from .theme import ERROR, OK, STYLESHEET, TEXT_DIM, WARNING
-from .view2d import BoardScene, BoardView, hole_to_screen, next_reference
+from .view2d import BoardScene, BoardView, hole_to_screen, join_pins, next_reference
+from .viewsch import SchematicView
 
 #: What the Preferred Connection menu can be set to: one of the router's styles, or "best"
 #: to route with every style and keep whichever produces the board that is least work to
@@ -1146,6 +1154,125 @@ class GoToPartDialog(QDialog):
         return str(chosen) if chosen is not None else None
 
 
+class AddPartDialog(QDialog):
+    """Pick a part for the schematic: what it is, what it is called, what it is worth.
+
+    A footprint and not a "symbol", which looks like the wrong question to ask on a
+    schematic and is the right one here. This tool generates the symbol FROM the footprint
+    (``schematic.symbol_kind_for``), and the footprint is what the board, the guide, the
+    3D view and the BOM all need anyway — so asking for a symbol now would mean asking for
+    the footprint again at placement, and leaving room for the two to disagree.
+
+    The reference is filled in from the footprint the moment one is picked, counting the
+    board AND the design, so the common case is: type two letters, press Enter twice.
+    """
+
+    def __init__(self, document: PerfDocument, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(t("Add a Part"))
+        self.resize(460, 520)
+        self._document = document
+        #: Every reference this dialog has proposed, so it can tell its own suggestion
+        #: from something the user typed. A set rather than one value: scrolling the list
+        #: proposes several before anything is chosen. Per instance, not per class -- a
+        #: shared one would remember the last dialog's suggestions and overwrite a typed
+        #: reference that happened to match.
+        self._suggestions: set[str] = set()
+
+        self.filter = QLineEdit()
+        self.filter.setPlaceholderText(t("Filter parts…  (resistor, dip-8, TO-220)"))
+        self.filter.textChanged.connect(self._refilter)
+        self.list = QListWidget()
+        self.list.currentItemChanged.connect(lambda _now, _then: self._suggest_reference())
+        self.list.itemDoubleClicked.connect(lambda _item: self.accept())
+
+        self.ref = QLineEdit()
+        self.ref.setToolTip(
+            t(
+                "The designator this part is known by, on the schematic and on the board. "
+                "It has to be free on both — the two are one namespace."
+            )
+        )
+        self.value = QLineEdit()
+        self.value.setPlaceholderText("10k, 100nF, NE555…")
+        self.value.setToolTip(
+            t(
+                "What is printed on the part. It reaches the bill of materials, the guide's "
+                "step text and a resistor's colour bands in 3D, so it is worth filling in."
+            )
+        )
+
+        form = QFormLayout()
+        form.addRow(t("Reference"), self.ref)
+        form.addRow(t("Value"), self.value)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+        layout = QVBoxLayout()
+        layout.addWidget(self.filter)
+        layout.addWidget(self.list, 1)
+        layout.addLayout(form)
+        layout.addWidget(buttons)
+        self.setLayout(layout)
+        self._refilter("")
+        self.filter.setFocus()
+
+    def _refilter(self, text: str) -> None:
+        needle = text.strip().lower()
+        self.list.clear()
+        for footprint in sorted(standard_footprints().values(), key=lambda f: f.name):
+            haystack = f"{footprint.id} {footprint.name} {footprint.body.archetype}".lower()
+            if needle and needle not in haystack:
+                continue
+            item = QListWidgetItem(f"{footprint.name}  ·  {len(footprint.pins)} pin(s)")
+            item.setData(Qt.ItemDataRole.UserRole, footprint.id)
+            item.setIcon(icons.part_icon(footprint))
+            self.list.addItem(item)
+        if self.list.count():
+            self.list.setCurrentRow(0)
+
+    def _suggest_reference(self) -> None:
+        """Refill the reference whenever the kind of part changes.
+
+        Only while the field still holds a suggestion this dialog made — a reference the
+        user has typed over is a decision, and overwriting it because they scrolled the
+        list would throw that decision away.
+        """
+        footprint_id = self.chosen_footprint_id()
+        if footprint_id is None:
+            return
+        suggested = next_reference(self._document, footprint_id)
+        if self.ref.text().strip() in ("", *self._suggestions):
+            self.ref.setText(suggested)
+        self._suggestions.add(suggested)
+
+    def select_footprint(self, footprint_id: str) -> None:
+        """Start on this footprint, for editing a part that already has one."""
+        for index in range(self.list.count()):
+            item = self.list.item(index)
+            if item is not None and item.data(Qt.ItemDataRole.UserRole) == footprint_id:
+                self.list.setCurrentRow(index)
+                return
+
+    def chosen_footprint_id(self) -> str | None:
+        item = self.list.currentItem()
+        if item is None:
+            return None
+        chosen = item.data(Qt.ItemDataRole.UserRole)
+        return str(chosen) if chosen is not None else None
+
+    def values(self) -> tuple[str, str, str] | None:
+        """``(reference, value, footprint id)``, or None if nothing was chosen."""
+        footprint_id = self.chosen_footprint_id()
+        if footprint_id is None:
+            return None
+        return self.ref.text().strip(), self.value.text().strip(), footprint_id
+
+
 class ShortcutsDialog(QDialog):
     """Every keyboard shortcut, READ OFF THE MENU BAR rather than listed by hand.
 
@@ -1321,6 +1448,15 @@ class MainWindow(QMainWindow):
         #: The same, for the build-guide panel: building a guide runs DRC and LVS, which
         #: is not worth paying for to fill a panel nobody has open.
         self._guide_stale = True
+        #: And for the schematic sheet. Drawing one is cheap next to a guide, but it
+        #: rebuilds a whole QGraphicsScene, and a closed panel should cost nothing on
+        #: every keystroke for the same reason the other two do not.
+        self._schematic_stale = True
+        #: What is selected ON THE SHEET, which is not always something the board can
+        #: select: a part in the design has no board item to click. Held here rather than
+        #: in the panel so that a redraw -- which throws the whole scene away -- cannot
+        #: lose it.
+        self._schematic_ref: str | None = None
         #: Assembly playback. The slider and its friends do not exist until the 3D panel
         #: is first opened, so everything that reads them checks for None first.
         self.assembly_slider: Any = None
@@ -1424,10 +1560,12 @@ class MainWindow(QMainWindow):
         self._build_nets_dock()
         self._build_3d_dock()
         self._build_guide_dock()
+        self._build_schematic_dock()
         self._build_drc_dock()
-        # Two panels of the same width on the same edge, so they share it as tabs rather
-        # than each getting half. Both start closed; whichever is opened takes the space.
+        # Three panels of the same width on the same edge, so they share it as tabs rather
+        # than each getting a third. All start closed; whichever is opened takes the space.
         self.tabifyDockWidget(self.dock_3d, self.dock_guide)
+        self.tabifyDockWidget(self.dock_guide, self.dock_schematic)
         self._build_menu()
         self._build_toolbar()
         self._build_status_bar()
@@ -2201,6 +2339,16 @@ class MainWindow(QMainWindow):
             )
         )
         view_menu.addAction(self.act_guide_panel)
+        self.act_schematic = self.dock_schematic.toggleViewAction()
+        self.act_schematic.setText(t("Show &Schematic"))
+        self.act_schematic.setShortcut(QKeySequence("Ctrl+5"))
+        self.act_schematic.setToolTip(
+            t(
+                "The netlist drawn as a circuit, generated from the document. Clicking a "
+                "symbol selects that part on the board; clicking a wire highlights its net."
+            )
+        )
+        view_menu.addAction(self.act_schematic)
         self.act_exploded = view_menu.addAction(t("&Exploded View"))
         self.act_exploded.setCheckable(True)
         self.act_exploded.setToolTip(
@@ -2694,6 +2842,393 @@ class MainWindow(QMainWindow):
         # left-hand docks share a column.
         self.resizeDocks([dock], [340], Qt.Orientation.Horizontal)
 
+    # -- the schematic, in the window -----------------------------------------
+    #
+    # THE HALF OF THE TOOL THAT HAD NO PICTURE. The board shows where everything goes and
+    # the ratsnest draws the connections still owed, but the CIRCUIT -- the thing the board
+    # is a way of building -- was only ever a tree of net names in a dock. LVS could say
+    # "VOUT is open" to somebody with no way to look at what VOUT is.
+    #
+    # It draws the netlist and it does not edit it (PLAN.md D3, and `schematic.py`'s own
+    # header). What it does instead is cross-probe: click a symbol and that part is
+    # selected on the board, click a wire and its net lights up in both places, and a
+    # selection made over there lights up here. Two views of one document, which is worth
+    # more on a perfboard than a second editor would be.
+
+    def _build_schematic_dock(self) -> None:
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(6)
+
+        self.schematic_summary = QLabel()
+        self.schematic_summary.setWordWrap(True)
+        self.schematic_summary.setStyleSheet(f"color: {TEXT_DIM};")
+        layout.addWidget(self.schematic_summary)
+
+        self.schematic_view = SchematicView()
+        self.schematic_view.partClicked.connect(self._on_schematic_part_clicked)
+        self.schematic_view.partActivated.connect(self._on_schematic_part_activated)
+        self.schematic_view.netClicked.connect(self._on_schematic_net_clicked)
+        self.schematic_view.pinClicked.connect(self._on_schematic_pin_clicked)
+        self.schematic_view.cleared.connect(self._on_schematic_cleared)
+        layout.addWidget(self.schematic_view, 1)
+
+        # Two rows of buttons rather than a toolbar: this is a dock that can be a third of
+        # the window wide, and a toolbar in one elides its way down to icons nobody can
+        # tell apart.
+        top_row = QHBoxLayout()
+        self.act_sch_add = QPushButton(t("Add Part…"))
+        self.act_sch_add.setToolTip(
+            t("Put a part in the design without deciding where it goes on the board yet.")
+        )
+        self.act_sch_add.clicked.connect(self.on_schematic_add_part)
+        top_row.addWidget(self.act_sch_add)
+
+        self.act_sch_wire = QPushButton(t("Wire"))
+        self.act_sch_wire.setCheckable(True)
+        self.act_sch_wire.setToolTip(
+            t(
+                "Click a pin, then the pin it joins. Neither on a net yet? One gets made. "
+                "Exactly what the board's connect tool does, because it is the same code."
+            )
+        )
+        self.act_sch_wire.toggled.connect(self.on_schematic_wire_mode)
+        top_row.addWidget(self.act_sch_wire)
+
+        self.act_sch_delete = QPushButton(t("Remove"))
+        self.act_sch_delete.setToolTip(
+            t(
+                "Take the selected part out of the design, along with its connections. A "
+                "part that is on the board comes off it and stays in the design instead."
+            )
+        )
+        self.act_sch_delete.clicked.connect(self.on_schematic_remove)
+        top_row.addWidget(self.act_sch_delete)
+        layout.addLayout(top_row)
+
+        bottom_row = QHBoxLayout()
+        self.act_sch_place = QPushButton(t("Place on the Board"))
+        self.act_sch_place.setToolTip(
+            t(
+                "Move every part that is only in the design onto the board, in a grid to "
+                "drag from. One undo step for the lot. Auto-place (Ctrl+Shift+A) arranges "
+                "them properly afterwards."
+            )
+        )
+        self.act_sch_place.clicked.connect(self.on_schematic_place_all)
+        bottom_row.addWidget(self.act_sch_place)
+
+        fit = QPushButton(t("Fit the Sheet"))
+        fit.setToolTip(
+            t(
+                "Put the whole schematic back in the panel. The sheet is not re-fitted "
+                "when the board changes, so an edit cannot move what you were looking at."
+            )
+        )
+        fit.clicked.connect(self.schematic_view.fit)
+        bottom_row.addWidget(fit)
+        layout.addLayout(bottom_row)
+
+        dock = QDockWidget(t("Schematic"), self)
+        dock.setObjectName("dockSchematic")
+        dock.setWidget(panel)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
+        self.dock_schematic = dock
+        dock.hide()
+        dock.visibilityChanged.connect(self._on_schematic_visibility_changed)
+
+    def _on_schematic_visibility_changed(self, visible: bool) -> None:
+        if visible and self._schematic_stale:
+            self._refresh_schematic_panel()
+
+    def _refresh_schematic_panel(self) -> None:
+        """Redraw the sheet, or mark it stale and do nothing.
+
+        ``isHidden()`` rather than ``isVisible()``, for the trap the guide panel documents:
+        a widget is "visible" only once every ancestor is, so during construction and in
+        any headless run a dock that HAS been shown is not yet visible -- and the panel
+        would refuse to fill itself while sitting open in front of the user.
+        """
+        if not hasattr(self, "schematic_view") or self.dock_schematic.isHidden():
+            self._schematic_stale = True
+            return
+        self._schematic_stale = False
+        drawing = build_schematic(self.bus.document, self.lookup)
+        self.schematic_view.set_drawing(drawing)
+        self._sync_schematic_highlight()
+
+        parts = len(drawing.symbols)
+        nets = len(self.bus.document.nets)
+        summary = f"{parts} part(s), {nets} net(s)"
+        # Counted rather than complained about: while a circuit is being drawn every part
+        # is unplaced, so this is a progress line and not a warning. It is also the answer
+        # to "have I finished", which is the question the Place button exists for.
+        waiting = sum(1 for symbol in drawing.symbols if symbol.unplaced)
+        if waiting:
+            summary += f"; {waiting} not on the board yet"
+        if drawing.rails:
+            # Said plainly, because a reader who does not know the convention will look for
+            # the ground wires and not find any.
+            summary += f"; power and ground drawn as {len(drawing.rails)} rail symbol(s)"
+        if drawing.notes:
+            summary += "\n" + "\n".join(f"• {note}" for note in drawing.notes[:4])
+            if len(drawing.notes) > 4:
+                summary += f"\n• …and {len(drawing.notes) - 4} more"
+        self.schematic_summary.setText(summary)
+
+    def _sync_schematic_highlight(self) -> None:
+        """Light up on the sheet whatever is selected on the board, in the Nets dock, or
+        on the sheet itself.
+
+        The third one is why the panel keeps a reference of its own: a part that is not on
+        the board cannot be selected on the board, and it is the one somebody drawing a
+        circuit is working with.
+        """
+        if not hasattr(self, "schematic_view"):
+            return
+        refs = {component.ref for component in self._selected_components()}
+        if self._schematic_ref is not None:
+            refs.add(self._schematic_ref)
+        self.schematic_view.set_highlight(refs, self._selected_net_ids())
+        self._refresh_schematic_actions()
+
+    def _refresh_schematic_actions(self) -> None:
+        if not hasattr(self, "act_sch_delete"):
+            return
+        self.act_sch_delete.setEnabled(self._schematic_ref is not None)
+        self.act_sch_place.setEnabled(bool(self.bus.document.parts))
+
+    def _on_schematic_cleared(self) -> None:
+        self._schematic_ref = None
+        self._sync_schematic_highlight()
+
+    def _on_schematic_part_clicked(self, ref: str) -> None:
+        self._schematic_ref = ref
+        component = next((c for c in self.bus.document.components if c.ref == ref), None)
+        if component is None:
+            # Not on the board. That is the normal state of a part on a schematic being
+            # drawn, so it is selected here and reported rather than treated as a miss.
+            self._sync_schematic_highlight()
+            in_design = any(part.ref == ref for part in self.bus.document.parts)
+            self.statusBar().showMessage(
+                f"{ref} is in the design, not on the board yet."
+                if in_design
+                else f"{ref} is named by a net and is not in the design at all.",
+                6000,
+            )
+            return
+        self.go_to_component(component.id)
+        self._sync_schematic_highlight()
+
+    def _on_schematic_part_activated(self, ref: str) -> None:
+        component = next((c for c in self.bus.document.components if c.ref == ref), None)
+        if component is not None:
+            self.on_component_properties(component.id)
+            return
+        part = next((p for p in self.bus.document.parts if p.ref == ref), None)
+        if part is not None:
+            self.on_schematic_part_properties(part.id)
+
+    # -- drawing the circuit --------------------------------------------------
+
+    def on_schematic_add_part(self) -> None:
+        """Put a part in the design. The first half of schematic-first capture.
+
+        Nothing else in the application could do this: every route a part had into a
+        document ended in ``component.place``, which needs a hole — so the circuit could
+        not be drawn before the layout was, which is the wrong way round and the opposite
+        of how every other EDA tool works.
+        """
+        dialog = AddPartDialog(self.bus.document, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        chosen = dialog.values()
+        if chosen is None:
+            return
+        ref, value, footprint_id = chosen
+        result = self.bus.dispatch(
+            "part.add", AddPartPayload(ref=ref, footprint_id=footprint_id, value=value)
+        )
+        if not result.ok:
+            self.statusBar().showMessage(f"[{result.code}] {result.message}", 8000)
+            return
+        self._schematic_ref = ref
+        self._sync_schematic_highlight()
+        self.statusBar().showMessage(result.description, 6000)
+
+    def on_schematic_part_properties(self, part_id: str) -> None:
+        """The same three fields ``AddPartDialog`` asks for, on a part that exists."""
+        part = next((p for p in self.bus.document.parts if p.id == part_id), None)
+        if part is None:
+            return
+        dialog = AddPartDialog(self.bus.document, self)
+        dialog.setWindowTitle(t("Edit a Part"))
+        dialog.select_footprint(part.footprint_id)
+        dialog.ref.setText(part.ref)
+        dialog.value.setText(part.value)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        chosen = dialog.values()
+        if chosen is None:
+            return
+        ref, value, footprint_id = chosen
+        result = self.bus.dispatch(
+            "part.update",
+            UpdatePartPayload(id=part_id, ref=ref, value=value, footprint_id=footprint_id),
+        )
+        if not result.ok:
+            self.statusBar().showMessage(f"[{result.code}] {result.message}", 8000)
+            return
+        self._schematic_ref = ref
+        self._sync_schematic_highlight()
+
+    def on_schematic_wire_mode(self, checked: bool) -> None:
+        self.schematic_view.set_wiring(checked)
+        if checked:
+            self.statusBar().showMessage(
+                t("Click a pin, then the pin it joins. Neither on a net yet? One gets made. "
+                  "Esc cancels."),
+                0,
+            )
+        else:
+            self.statusBar().clearMessage()
+
+    def _on_schematic_pin_clicked(self, ref: str, pin: str) -> None:
+        """Take the first pin, or join the second to it.
+
+        The decision about what joining two pins MEANS is ``view2d.join_pins``, shared with
+        the board's connect tool. Two surfaces that could disagree about whether a click on
+        a rail pin extends the rail or starts a new net would be two different applications
+        in one window.
+        """
+        pending = self.schematic_view.pending_pin
+        if pending is None:
+            self.schematic_view.set_pending_pin((ref, pin))
+            self.statusBar().showMessage(f"From {ref}.{pin} — click the pin it joins.", 0)
+            return
+        if pending == (ref, pin):
+            self.schematic_view.set_pending_pin(None)
+            self.statusBar().showMessage(t("Cancelled."), 4000)
+            return
+        result, refusal = join_pins(self.bus, pending, (ref, pin))
+        self.schematic_view.set_pending_pin(None)
+        if refusal is not None:
+            self.statusBar().showMessage(refusal, 8000)
+            return
+        if result is not None:
+            self.statusBar().showMessage(
+                result.description if result.ok else f"[{result.code}] {result.message}", 6000
+            )
+
+    def on_schematic_remove(self) -> None:
+        """Take the selected part out of the design, or off the board.
+
+        TWO DIFFERENT ACTIONS BEHIND ONE BUTTON, and the difference is which list the part
+        is in rather than a mode. A part in the design is deleted outright and its
+        connections go with it. A part on the BOARD is unplaced — it goes back to the
+        design with its wiring intact, because "I put this in the wrong hole" is what
+        somebody clicking Remove on a placed part almost always means, and deleting the
+        circuit around it would be a much larger answer than the question.
+        """
+        ref = self._schematic_ref
+        if ref is None:
+            return
+        component = next((c for c in self.bus.document.components if c.ref == ref), None)
+        if component is not None:
+            result = self.bus.dispatch("component.unplace", UnplaceComponentPayload(id=component.id))
+        else:
+            part = next((p for p in self.bus.document.parts if p.ref == ref), None)
+            if part is None:
+                self.statusBar().showMessage(
+                    f"{ref} is only named by a net; edit the net to remove it.", 6000
+                )
+                return
+            result = self.bus.dispatch("part.delete", DeletePartPayload(id=part.id))
+        if not result.ok:
+            self.statusBar().showMessage(f"[{result.code}] {result.message}", 8000)
+            return
+        if component is None:
+            self._schematic_ref = None
+        self._sync_schematic_highlight()
+        self.statusBar().showMessage(result.description, 6000)
+
+    def on_schematic_place_all(self) -> None:
+        """Move the whole design onto the board. The step this panel exists to lead to.
+
+        A GRID, not an arrangement. Working out where parts should go is
+        ``placer.py``'s job and it is a second of simulated annealing; doing it silently
+        inside a button called "Place on the Board" would hide the one step of this
+        application somebody most wants to watch and re-run. So the parts land somewhere
+        obvious and the message says what to press next.
+        """
+        parts = self.bus.document.parts
+        if not parts:
+            self.statusBar().showMessage(t("Every part in the design is already on the board."), 6000)
+            return
+        placements = self._grid_placements(parts)
+        if not placements:
+            self.statusBar().showMessage(
+                t("No room on this board for the parts in the design. Make it bigger, or "
+                  "place them one at a time."),
+                8000,
+            )
+            return
+        result = self.bus.dispatch(
+            "part.place",
+            PlacePartsPayload(
+                placements=tuple(placements),
+                label=f"Place {len(placements)} part(s) from the schematic",
+            ),
+        )
+        if not result.ok:
+            self.statusBar().showMessage(f"[{result.code}] {result.message}", 10000)
+            return
+        left = len(parts) - len(placements)
+        note = f"; {left} would not fit" if left else ""
+        self.statusBar().showMessage(
+            f"{result.description}{note}. Auto-place (Ctrl+Shift+A) arranges them, "
+            f"then Ctrl+R routes.",
+            12000,
+        )
+        self._sync_schematic_highlight()
+
+    def _grid_placements(self, parts: Sequence[Any]) -> list[PartPlacement]:
+        """Lay parts out left to right in rows, skipping what will not fit.
+
+        The same shape as ``_place_parts_in_grid`` and deliberately not shared with it:
+        that one builds ``PlaceComponentPayload`` for parts the document does not have
+        yet, this one builds ``PartPlacement`` for parts it does, and the two payloads have
+        nothing in common but the arithmetic.
+        """
+        board = self.bus.document.board
+        placements: list[PartPlacement] = []
+        col, row, row_height = 1, 1, 0
+        for part in sorted(parts, key=lambda p: p.ref):
+            footprint = self.lookup(part.footprint_id)
+            if footprint is None:
+                continue
+            width = max((p.d_col for p in footprint.pins), default=0) + 2
+            height = max((p.d_row for p in footprint.pins), default=0) + 2
+            if col + width >= board.cols:
+                col, row = 1, row + row_height + 1
+                row_height = 0
+            if row + height >= board.rows:
+                break  # Out of board; the rest stay in the design and the caller says so.
+            placements.append(PartPlacement(id=part.id, anchor=HoleCoord(col=col, row=row)))
+            col += width
+            row_height = max(row_height, height)
+        return placements
+
+    def _on_schematic_net_clicked(self, net_id: str) -> None:
+        """Selecting the net in the dock is what lights it up everywhere else.
+
+        Deliberately routed through the Nets panel rather than highlighting three views by
+        hand: that panel's selection already drives the board and the schematic, so one
+        path means the three cannot end up disagreeing about what is selected.
+        """
+        self._select_net(net_id)
+
     # -- the build guide, in the window ---------------------------------------
     #
     # The guide is what this application is FOR: the board on screen is a means to a
@@ -3017,6 +3552,7 @@ class MainWindow(QMainWindow):
         # Marks itself stale and returns when the panel is shut, so a closed panel costs
         # nothing -- the guide it would need runs DRC and LVS to build.
         self._refresh_guide_panel()
+        self._refresh_schematic_panel()
 
         self._refresh_title()
         self._refresh_undo_actions()
@@ -3415,6 +3951,7 @@ class MainWindow(QMainWindow):
     def _on_net_selection_changed(self) -> None:
         net_ids = self._selected_net_ids()
         self.scene.set_highlighted_nets(net_ids)
+        self._sync_schematic_highlight()
         self._refresh_net_actions()
         if not net_ids:
             return
@@ -3452,6 +3989,7 @@ class MainWindow(QMainWindow):
         placing a part is trying to get right, so they belong on screen.
         """
         components = self._selected_components()
+        self._sync_schematic_highlight()
         for action in self.selection_actions:
             action.setEnabled(bool(components))
         # ...except that copper on its own is a block worth copying: a length of rail,
@@ -4246,11 +4784,15 @@ class MainWindow(QMainWindow):
         handler was unreachable, so a part armed from the library could not be cancelled
         from the keyboard while the hint under the list said "Esc cancels".
 
-        No unchecking here. Each mode reports itself through its own signal, and the menu
-        and toolbar are already kept in step by those -- doing it twice is how the two
-        drift apart.
+        No unchecking here for the BOARD's modes. Each reports itself through its own
+        signal, and the menu and toolbar are already kept in step by those -- doing it
+        twice is how the two drift apart. The schematic panel has no such signal: it is a
+        plain checkable button, so Escape unchecks it directly, and the toggle handler puts
+        the sheet back into panning.
         """
         self.scene.leave_mode()
+        if hasattr(self, "act_sch_wire") and self.act_sch_wire.isChecked():
+            self.act_sch_wire.setChecked(False)
         self.statusBar().clearMessage()
 
     def on_draw_mode(self, kind: str, checked: bool) -> None:

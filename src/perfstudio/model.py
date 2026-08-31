@@ -375,6 +375,33 @@ class ComponentInstance:
     locked: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class SchematicPart:
+    """A part the DESIGN has and the board has not yet: drawn, wired, not placed.
+
+    This is what makes schematic-first capture possible — draw the circuit, then place it
+    — and it is deliberately a SEPARATE list rather than a ``ComponentInstance`` with an
+    optional anchor.
+
+    EVERY MODULE DOWNSTREAM OF THE BOARD ITERATES ``doc.components`` AND IS RIGHT TO
+    ASSUME EACH ONE HAS A POSITION. DRC, occupancy, connectivity, the router, the placer,
+    the guide, the 1:1 PDF and both renderers — sixty-odd sites between them. An optional
+    anchor would make every one of those responsible for remembering that a part might be
+    nowhere, and the first one to forget would either crash or quietly treat the part as
+    sitting at hole A1. Keeping the two lists apart means the board modules never see a
+    part that is not on the board, and it costs one rule instead: a reference is unique
+    across BOTH lists, which the commands enforce in one helper.
+
+    It carries no rotation and no lock. Both are answers about a physical object on a
+    board, and this is not on a board yet; they are chosen when it is placed.
+    """
+
+    id: ComponentId
+    ref: str
+    value: str
+    footprint_id: str
+
+
 # ---------------------------------------------------------------------------
 # Conductors — the heart of the model
 # ---------------------------------------------------------------------------
@@ -531,7 +558,12 @@ class PerfDocument:
     components: tuple[ComponentInstance, ...] = ()
     conductors: tuple[Conductor, ...] = ()
     cuts: tuple[TrackCut, ...] = ()
-    #: Schematic intent, imported from a netlist. Empty until a netlist is loaded.
+    #: Parts the design has and the board does not yet — see ``SchematicPart``. Empty on
+    #: a board laid out the other way round, part first, which is still a supported way
+    #: to work and the only one there used to be.
+    parts: tuple[SchematicPart, ...] = ()
+    #: Schematic intent, imported from a netlist or drawn on the schematic. Empty until
+    #: one or the other has happened.
     nets: tuple[Net, ...] = ()
     #: Mechanical features of the board. They sit on the document rather than on
     #: ``board`` — following ``cuts``, which is the same kind of thing — so that adding

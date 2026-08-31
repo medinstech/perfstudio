@@ -62,6 +62,7 @@ from .model import (
     PadShape,
     PerfDocument,
     Rotation,
+    SchematicPart,
     SolderBuildup,
     SolderTraceConductor,
     SpineSpec,
@@ -194,6 +195,7 @@ DOCUMENT_KEY_ORDER: tuple[str, ...] = (
     "mountingHoles",
     "edgeConnectors",
     "heightLimitMm",
+    "parts",
     "nets",
 )
 META_KEY_ORDER: tuple[str, ...] = ("name", "created", "modified")
@@ -245,6 +247,7 @@ COMPONENT_KEY_ORDER: tuple[str, ...] = (
     "mirrored",
     "locked",
 )
+PART_KEY_ORDER: tuple[str, ...] = ("id", "ref", "value", "footprintId")
 CONDUCTOR_KEY_ORDER: tuple[str, ...] = (
     "id",
     "kind",
@@ -375,6 +378,24 @@ def _ordered_component(c: ComponentInstance, index: int) -> JsonObj:
     )
 
 
+def _ordered_part(part: SchematicPart, index: int) -> JsonObj:
+    """A part in the design and not on the board.
+
+    Every field is written, unlike the optional ones elsewhere in this file: all four are
+    required and none has a default worth omitting. The array as a whole is what gets
+    omitted when it is empty -- see ``serialize_document``.
+    """
+    return _build_ordered(
+        PART_KEY_ORDER,
+        {
+            "id": part.id,
+            "ref": part.ref,
+            "value": part.value,
+            "footprintId": part.footprint_id,
+        },
+    )
+
+
 def _ordered_conductor(c: Conductor, index: int) -> JsonObj:
     path = _index_path("conductors", index)
     path_field_path = _field_path(path, "path")
@@ -453,6 +474,7 @@ def serialize_document(doc: PerfDocument) -> str:
     cuts = sorted(doc.cuts, key=_cut_sort_key)
     mounting_holes = sorted(doc.mounting_holes, key=_mounting_hole_sort_key)
     edge_connectors = sorted(doc.edge_connectors, key=lambda e: e.id)
+    parts = sorted(doc.parts, key=lambda part: part.id)
     nets = sorted(doc.nets, key=lambda n: n.id)
 
     root = _build_ordered(
@@ -496,6 +518,16 @@ def serialize_document(doc: PerfDocument) -> str:
             **(
                 {"heightLimitMm": _num("heightLimitMm", doc.height_limit_mm)}
                 if doc.height_limit_mm is not None
+                else {}
+            ),
+            # Omitted when empty, like the two arrays above and for the same reason: a
+            # board laid out part-first has none, and every one of the fifteen golden
+            # fixtures predates the idea. An array emitted unconditionally would change
+            # all fifteen files and break `test_golden_round_trip_byte_identical`, which
+            # is the differential proof this port rests on.
+            **(
+                {"parts": [_ordered_part(part, i) for i, part in enumerate(parts)]}
+                if parts
                 else {}
             ),
         },
@@ -938,6 +970,19 @@ def _parse_component(raw: object, path: str, warnings: list[str]) -> ComponentIn
     )
 
 
+def _parse_part(raw: object, path: str, warnings: list[str]) -> SchematicPart:
+    obj = _expect_object(raw, path)
+    _check_unknown_keys(obj, PART_KEY_ORDER, path, warnings)
+    return SchematicPart(
+        id=_expect_string(_require_field(obj, "id", path), _field_path(path, "id")),
+        ref=_expect_string(_require_field(obj, "ref", path), _field_path(path, "ref")),
+        value=_expect_string(_require_field(obj, "value", path), _field_path(path, "value")),
+        footprint_id=_expect_string(
+            _require_field(obj, "footprintId", path), _field_path(path, "footprintId")
+        ),
+    )
+
+
 def _validate_solder_trace_chain(c: SolderTraceConductor, path: str, warnings: list[str]) -> None:
     """Checks a solder-trace path against the orthogonal-chain invariant -- solder
     cannot reliably span a diagonal gap (PLAN.md Section 4.6, and the path doc comment
@@ -1171,6 +1216,11 @@ def _parse_document(raw_input: object) -> tuple[PerfDocument, list[str]]:
         for i, item in enumerate(connectors_raw)
     )
 
+    parts_raw = _expect_array(migrated.get("parts", []), "parts")
+    parts = tuple(
+        _parse_part(item, _index_path("parts", i), warnings) for i, item in enumerate(parts_raw)
+    )
+
     nets_raw = _expect_array(_require_field(migrated, "nets", ""), "nets")
     nets = tuple(_parse_net(item, _index_path("nets", i), warnings) for i, item in enumerate(nets_raw))
 
@@ -1194,6 +1244,7 @@ def _parse_document(raw_input: object) -> tuple[PerfDocument, list[str]]:
         board=board,
         components=components,
         conductors=conductors,
+        parts=parts,
         cuts=cuts,
         nets=nets,
         mounting_holes=mounting_holes,

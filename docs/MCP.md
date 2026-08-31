@@ -62,15 +62,22 @@ raises, and the message names what would have worked.
 
 ## A working order
 
+Design first, then lay it out — the order every other EDA tool works in, and the one to
+prefer when the circuit is not already on paper:
+
 ```
 get_status                     → where is this board
-import_netlist                 → ...or create_net / connect_pins, with no KiCad at all
-place_component
+add_part                       → the design: one call per part, no holes chosen yet
+create_net / connect_pins      → wire it; a part need not be on the board
+place_parts                    → the whole design onto the board, one undo step
 optimize_placement             → apply=False first if you want to look
 autoroute                      → reports every connection it could NOT make
 run_drc / run_lvs              → is it right
 generate_guide                 → is it buildable, and what is missing
 ```
+
+With a circuit that already exists somewhere, `import_netlist` replaces the first three
+steps and `place_component` puts parts down directly.
 
 `snapshot` before anything drastic. Every edit is also undoable one step at a time, and
 batched operations (`autoroute`, `optimize_placement`) undo as one step rather than one
@@ -80,7 +87,8 @@ conductor at a time.
 
 | | |
 |---|---|
-| **Reading** | `get_status` · `get_board_info` · `list_components` · `get_component` · `get_nets` · `get_net_connections` · `list_footprints` |
+| **Reading** | `get_status` · `get_board_info` · `list_components` · `get_component` · `list_parts` · `get_nets` · `get_net_connections` · `list_footprints` |
+| **The design** | `add_part` · `update_part` · `delete_part` · `place_parts` · `unplace_component` |
 | **Seeing** | `render_2d_view` · `render_3d_view` |
 | **Documents** | `new_document` · `open_document` · `save_document` · `import_netlist` |
 | **Netlist** | `create_net` · `connect_pins` · `disconnect_pins` · `update_net` · `delete_net` |

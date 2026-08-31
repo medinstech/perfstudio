@@ -76,6 +76,29 @@ duran ısıya duyarlı bir parça.
 
 ![Aynı kart 3D'de](./docs/images/board-3d.png)
 
+## Önce devreyi çizin
+
+Kart neyin nereye gideceğini söyler. Şema paneli (`Ctrl+5`) *ne inşa ettiğinizi* söyler —
+ve onu söylediğiniz yer de burasıdır: **Parça Ekle**, iki pini **Bağla**, **Kart Üzerine
+Yerleştir**. Önce devre, sonra yerleşim; diğer her EDA aracının çalıştığı sıra ve bu aracın
+şimdiye kadar yapamadığı şey.
+
+![NE555 astable, netlist'inden çizilmiş](./docs/images/schematic.png)
+
+**Sayfa saklanmaz, türetilir.** Dosyada hiçbir sembol koordinatı yoktur; dolayısıyla
+netlist ile senkron tutulacak ikinci bir devre kopyası ve elle yerleştirilecek bir sembol
+yoktur. Toprak ve besleme hat sembolüne dönüşür, tel olarak çizilmez: okunabilir bir sayfa
+ile her şeyin üzerinden geçen on bir çizgi arasındaki fark budur. Polarite parça
+kütüphanesinin kendi pin ADLARINDAN okunur; böylece bir LED'in katodu da bir diyotun katodu
+da bantlı uca gelir — bunlar karşıt pinlerdir ve pin 1'e bakarak tahmin eden bir kural
+ikisinden birini ters çizerdi. Kütüphanenin pin düzenini bilmediği bir parça — örneğin
+TO-92 — etiketli bir kutu olarak çizilir: oraya bir transistör sembolü koymak, hangi bacağın
+beyz olduğunu iddia etmek olurdu.
+
+Ayrıca çapraz izleme yapar: bir sembole tıklayın, o parça kart üzerinde seçilsin; bir hatta
+tıklayın, ait olduğu net iki yerde birden vurgulansın. LVS'in *VOUT neti açık* demesi,
+VOUT'a bakabildiğinizde çok daha işe yarar.
+
 ## Rehberin bir sırası var, ve onu izleyebilirsiniz
 
 ![NE555 kartı kendini kuruyor: önce parçalar, sonra kart çevriliyor ve bakır işleniyor](./docs/images/assembly.gif)
@@ -118,12 +141,14 @@ Arayüz **İngilizce ve Türkçe** konuşur (`--lang tr`, ya da sistem diline g�
 
 ### Sıfırdan bir kart
 
-Uygulamada: `examples/ne555-astable.net` üzerinde **File → Import KiCad Netlist**, önerilen
-yerleşimi kabul edin, **Place → Auto-place Board** (`Ctrl+Shift+A`), route için **`Ctrl+R`**,
-ardından **File → Export Build Guide** (`Ctrl+B`). Yukarıdaki ekran görüntüleri tam olarak
-bu sıradan çıkıyor — bkz. [`tools/screenshots.py`](./tools/screenshots.py).
+Şema panelini açın (`Ctrl+5`) ve devreyi çizin: her parça için **Parça Ekle**, iki pini
+birleştirmek için **Bağla**, sonra **Kart Üzerine Yerleştir**. Oradan **Place → Auto-place
+Board** (`Ctrl+Shift+A`), route için **`Ctrl+R`**, ardından **File → Export Build Guide**
+(`Ctrl+B`). Bu akışın hiçbir yerinde KiCad yok.
 
-KiCad şart değil: netler uygulama içinde elle ya da MCP üzerinden de kurulabilir.
+Devre zaten varsa ilk üç adım yerine `examples/ne555-astable.net` üzerinde **File → Import
+KiCad Netlist** ile başlayın ve önerilen yerleşimi kabul edin. Yukarıdaki ekran görüntüleri
+tam olarak bu sıradan çıkıyor — bkz. [`tools/screenshots.py`](./tools/screenshots.py).
 
 ### Ya da hazır bir kart açın
 

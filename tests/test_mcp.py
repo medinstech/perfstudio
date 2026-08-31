@@ -638,7 +638,17 @@ def test_the_tool_surface_is_registered_and_stays_narrow() -> None:
     # size, material or type was new_document, which throws the work away. The five are
     # one delete rather than three for the same reason: they differ only in which list
     # the id is in.
-    assert len(tools) <= 44, f"{len(tools)} tools; see the note in server.py before adding more"
+    #
+    # And again from 44 for the design: add_part, update_part, delete_part, list_parts,
+    # place_parts, unplace_component. The argument is the same shape as the netlist group
+    # and is the last one of its kind -- an agent could place, wire, route and verify, and
+    # could not DRAW A CIRCUIT, because every route a part had into a document ended in
+    # place_component and place_component needs a hole. "Design a 555 astable" therefore
+    # meant choosing a layout before the circuit was finished. Six rather than fewer
+    # because add/update/delete/list is the irreducible set for a thing an agent creates,
+    # place_parts is one command for the whole layout (one per part is one undo press per
+    # part), and unplace_component is its inverse and lives on the board side.
+    assert len(tools) <= 50, f"{len(tools)} tools; see the note in server.py before adding more"
     for critical in ("render_2d_view", "render_3d_view", "snapshot", "restore"):
         assert critical in names, f"{critical} is named in PLAN.md Sec 9.2 as load-bearing"
     assert all(tool.description for tool in tools), "a tool with no description is unusable"
@@ -922,3 +932,116 @@ def test_an_unknown_net_name_raises_and_lists_the_ones_there_are(
 
     with pytest.raises(SessionError, match="GND"):
         session.connect_pins("GROUND", ["R1.1"])
+
+
+# ---------------------------------------------------------------------------
+# The design, before the board
+# ---------------------------------------------------------------------------
+
+
+def test_an_agent_can_draw_a_whole_circuit_before_choosing_a_single_hole(
+    session: BoardSession,
+) -> None:
+    """The thing the tool surface could not do. Every route a part had into a document
+    ended in place_component, which needs a hole, so "design a 555 astable" meant choosing
+    a layout before the circuit was finished."""
+    assert session.add_part("U1", "dip-8", "NE555")["ok"]
+    assert session.add_part("R1", "r-axial-3", "10k")["ok"]
+    assert session.create_net("DISCH", "signal", ["U1.7", "R1.2"])["ok"]
+
+    assert session.get_status()["components"] == 0
+    listed = session.list_parts()["parts"]
+    assert [p["ref"] for p in listed] == ["U1", "R1"]
+    assert listed[0]["pins"] == [str(n) for n in range(1, 9)]
+    assert session.get_nets()[0]["pins"] == ["U1.7", "R1.2"]
+
+
+def test_place_parts_puts_the_design_on_the_board_in_one_undo_step(
+    session: BoardSession,
+) -> None:
+    session.add_part("R1", "r-axial-3", "10k")
+    session.add_part("R2", "r-axial-3", "4k7")
+
+    result = session.place_parts(
+        [{"ref": "R1", "at": "C3"}, {"ref": "R2", "at": "C7", "rotation": 90}]
+    )
+
+    assert result["ok"], result
+    assert session.list_parts()["parts"] == []
+    placed = {c["ref"]: c for c in session.list_components()}
+    assert placed["R1"]["anchor"] == "C3"
+    assert placed["R2"]["rotation"] == 90
+    # The value came across; nothing had to be stated twice.
+    assert placed["R1"]["value"] == "10k"
+
+    assert session.undo()["ok"]
+    assert len(session.list_parts()["parts"]) == 2
+
+
+def test_unplacing_returns_a_part_to_the_design_with_its_wiring(
+    session: BoardSession,
+) -> None:
+    session.add_part("R1", "r-axial-3", "10k")
+    session.create_net("OUT", "signal", ["R1.2"])
+    session.place_parts([{"ref": "R1", "at": "C3"}])
+
+    result = session.unplace_component("R1")
+
+    assert result["ok"], result
+    assert [p["ref"] for p in session.list_parts()["parts"]] == ["R1"]
+    assert session.get_nets()[0]["pins"] == ["R1.2"]
+
+
+def test_renaming_a_part_carries_its_wiring(session: BoardSession) -> None:
+    session.add_part("R1", "r-axial-3")
+    session.create_net("OUT", "signal", ["R1.2"])
+
+    assert session.update_part("R1", new_ref="R7")["ok"]
+
+    assert session.get_nets()[0]["pins"] == ["R7.2"]
+
+
+def test_deleting_a_part_takes_its_connections_and_deleting_a_component_does_not(
+    session: BoardSession,
+) -> None:
+    """The distinction an agent has to be able to act on: off the board, or out of the
+    design."""
+    session.add_part("R1", "r-axial-3")
+    session.add_part("R2", "r-axial-3")
+    session.create_net("OUT", "signal", ["R1.2", "R2.1"])
+    session.place_parts([{"ref": "R2", "at": "C7"}])
+
+    session.delete_component("R2")
+    assert session.get_nets()[0]["pins"] == ["R1.2", "R2.1"], "the schematic still asks for R2"
+
+    session.delete_part("R1")
+    assert session.get_nets()[0]["pins"] == ["R2.1"]
+
+
+def test_a_part_that_is_on_the_board_says_which_tool_takes_it_off(
+    session: BoardSession,
+) -> None:
+    """An agent that reaches for the wrong one has to be told the right one, not just no."""
+    session.add_part("R1", "r-axial-3")
+    session.place_parts([{"ref": "R1", "at": "C3"}])
+
+    with pytest.raises(SessionError, match="unplace_component"):
+        session.delete_part("R1")
+
+
+def test_a_part_with_a_footprint_the_library_does_not_have_is_refused(
+    session: BoardSession,
+) -> None:
+    with pytest.raises(SessionError, match="list_footprints"):
+        session.add_part("R1", "r-axial-99")
+
+
+def test_place_parts_needs_a_ref_and_an_address_in_every_entry(
+    session: BoardSession,
+) -> None:
+    session.add_part("R1", "r-axial-3")
+
+    with pytest.raises(SessionError, match="ref"):
+        session.place_parts([{"ref": "R1"}])
+    with pytest.raises(SessionError, match="at least one"):
+        session.place_parts([])

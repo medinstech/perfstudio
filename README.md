@@ -74,6 +74,28 @@ be soldered down on top of it, and a heat-sensitive part sitting too close to a 
 
 ![The same board in 3D](https://raw.githubusercontent.com/medinstech/perfstudio/main/docs/images/board-3d.png)
 
+## Draw the circuit first
+
+The board says where everything goes. The schematic panel (`Ctrl+5`) says *what you are
+building* — and it is where you say it: **Add Part**, **Wire** two pins, **Place on the
+Board**. The circuit comes first and the layout second, which is how every other EDA tool
+works and is the order this one could not do until now.
+
+![The NE555 astable, drawn from its netlist](https://raw.githubusercontent.com/medinstech/perfstudio/main/docs/images/schematic.png)
+
+**The sheet is derived, never stored.** No symbol positions live in the file, so there is
+no second copy of the circuit to keep in step with the netlist and nothing to lay out by
+hand. Ground and power become rail symbols instead of wires, which is the difference
+between a sheet you can read and eleven lines crossing everything. Polarity comes from the
+parts library's own pin names, so an LED's cathode and a diode's cathode both end up on the
+barred end — they are opposite pins, and a rule that guessed from pin 1 would draw one of
+them backwards. A part whose pinout the library does not record, like a TO-92, is a
+labelled box: drawing a transistor there would be asserting which lead is the base.
+
+It also cross-probes: click a symbol and that part is selected on the board, click a wire
+and its net lights up in both places. LVS saying *net VOUT is open* is a great deal more
+useful when you can look at VOUT.
+
 ## The guide has an order, and you can watch it
 
 ![The NE555 board assembling itself: parts first, then the board turns over and the copper goes on](https://raw.githubusercontent.com/medinstech/perfstudio/main/docs/images/assembly.gif)
@@ -117,12 +139,15 @@ The interface speaks **English and Turkish** (`--lang tr`, or follow the system 
 
 ### A board from nothing
 
-In the app: **File → Import KiCad Netlist** on `examples/ne555-astable.net`, accept the
-offered placement, **Place → Auto-place Board** (`Ctrl+Shift+A`), **`Ctrl+R`** to route,
-then **File → Export Build Guide** (`Ctrl+B`). That is the exact sequence the screenshots
-above come out of — see [`tools/screenshots.py`](https://github.com/medinstech/perfstudio/blob/main/tools/screenshots.py).
+Open the schematic panel (`Ctrl+5`) and draw the circuit: **Add Part** for each part,
+**Wire** to click two pins together, then **Place on the Board**. From there
+**Place → Auto-place Board** (`Ctrl+Shift+A`), **`Ctrl+R`** to route, and
+**File → Export Build Guide** (`Ctrl+B`). No KiCad anywhere in that.
 
-You do not need KiCad: nets can be built by hand in the app or over MCP.
+With a circuit that already exists, start at **File → Import KiCad Netlist** on
+`examples/ne555-astable.net` and accept the offered placement instead. That is the exact
+sequence the screenshots above come out of — see
+[`tools/screenshots.py`](https://github.com/medinstech/perfstudio/blob/main/tools/screenshots.py).
 
 ### Or open one that is already built
 

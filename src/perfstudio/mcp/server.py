@@ -271,6 +271,68 @@ def import_netlist(path: str) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# The design, before the board
+#
+# The order every other EDA tool works in, and the one an agent could not follow here:
+# every route a part had into a document ended in place_component, which needs a hole. So
+# "design a 555 astable" meant inventing a layout before the circuit was finished.
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def add_part(ref: str, footprint_id: str, value: str = "") -> dict[str, Any]:
+    """Put a part in the DESIGN without saying where on the board it goes. Draw the whole
+    circuit this way, wire it with create_net / connect_pins, then place_parts and
+    optimize_placement. The footprint is asked for now because everything else derives
+    from it: the schematic symbol, the pins, the 3D body and the bill of materials."""
+    return session.add_part(ref, footprint_id, value)
+
+
+@mcp.tool()
+def update_part(
+    ref: str,
+    new_ref: str | None = None,
+    value: str | None = None,
+    footprint_id: str | None = None,
+) -> dict[str, Any]:
+    """Rename a part in the design or change what it is; omitted fields are left alone. A
+    rename CARRIES ITS WIRING, because a reference is the only name a net has for a part —
+    and is refused if that would put one pin on two nets."""
+    return session.update_part(ref, new_ref, value, footprint_id)
+
+
+@mcp.tool()
+def delete_part(ref: str) -> dict[str, Any]:
+    """Take a part out of the design ALONG WITH its connections. Different from
+    delete_component, which takes a part off the board and leaves the schematic still
+    asking for it (an LVS open)."""
+    return session.delete_part(ref)
+
+
+@mcp.tool()
+def list_parts() -> dict[str, Any]:
+    """Every part in the design that is not on the board yet, with its pins."""
+    return session.list_parts()
+
+
+@mcp.tool()
+def place_parts(placements: list[dict[str, Any]]) -> dict[str, Any]:
+    """Move parts from the design onto the board, all as ONE undo step. Each placement is
+    {"ref": "R1", "at": "C7", "rotation": 90}; rotation is optional. Laying out a drawn
+    circuit is one decision, and one command per part means one undo press per part, each
+    leaving a board half laid out. optimize_placement arranges them afterwards."""
+    return session.place_parts(placements)
+
+
+@mcp.tool()
+def unplace_component(ref: str) -> dict[str, Any]:
+    """Take a part off the board and keep it in the design, wiring intact. What to reach
+    for instead of delete_component when the part belongs in the circuit but not in that
+    hole."""
+    return session.unplace_component(ref)
+
+
+# ---------------------------------------------------------------------------
 # The netlist, without KiCad
 #
 # The intent everything else is measured against. Without a net there is no ratsnest,

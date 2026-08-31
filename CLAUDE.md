@@ -339,6 +339,82 @@ Two derivations must not be replaced with conventions:
   (`solder-trace-proximity`) hits. The risk the tool predicted and the measurement the
   user performs are one list, which is the whole point.
 
+### The design comes before the board, and the sheet is drawn from it
+
+Two halves that must not be confused.
+
+**`doc.parts` is the design.** A `SchematicPart` is a part the document has and the board
+does not: ref, value, footprint, and no anchor. It is a SEPARATE list from
+`doc.components` rather than a `ComponentInstance` with an optional anchor, and that is
+the whole safety of the feature — DRC, occupancy, connectivity, the router, the placer,
+the guide, the PDF and both renderers all iterate `doc.components` and are right to assume
+every entry has a position. An optional anchor would make sixty-odd sites responsible for
+remembering that a part might be nowhere. The cost is one rule instead: **a reference is
+unique across BOTH lists** (`commands.assert_ref_free`), because every net node is a
+`(ref, pin)` pair.
+
+Placing is a MOVE between the lists (`part.place`), keeping the same id so a replayed
+journal still describes one thing; `component.unplace` is the inverse and keeps the
+wiring. `part.delete` takes the net nodes with it and `component.delete` does not — off
+the board is an LVS open the schematic still asks about, out of the design is not.
+`net.connect` never required a part to be on the board (`assert_pins_free` says so in its
+docstring), which is what made the whole order of work possible without touching it.
+
+**Renaming carries the wiring**, for a part and a component alike (`rename_in_nets`). It
+did not always: R1 wired into six nets and relabelled R7 came out connected to nothing,
+and the properties dialog carried a tooltip apologising for it. Refused rather than merged
+when the new reference already has those pins wired.
+
+**`schematic.py` derives the sheet and stores nothing.** Symbols, orthogonal wires,
+junction dots, rail glyphs, labels — from `doc.parts`, `doc.components` and `doc.nets`,
+every time. It is an engine module and obeys the engine's rule, so the layout is reachable
+from a test that hands it a document; two sheets are frozen whole in
+`tests/schematic_golden/` (`PERFSTUDIO_BLESS_SCHEMATIC=1`), for the reason
+`test_guide_golden` exists.
+
+**The CIRCUIT is editable and the DRAWING is not, and that is PLAN.md D3 intact rather
+than reversed.** D3 declined to write a geometric schematic editor — symbols you position,
+wires you route — because that is a year of work whose output this tool already accepts
+from KiCad. A moved symbol would be state, state would be a document field, and a document
+field would reopen the byte-for-byte `.perf` format. Same reasoning as `ui/boardcolors.py`.
+
+`Symbol.unplaced` and `Symbol.undefined` are different things and only the second is a
+defect: unplaced is every part on a sheet being drawn, so it is counted in the panel's
+summary and produces no note; undefined means a net names a part nothing defines, so it is
+dashed and reported.
+
+Four decisions carry it, and each has a test that would notice it going:
+
+- **Ground and power are rail glyphs, not wires** (`SchematicOptions.rail_classes`), and
+  they are also **kept out of the layering graph**. A GND net touching every part would
+  otherwise make every part adjacent to every other and collapse the columns — the same
+  hairball the glyphs prevent, arriving by the back door.
+- **Symbols live in grid cells and wires only in the channels between them**, so no wire
+  can cross a symbol; channels widen to fit whatever a left-edge sweep assigns them. Rail
+  anchors come out of the **same** track pool as the trunks, because a crossing carries no
+  dot and reads correctly while a line lying along a ground symbol's bars does not.
+  `RAIL_GLYPH_MM`/`RAIL_GLYPH_DEPTH_MM` are the layout's contract with the renderer — one
+  fact, two consumers, and both must stay under `TRACK_PITCH_MM` or the guarantee needs
+  another allocation pass.
+- **A symbol gets its real shape only where the registry knows what every lead IS.**
+  Polarity is read from the pin NAMES with pin 1 as the cathode for an unnamed polarised
+  part — the same rule as `guide._polarity_note`, and the two must not drift: an LED's pin
+  1 is its anode and a diode's is its cathode. A TO-92 has no E/B/C anywhere in this
+  codebase, so it is a box with numbered pins; drawing a transistor asserts a pinout
+  nothing here holds. The one assumption the registry does not back is written at
+  `_potentiometer_body`.
+- **Everything is deterministic.** BFS layering, barycentre sweeps and track packing each
+  have ties, and every one is broken by reference or net id — otherwise the goldens are
+  unblessable and the sheet rearranges itself between runs.
+
+Clicking cross-probes: a symbol selects that part on the board, a wire selects its net in
+the Nets dock (which is what already lights it on the board). Routed through that one
+panel deliberately, so three views cannot disagree about what is selected. **Joining two
+pins is `view2d.join_pins`, shared with the board's connect tool** — the board joins pads
+and the sheet joins symbol pins, and the two must not disagree about the three cases that
+are not "make a net": one pin already on a rail, both on the same net, both on different
+nets (refused, because merging two nets is a decision about the circuit).
+
 ### The MCP server is behaviour in one file, protocol in the other
 
 `mcp/session.py` holds every tool's actual behaviour; `mcp/server.py` only binds names,
@@ -390,10 +466,15 @@ nobody is going to follow.
 
 ```
 model → geometry → stripboard → connectivity / occupancy
-                                    → drc, lvs, router, autoroute, placer, ratsnest, striproute
+                                    → drc, lvs, router, autoroute, placer, ratsnest,
+                                      striproute, schematic
                                                         → guide → guide_export
                                                         → ui/, mcp/
 ```
+
+`schematic.py` sits beside `ratsnest.py` on purpose: both take a document and a footprint
+lookup and answer a question about the netlist, and neither is downstream of the other.
+`ui/viewsch.py` is its only consumer.
 
 `ui/view2d.py` works in millimetres (one scene unit = 1 mm), which is what makes the 1:1
 PDF export exact without a fudge factor. `ui/view2d.hole_to_screen` / `screen_to_hole` are

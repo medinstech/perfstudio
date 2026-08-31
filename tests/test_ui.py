@@ -4476,3 +4476,422 @@ def test_a_hatched_conductor_still_marks_every_joint() -> None:
     assert traces, "no far-side solder trace in the fixture"
     for item in traces:
         assert len(item.contact_points()) == len(item.conductor.path)
+
+
+# ---------------------------------------------------------------------------
+# The schematic panel
+# ---------------------------------------------------------------------------
+#
+# The engine side is tested in test_schematic.py, which is where the layout properties
+# live. What is left for here is the half that only exists in the window: that the panel
+# fills itself only while open, that the sheet is actually painted, and that clicking on it
+# moves the same selection the board and the Nets dock already share. Cross-probing is the
+# reason the panel is in the window rather than an exported file, so it is the part worth
+# holding still.
+
+
+def _open_schematic(doc):
+    window = _window_on(doc)
+    window.dock_schematic.show()
+    window._refresh_schematic_panel()
+    return window
+
+
+def test_a_closed_schematic_panel_costs_nothing() -> None:
+    """Same rule as the guide and 3D docks: a panel nobody has open builds nothing."""
+    window = _window_on(_golden_document("ne555"))
+    assert window.dock_schematic.isVisible() is False
+    assert window._schematic_stale is True
+
+    window.on_bus_changed(window.bus.document, None)
+
+    assert window.schematic_view.item is None
+    _close(window)
+
+
+def test_opening_the_panel_draws_every_part_the_netlist_or_the_board_has() -> None:
+    doc = _golden_document("ne555")
+    window = _open_schematic(doc)
+
+    assert window.schematic_view.item is not None
+    drawn = {symbol.ref for symbol in window.schematic_view.item.drawing.symbols}
+    expected = {component.ref for component in doc.components}
+    expected |= {node.component_ref for net in doc.nets for node in net.nodes}
+    assert drawn == expected
+    _close(window)
+
+
+def test_the_sheet_actually_puts_ink_on_the_panel() -> None:
+    """Renders the item and counts what is not the sheet colour.
+
+    Shapes only -- no text is asserted on, because Qt's offscreen plugin ships no font
+    database on Windows (see the skipif guards above) and a symbol body is drawn with
+    polygons either way. A sheet that painted nothing would still have passed every
+    structural test in test_schematic.py.
+    """
+    from perfstudio.ui.viewsch import SHEET
+
+    window = _open_schematic(_golden_document("ne555"))
+    item = window.schematic_view.item
+    drawing = item.drawing
+
+    image = QImage(600, 600, QImage.Format.Format_ARGB32)
+    image.fill(QColor(SHEET))
+    painter = QPainter(image)
+    painter.scale(600 / drawing.width, 600 / drawing.height)
+    item.paint(painter, None, None)
+    painter.end()
+
+    assert _pixels_matching(image, QColor(SHEET)) < 600 * 600, "nothing was drawn"
+    _close(window)
+
+
+def test_clicking_a_symbol_selects_that_part_on_the_board() -> None:
+    """The whole reason the sheet is in the window and not an exported file."""
+    doc = _golden_document("ne555")
+    window = _open_schematic(doc)
+    part = doc.components[0]
+
+    window._on_schematic_part_clicked(part.ref)
+
+    assert window.scene.selected_component_ids() == (part.id,)
+    _close(window)
+
+
+def test_clicking_a_part_the_board_has_not_got_says_so_instead_of_selecting_nothing() -> None:
+    doc = _golden_document("ne555")
+    window = _open_schematic(doc)
+
+    window._on_schematic_part_clicked("U404")
+
+    assert window.scene.selected_component_ids() == ()
+    assert "U404" in window.statusBar().currentMessage()
+    _close(window)
+
+
+def test_clicking_a_wire_selects_its_net_in_the_nets_dock() -> None:
+    """Routed through the dock deliberately: that selection already drives the board and
+    the sheet, so one path means the three cannot disagree about what is selected."""
+    doc = _golden_document("ne555")
+    window = _open_schematic(doc)
+    wire = window.schematic_view.item.drawing.wires[0]
+
+    window._on_schematic_net_clicked(wire.net_id)
+
+    assert window._selected_net_ids() == (wire.net_id,)
+    assert wire.net_id in window.schematic_view.item.highlight_nets
+    _close(window)
+
+
+def test_selecting_a_part_on_the_board_lights_up_its_symbol() -> None:
+    doc = _golden_document("ne555")
+    window = _open_schematic(doc)
+    part = doc.components[0]
+
+    window.scene.select_components([part.id])
+    window._refresh_selection_state()
+
+    assert part.ref in window.schematic_view.item.highlight_refs
+    _close(window)
+
+
+def test_a_redraw_does_not_move_the_view() -> None:
+    """The rule view3d.populate_renderer follows about the camera, for the same reason:
+    editing one net must not throw away the part of the sheet somebody was looking at."""
+    window = _open_schematic(_golden_document("ne555"))
+    window.schematic_view.scale(2.0, 2.0)
+    before = window.schematic_view.transform()
+
+    window._refresh_schematic_panel()
+
+    assert window.schematic_view.transform() == before
+    _close(window)
+
+
+def test_a_redraw_keeps_the_highlight() -> None:
+    """The panel holds no state of its own, so the highlight has to survive being handed a
+    new drawing -- otherwise every edit silently clears the selection on one view only."""
+    doc = _golden_document("ne555")
+    window = _open_schematic(doc)
+    part = doc.components[0]
+    window.scene.select_components([part.id])
+    window._refresh_selection_state()
+
+    window._refresh_schematic_panel()
+
+    assert part.ref in window.schematic_view.item.highlight_refs
+    _close(window)
+
+
+def test_the_cursor_describes_what_it_is_over() -> None:
+    doc = _golden_document("ne555")
+    window = _open_schematic(doc)
+    view = window.schematic_view
+    symbol = view.item.drawing.symbols[0]
+
+    over_symbol = QPointF(symbol.at.x + symbol.width / 2, symbol.at.y + symbol.height / 2)
+    described = view.describe(over_symbol)
+    assert symbol.ref in described
+    assert view.describe(QPointF(-500.0, -500.0)) == ""
+
+    wire = view.item.drawing.wires[0]
+    midpoint = QPointF(
+        (wire.path[0].x + wire.path[1].x) / 2, (wire.path[0].y + wire.path[1].y) / 2
+    )
+    assert view.describe(midpoint) == wire.net_name
+    _close(window)
+
+
+def test_the_panel_names_the_rails_it_drew_instead_of_leaving_them_unexplained() -> None:
+    """Somebody who does not know the convention will look for the ground wires and not
+    find any, so the summary says where they went."""
+    window = _open_schematic(_golden_document("ne555"))
+
+    assert "rail symbol" in window.schematic_summary.text()
+    _close(window)
+
+
+# ---------------------------------------------------------------------------
+# Drawing the circuit first, and going from there to the board
+# ---------------------------------------------------------------------------
+#
+# The order every other EDA tool works in, and the one this application could not do:
+# every route a part had into a document ended in `component.place`, which needs a hole.
+# The engine side is in test_commands.py; what is left for here is the flow -- add, wire,
+# place -- driven through the same handlers the buttons are wired to.
+
+
+def _blank_window():
+    from perfstudio.commands import DEFAULT_BOARD
+    from perfstudio.model import DocumentMeta
+
+    document = PerfDocument(
+        meta=DocumentMeta(name="blank", created="", modified=""), board=DEFAULT_BOARD
+    )
+    window = _window_on(document)
+    window.dock_schematic.show()
+    window._refresh_schematic_panel()
+    return window
+
+
+def _add(window, ref, footprint_id, value=""):
+    from perfstudio.commands import AddPartPayload
+
+    result = window.bus.dispatch(
+        "part.add", AddPartPayload(ref=ref, footprint_id=footprint_id, value=value)
+    )
+    assert result.ok, result.message
+    window._refresh_schematic_panel()
+
+
+def test_a_circuit_can_be_drawn_before_the_board_has_anything_on_it() -> None:
+    window = _blank_window()
+    _add(window, "U1", "dip-8", "NE555")
+    _add(window, "R1", "r-axial-3", "10k")
+
+    drawn = {symbol.ref: symbol for symbol in window.schematic_view.item.drawing.symbols}
+
+    assert set(drawn) == {"U1", "R1"}
+    assert window.bus.document.components == ()
+    # Drawn as themselves, from their own footprints -- not as boxes with whatever pins a
+    # netlist happened to mention, because there is no netlist yet.
+    assert drawn["U1"].kind == "ic" and len(drawn["U1"].pins) == 8
+    assert drawn["R1"].kind == "resistor"
+    assert all(symbol.unplaced and not symbol.undefined for symbol in drawn.values())
+    _close(window)
+
+
+def test_the_panel_counts_what_is_not_on_the_board_yet() -> None:
+    """A progress line, not a warning: while a circuit is being drawn every part is
+    unplaced, and it is the question the Place button answers."""
+    window = _blank_window()
+    _add(window, "R1", "r-axial-3")
+
+    assert "not on the board yet" in window.schematic_summary.text()
+    _close(window)
+
+
+def test_clicking_two_pins_wires_them_and_a_third_joins_the_same_net() -> None:
+    """Through the panel's own handler, so it exercises the shared `join_pins` the board's
+    connect tool uses. Two surfaces that disagreed about what a click on a rail pin means
+    would be two applications in one window."""
+    window = _blank_window()
+    _add(window, "U1", "dip-8")
+    _add(window, "R1", "r-axial-3")
+    _add(window, "R2", "r-axial-3")
+
+    window.on_schematic_wire_mode(True)
+    window._on_schematic_pin_clicked("R1", "2")
+    assert window.schematic_view.pending_pin == ("R1", "2")
+    window._on_schematic_pin_clicked("U1", "6")
+
+    assert len(window.bus.document.nets) == 1
+    assert window.schematic_view.pending_pin is None
+
+    # A third pin joins the net that already exists rather than starting another.
+    window._on_schematic_pin_clicked("R2", "1")
+    window._on_schematic_pin_clicked("U1", "6")
+
+    assert len(window.bus.document.nets) == 1
+    assert len(window.bus.document.nets[0].nodes) == 3
+    _close(window)
+
+
+def test_clicking_the_same_pin_twice_cancels_instead_of_wiring_it_to_itself() -> None:
+    window = _blank_window()
+    _add(window, "R1", "r-axial-3")
+
+    window.on_schematic_wire_mode(True)
+    window._on_schematic_pin_clicked("R1", "2")
+    window._on_schematic_pin_clicked("R1", "2")
+
+    assert window.bus.document.nets == ()
+    assert window.schematic_view.pending_pin is None
+    _close(window)
+
+
+def test_wiring_two_pins_that_are_already_on_different_nets_is_refused() -> None:
+    """The refusal comes from the shared decision, so it reads the same here as on the
+    board: merging two nets is a change to the circuit, not to two clicks."""
+    from perfstudio.commands import AddNetPayload
+    from perfstudio.model import NetNode
+
+    window = _blank_window()
+    _add(window, "R1", "r-axial-3")
+    _add(window, "R2", "r-axial-3")
+    window.bus.dispatch("net.add", AddNetPayload(name="A", nodes=(NetNode("R1", "1"),)))
+    window.bus.dispatch("net.add", AddNetPayload(name="B", nodes=(NetNode("R2", "1"),)))
+    window._refresh_schematic_panel()
+
+    window.on_schematic_wire_mode(True)
+    window._on_schematic_pin_clicked("R1", "1")
+    window._on_schematic_pin_clicked("R2", "1")
+
+    assert len(window.bus.document.nets) == 2
+    assert "disconnect one of the pins first" in window.statusBar().currentMessage()
+    _close(window)
+
+
+def test_a_missed_click_while_wiring_cancels_the_half_made_pair() -> None:
+    """Otherwise a stale first pin joins itself to whatever is clicked three gestures
+    later, which is a connection nobody asked for and nobody saw made."""
+    from PySide6.QtCore import QEvent, QPointF
+    from PySide6.QtGui import QMouseEvent
+
+    window = _blank_window()
+    _add(window, "R1", "r-axial-3")
+    window.on_schematic_wire_mode(True)
+    window._on_schematic_pin_clicked("R1", "2")
+
+    far_away = QPointF(window.schematic_view.mapFromScene(QPointF(-400.0, -400.0)))
+    window.schematic_view.mousePressEvent(
+        QMouseEvent(
+            QEvent.Type.MouseButtonPress,
+            far_away,
+            far_away,
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+    )
+
+    assert window.schematic_view.pending_pin is None
+    _close(window)
+
+
+def test_place_on_the_board_moves_the_whole_design_in_one_undo_step() -> None:
+    window = _blank_window()
+    _add(window, "U1", "dip-8")
+    _add(window, "R1", "r-axial-3")
+    _add(window, "R2", "r-axial-3")
+
+    window.on_schematic_place_all()
+
+    assert window.bus.document.parts == ()
+    assert {c.ref for c in window.bus.document.components} == {"U1", "R1", "R2"}
+    # It says what to press next rather than quietly optimising the arrangement, which is
+    # a second of annealing and the one step somebody most wants to watch.
+    assert "Ctrl+Shift+A" in window.statusBar().currentMessage()
+
+    window.bus.undo()
+    assert len(window.bus.document.parts) == 3
+    assert window.bus.document.components == ()
+    _close(window)
+
+
+def test_placing_with_nothing_left_in_the_design_says_so_rather_than_doing_nothing() -> None:
+    window = _blank_window()
+
+    window.on_schematic_place_all()
+
+    assert "already on the board" in window.statusBar().currentMessage()
+    _close(window)
+
+
+def test_remove_deletes_a_part_in_the_design_and_unplaces_one_on_the_board() -> None:
+    """Two actions behind one button, and the difference is which list the part is in.
+    Somebody clicking Remove on a placed part means "wrong hole", not "delete the
+    circuit around it"."""
+    window = _blank_window()
+    _add(window, "R1", "r-axial-3")
+    _add(window, "R2", "r-axial-3")
+    window.on_schematic_place_all()
+    window._refresh_schematic_panel()
+
+    window._on_schematic_part_clicked("R1")
+    window.on_schematic_remove()
+
+    assert [p.ref for p in window.bus.document.parts] == ["R1"]
+    assert {c.ref for c in window.bus.document.components} == {"R2"}
+
+    # Now it is in the design, so the same button deletes it.
+    window._on_schematic_part_clicked("R1")
+    window.on_schematic_remove()
+
+    assert window.bus.document.parts == ()
+    _close(window)
+
+
+def test_a_part_only_in_the_design_can_still_be_selected_on_the_sheet() -> None:
+    """It has no board item to click, and it is the part somebody drawing a circuit is
+    working with -- so the panel keeps a reference of its own."""
+    window = _blank_window()
+    _add(window, "R1", "r-axial-3")
+
+    window._on_schematic_part_clicked("R1")
+
+    assert window._schematic_ref == "R1"
+    assert "R1" in window.schematic_view.item.highlight_refs
+    assert window.act_sch_delete.isEnabled()
+    _close(window)
+
+
+def test_escape_leaves_the_wiring_tool_the_way_it_leaves_every_other_mode() -> None:
+    """The status bar says "Esc cancels" while wiring, so Escape has to actually do it.
+
+    Escape is a WINDOW shortcut and fires wherever the focus is, so it goes through
+    on_stop_tool rather than through the panel -- the same route the board's modes take.
+    """
+    window = _blank_window()
+    _add(window, "R1", "r-axial-3")
+    window.act_sch_wire.setChecked(True)
+    window._on_schematic_pin_clicked("R1", "2")
+
+    window.on_stop_tool()
+
+    assert not window.act_sch_wire.isChecked()
+    assert window.schematic_view.wiring is False
+    assert window.schematic_view.pending_pin is None
+    _close(window)
+
+
+def test_the_suggested_reference_counts_the_design_as_well_as_the_board() -> None:
+    """Otherwise the dialog offers R1 to somebody who has just drawn R1, and the bus
+    refuses it for a reason nothing on screen explains."""
+    from perfstudio.ui.view2d import next_reference
+
+    window = _blank_window()
+    _add(window, "R1", "r-axial-3")
+
+    assert next_reference(window.bus.document, "r-axial-3") == "R2"
+    _close(window)

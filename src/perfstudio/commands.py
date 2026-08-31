@@ -75,6 +75,7 @@ from .model import (
     NetNode,
     PerfDocument,
     Rotation,
+    SchematicPart,
     SolderBuildup,
     SolderTraceConductor,
     SpineSpec,
@@ -198,6 +199,80 @@ def require_component(doc: PerfDocument, id_: ComponentId) -> ComponentInstance:
         if c.id == id_:
             return c
     raise CommandError("component-not-found", f'No component with id "{id_}".')
+
+
+def require_part(doc: PerfDocument, id_: ComponentId) -> SchematicPart:
+    for part in doc.parts:
+        if part.id == id_:
+            return part
+    raise CommandError("part-not-found", f'No schematic part with id "{id_}".')
+
+
+def assert_ref_free(doc: PerfDocument, ref: str, *, ignoring: ComponentId | None = None) -> None:
+    """A reference is unique across the BOARD and the DESIGN, not within either one.
+
+    The two lists are the whole reason ``SchematicPart`` is separate from
+    ``ComponentInstance``, and one reference naming a thing in each is the way that
+    separation would go wrong: every net node is a ``(ref, pin)`` pair, so two R4s means
+    a netlist that cannot say which one it wired. Checked in one helper for that reason,
+    and the refusal names which side already has it, because "place it" and "rename it"
+    are different fixes.
+    """
+    for component in doc.components:
+        if component.ref == ref and component.id != ignoring:
+            raise CommandError("duplicate-ref", f'A component with ref "{ref}" is on the board.')
+    for part in doc.parts:
+        if part.ref == ref and part.id != ignoring:
+            raise CommandError(
+                "duplicate-ref",
+                f'A schematic part with ref "{ref}" is already in the design. '
+                f"Place that one instead, or give this a different reference.",
+            )
+
+
+def rename_in_nets(doc: PerfDocument, old_ref: str, new_ref: str) -> tuple[Net, ...]:
+    """Carry a part's connections across a rename, or refuse the rename.
+
+    RENAMING TAKES THE WIRING WITH IT. It did not always: a rename used to leave the nets
+    naming the old reference, so R1 wired into six nets and then relabelled R7 came out
+    the other side connected to nothing, and the properties dialog had to carry a tooltip
+    warning people to rename before importing rather than after. That is a wart, not a
+    decision -- a reference is the only name a net has for a part, so renaming the part
+    IS renaming what the net points at.
+
+    The one thing it must not do is merge two parts by accident. If some net already names
+    ``new_ref`` on a pin this part also has, carrying the rename would put one pin on two
+    nets, which is the invariant ``assert_pins_free`` exists to hold. That is refused, and
+    the refusal names the pins.
+    """
+    if old_ref == new_ref:
+        return doc.nets
+    moving = {node.pin for net in doc.nets for node in net.nodes if node.component_ref == old_ref}
+    if not moving:
+        return doc.nets
+    taken = {node.pin for net in doc.nets for node in net.nodes if node.component_ref == new_ref}
+    collides = sorted(moving & taken)
+    if collides:
+        raise CommandError(
+            "pin-collision",
+            f'Renaming to "{new_ref}" would put {", ".join(f"{new_ref}.{pin}" for pin in collides)} '
+            f"on two nets at once, because something already wired those pins under that "
+            f"reference.",
+        )
+    return tuple(
+        dataclasses.replace(
+            net,
+            nodes=tuple(
+                dataclasses.replace(node, component_ref=new_ref)
+                if node.component_ref == old_ref
+                else node
+                for node in net.nodes
+            ),
+        )
+        if any(node.component_ref == old_ref for node in net.nodes)
+        else net
+        for net in doc.nets
+    )
 
 
 def require_conductor(doc: PerfDocument, id_: ConductorId) -> Conductor:
@@ -502,6 +577,64 @@ class DeleteComponentPayload:
 
 
 @dataclass(frozen=True, slots=True)
+class UnplaceComponentPayload:
+    """Take a part off the board and keep it in the design. The inverse of ``part.place``."""
+
+    id: ComponentId
+
+
+@dataclass(frozen=True, slots=True)
+class AddPartPayload:
+    """A part the design has and the board does not yet.
+
+    No anchor and no rotation: those are the questions placement answers, and asking them
+    here would be the thing this command exists to avoid.
+    """
+
+    ref: str
+    footprint_id: str
+    value: str = ""
+    id: ComponentId | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class UpdatePartPayload:
+    id: ComponentId
+    #: ``None`` leaves the field alone. A changed ``ref`` carries the part's nets with it.
+    ref: str | None = None
+    value: str | None = None
+    footprint_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class DeletePartPayload:
+    id: ComponentId
+
+
+@dataclass(frozen=True, slots=True)
+class PartPlacement:
+    """Where one schematic part is going."""
+
+    id: ComponentId
+    anchor: HoleCoord
+    rotation: Rotation | None = None
+    mirrored: bool | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PlacePartsPayload:
+    """One command however many parts, because placing a whole schematic is one decision.
+
+    A thirty-part circuit dispatched one at a time takes thirty presses of Ctrl+Z to take
+    back, and each press leaves a board that is half laid out -- the same reason
+    ``block.place`` exists.
+    """
+
+    placements: tuple[PartPlacement, ...]
+    label: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class AddConductorPayload:
     conductor: NewConductor
     id: ConductorId | None = None
@@ -791,6 +924,15 @@ def _prepare_component(
 
     if p.ref in taken_refs:
         raise CommandError("duplicate-ref", f'A component with ref "{p.ref}" already exists.')
+    # ...and against the design as well, which the caller's set cannot see. A reference
+    # names one thing across both lists; see `assert_ref_free`.
+    for part in doc.parts:
+        if part.ref == p.ref:
+            raise CommandError(
+                "duplicate-ref",
+                f'"{p.ref}" is a schematic part waiting to be placed. Use part.place to put '
+                f"that one on the board rather than creating a second part with its name.",
+            )
     taken_refs.add(p.ref)
     id_ = p.id if p.id is not None else ctx.next_id("cmp")
     if id_ in taken_ids:
@@ -987,16 +1129,16 @@ class _UpdateComponent:
         self, doc: PerfDocument, p: UpdateComponentPayload, ctx: CommandContext
     ) -> PerfDocument:
         existing = require_component(doc, p.id)
-        if (
-            p.ref is not None
-            and p.ref != existing.ref
-            and any(c.ref == p.ref for c in doc.components)
-        ):
-            raise CommandError("duplicate-ref", f'A component with ref "{p.ref}" already exists.')
+        ref = p.ref if p.ref is not None else existing.ref
+        if ref != existing.ref:
+            assert_ref_free(doc, ref, ignoring=p.id)
+        # The rename carries the wiring; `rename_in_nets` says why, and refuses rather
+        # than merging two parts when the new reference is already wired.
+        nets = rename_in_nets(doc, existing.ref, ref)
         components = tuple(
             dataclasses.replace(
                 c,
-                ref=p.ref if p.ref is not None else c.ref,
+                ref=ref,
                 value=p.value if p.value is not None else c.value,
                 locked=p.locked if p.locked is not None else c.locked,
             )
@@ -1004,7 +1146,7 @@ class _UpdateComponent:
             else c
             for c in doc.components
         )
-        return dataclasses.replace(doc, components=components)
+        return dataclasses.replace(doc, components=components, nets=nets)
 
     def describe(self, p: UpdateComponentPayload, doc: PerfDocument) -> str:
         c = next((x for x in doc.components if x.id == p.id), None)
@@ -1039,6 +1181,199 @@ class _DeleteComponent:
         c = next((x for x in doc.components if x.id == p.id), None)
         ref = c.ref if c is not None else p.id
         return f"Delete {ref}"
+
+
+# ---------------------------------------------------------------------------
+# Schematic parts: the design before the board
+# ---------------------------------------------------------------------------
+#
+# THE OTHER ORDER OF WORK, AND THE ONE EVERY OTHER EDA TOOL USES. Until these existed a
+# part could only enter a document by being put on the board, which made "lay out the
+# circuit and then work out where it goes" impossible: you had to decide a hole for a
+# resistor before you had decided the resistor. These five commands and `component.unplace`
+# are the schematic half -- add a part, wire it (`net.connect` already does not care
+# whether a part is on the board), and place it when the circuit is settled.
+#
+# Placement is a MOVE between two lists rather than a flag, for the reason set out on
+# `model.SchematicPart`: everything downstream of the board reads `doc.components` and is
+# right to assume every entry has a position.
+
+
+class _AddPart:
+    type = "part.add"
+
+    def apply(self, doc: PerfDocument, p: AddPartPayload, ctx: CommandContext) -> PerfDocument:
+        ref = p.ref.strip()
+        if not ref:
+            raise CommandError("empty-ref", "A part needs a reference designator.")
+        assert_ref_free(doc, ref)
+        id_ = p.id if p.id is not None else ctx.next_id("part")
+        if any(part.id == id_ for part in doc.parts) or any(c.id == id_ for c in doc.components):
+            raise CommandError("duplicate-id", f'Something with id "{id_}" already exists.')
+        part = SchematicPart(
+            id=id_, ref=ref, value=p.value, footprint_id=p.footprint_id
+        )
+        return dataclasses.replace(doc, parts=(*doc.parts, part))
+
+    def describe(self, p: AddPartPayload, doc: PerfDocument) -> str:
+        value = f" {p.value}" if p.value else ""
+        return f"Add {p.ref.strip()}{value} to the schematic"
+
+
+class _UpdatePart:
+    type = "part.update"
+
+    def apply(self, doc: PerfDocument, p: UpdatePartPayload, ctx: CommandContext) -> PerfDocument:
+        existing = require_part(doc, p.id)
+        ref = existing.ref if p.ref is None else p.ref.strip()
+        if not ref:
+            raise CommandError("empty-ref", "A part needs a reference designator.")
+        if ref != existing.ref:
+            assert_ref_free(doc, ref, ignoring=p.id)
+        nets = rename_in_nets(doc, existing.ref, ref)
+        parts = tuple(
+            dataclasses.replace(
+                part,
+                ref=ref,
+                value=p.value if p.value is not None else part.value,
+                footprint_id=(
+                    p.footprint_id if p.footprint_id is not None else part.footprint_id
+                ),
+            )
+            if part.id == p.id
+            else part
+            for part in doc.parts
+        )
+        return dataclasses.replace(doc, parts=parts, nets=nets)
+
+    def describe(self, p: UpdatePartPayload, doc: PerfDocument) -> str:
+        part = next((x for x in doc.parts if x.id == p.id), None)
+        return f"Update {part.ref if part is not None else p.id}"
+
+
+class _DeletePart:
+    type = "part.delete"
+
+    def apply(self, doc: PerfDocument, p: DeletePartPayload, ctx: CommandContext) -> PerfDocument:
+        existing = require_part(doc, p.id)
+        # ITS CONNECTIONS GO WITH IT, and this is the one place that differs from
+        # `component.delete` on purpose. Deleting a component takes it OFF THE BOARD; the
+        # schematic still asks for it, and LVS is right to report the gap. Deleting a
+        # schematic part means the design does not have it, so a net still naming its pins
+        # would be asking for a part nothing in the document has ever heard of.
+        nets = tuple(
+            dataclasses.replace(
+                net, nodes=tuple(n for n in net.nodes if n.component_ref != existing.ref)
+            )
+            if any(n.component_ref == existing.ref for n in net.nodes)
+            else net
+            for net in doc.nets
+        )
+        return dataclasses.replace(
+            doc, parts=tuple(part for part in doc.parts if part.id != p.id), nets=nets
+        )
+
+    def describe(self, p: DeletePartPayload, doc: PerfDocument) -> str:
+        part = next((x for x in doc.parts if x.id == p.id), None)
+        if part is None:
+            return f"Delete {p.id}"
+        wired = sum(
+            1 for net in doc.nets for node in net.nodes if node.component_ref == part.ref
+        )
+        if wired:
+            return f"Delete {part.ref} and its {wired} connection(s)"
+        return f"Delete {part.ref}"
+
+
+def _placed_from(part: SchematicPart, spec: PartPlacement, doc: PerfDocument) -> ComponentInstance:
+    assert_hole_on_board(spec.anchor, doc.board, f"Anchor for {part.ref}")
+    rotation: Rotation = spec.rotation if spec.rotation is not None else 0
+    assert_rotation(rotation)
+    # The SAME id, deliberately. Nothing outside this document refers to it, but the
+    # journal and the undo history do, and a part that changed identity when it was
+    # placed would make a replayed journal describe two different things.
+    return ComponentInstance(
+        id=part.id,
+        ref=part.ref,
+        value=part.value,
+        footprint_id=part.footprint_id,
+        anchor=spec.anchor,
+        rotation=rotation,
+        mirrored=spec.mirrored if spec.mirrored is not None else False,
+        locked=False,
+    )
+
+
+class _PlaceParts:
+    type = "part.place"
+
+    def apply(self, doc: PerfDocument, p: PlacePartsPayload, ctx: CommandContext) -> PerfDocument:
+        if not p.placements:
+            raise CommandError(
+                "nothing-to-place",
+                "part.place needs at least one part; an empty batch would put a no-op on "
+                "the undo stack.",
+            )
+        seen: set[ComponentId] = set()
+        placed: list[ComponentInstance] = []
+        for spec in p.placements:
+            if spec.id in seen:
+                raise CommandError("duplicate-id", f'Part "{spec.id}" is placed twice in one batch.')
+            seen.add(spec.id)
+            placed.append(_placed_from(require_part(doc, spec.id), spec, doc))
+        return dataclasses.replace(
+            doc,
+            components=doc.components + tuple(placed),
+            parts=tuple(part for part in doc.parts if part.id not in seen),
+        )
+
+    def describe(self, p: PlacePartsPayload, doc: PerfDocument) -> str:
+        if p.label:
+            return p.label
+        by_id = {part.id: part for part in doc.parts}
+        if len(p.placements) == 1:
+            spec = p.placements[0]
+            part = by_id.get(spec.id)
+            return f"Place {part.ref if part is not None else spec.id} at {format_hole(spec.anchor)}"
+        return f"Place {len(p.placements)} part(s) on the board"
+
+
+class _UnplaceComponent:
+    type = "component.unplace"
+
+    def apply(
+        self, doc: PerfDocument, p: UnplaceComponentPayload, ctx: CommandContext
+    ) -> PerfDocument:
+        existing = require_component(doc, p.id)
+        if existing.locked:
+            raise CommandError("component-locked", f"{existing.ref} is locked.")
+        # Its lead bends go, exactly as they do on `component.delete`: a lead bend is a
+        # length of the part's own leg, and the part is no longer on the board. Wires and
+        # traces stay, because they may still be wanted and silently deleting somebody's
+        # routing is worse than leaving something for DRC and LVS to point at. THE NETS
+        # ARE UNTOUCHED -- that is the whole difference from deleting it.
+        return dataclasses.replace(
+            doc,
+            components=tuple(c for c in doc.components if c.id != p.id),
+            conductors=tuple(
+                c
+                for c in doc.conductors
+                if not (c.kind == "lead-bend" and c.component_id == p.id)
+            ),
+            parts=(
+                *doc.parts,
+                SchematicPart(
+                    id=existing.id,
+                    ref=existing.ref,
+                    value=existing.value,
+                    footprint_id=existing.footprint_id,
+                ),
+            ),
+        )
+
+    def describe(self, p: UnplaceComponentPayload, doc: PerfDocument) -> str:
+        c = next((x for x in doc.components if x.id == p.id), None)
+        return f"Take {c.ref if c is not None else p.id} off the board"
 
 
 # ---------------------------------------------------------------------------
@@ -1918,6 +2253,11 @@ rotate_component: CommandDefinition[RotateComponentPayload] = _RotateComponent()
 mirror_component: CommandDefinition[MirrorComponentPayload] = _MirrorComponent()
 update_component: CommandDefinition[UpdateComponentPayload] = _UpdateComponent()
 delete_component: CommandDefinition[DeleteComponentPayload] = _DeleteComponent()
+unplace_component: CommandDefinition[UnplaceComponentPayload] = _UnplaceComponent()
+add_part: CommandDefinition[AddPartPayload] = _AddPart()
+update_part: CommandDefinition[UpdatePartPayload] = _UpdatePart()
+delete_part: CommandDefinition[DeletePartPayload] = _DeletePart()
+place_parts: CommandDefinition[PlacePartsPayload] = _PlaceParts()
 add_conductor: CommandDefinition[AddConductorPayload] = _AddConductor()
 add_conductors: CommandDefinition[AddConductorsPayload] = _AddConductors()
 set_conductor_path: CommandDefinition[SetConductorPathPayload] = _SetConductorPath()
@@ -1954,6 +2294,11 @@ STANDARD_COMMANDS: tuple[CommandDefinition[Any], ...] = (
     mirror_component,
     update_component,
     delete_component,
+    unplace_component,
+    add_part,
+    update_part,
+    delete_part,
+    place_parts,
     add_conductor,
     add_conductors,
     set_conductor_path,

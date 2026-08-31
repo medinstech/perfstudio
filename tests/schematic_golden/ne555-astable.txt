@@ -1,0 +1,91 @@
+sheet 167.64 x 147.32
+symbol C1 polarised-capacitor c-elec-d5-p2 at 66.04,20.32 size 20.32x10.16 value='10uF'
+    pin 1 name='+' left 0.00,5.08
+    pin 2 name='-' right 20.32,5.08
+symbol C2 capacitor c-disc-p2 at 66.04,68.58 size 20.32x10.16 value='0.01uF'
+    pin 1 name=None left 0.00,5.08
+    pin 2 name=None right 20.32,5.08
+symbol J1 connector hdr-1x2 at 127.00,66.04 size 20.32x15.24 value='Conn_01x02'
+    pin 1 name=None left 0.00,5.08
+    pin 2 name=None left 0.00,10.16
+symbol LED1 led led-5mm at 96.52,68.58 size 20.32x10.16 value='LED'
+    pin 2 name='K' left 0.00,5.08
+    pin 1 name='A' right 20.32,5.08
+symbol R1 resistor r-axial-3 at 66.04,96.52 size 20.32x10.16 value='10k'
+    pin 1 name=None left 0.00,5.08
+    pin 2 name=None right 20.32,5.08
+symbol R2 resistor r-axial-3 at 66.04,116.84 size 20.32x10.16 value='100k'
+    pin 1 name=None left 0.00,5.08
+    pin 2 name=None right 20.32,5.08
+symbol R3 resistor r-axial-3 at 66.04,40.64 size 20.32x10.16 value='330'
+    pin 1 name=None left 0.00,5.08
+    pin 2 name=None right 20.32,5.08
+symbol U1 ic dip-8 at 20.32,60.96 size 30.48x25.40 value='NE555'
+    pin 1 name=None left 0.00,5.08
+    pin 2 name=None left 0.00,10.16
+    pin 3 name=None left 0.00,15.24
+    pin 4 name=None left 0.00,20.32
+    pin 8 name=None right 30.48,5.08
+    pin 7 name=None right 30.48,10.16
+    pin 6 name=None right 30.48,15.24
+    pin 5 name=None right 30.48,20.32
+wire OUT [signal] 20.32,76.20 -> 12.70,76.20 -> 12.70,53.34
+wire OUT [signal] 66.04,45.72 -> 55.88,45.72 -> 55.88,53.34
+wire OUT [signal] 12.70,53.34 -> 55.88,53.34
+wire LED_A [signal] 86.36,45.72 -> 88.90,45.72 -> 88.90,53.34
+wire LED_A [signal] 116.84,73.66 -> 119.38,73.66 -> 119.38,53.34
+wire LED_A [signal] 88.90,53.34 -> 119.38,53.34
+wire THRESH [signal] 20.32,71.12 -> 17.78,71.12 -> 17.78,91.44
+wire THRESH [signal] 50.80,76.20 -> 60.96,76.20 -> 60.96,91.44
+wire THRESH [signal] 86.36,121.92 -> 88.90,121.92 -> 88.90,91.44
+wire THRESH [signal] 66.04,25.40 -> 53.34,25.40 -> 53.34,91.44
+wire THRESH [signal] 17.78,91.44 -> 88.90,91.44
+wire DISCH [signal] 50.80,71.12 -> 55.88,71.12 -> 55.88,109.22
+wire DISCH [signal] 86.36,101.60 -> 91.44,101.60 -> 91.44,109.22
+wire DISCH [signal] 66.04,121.92 -> 53.34,121.92 -> 53.34,109.22
+wire DISCH [signal] 53.34,109.22 -> 91.44,109.22
+wire CTRL [signal] 50.80,81.28 -> 63.50,81.28 -> 63.50,88.90
+wire CTRL [signal] 66.04,73.66 -> 58.42,73.66 -> 58.42,88.90
+wire CTRL [signal] 58.42,88.90 -> 63.50,88.90
+rail VCC [power] up 50.80,66.04 -> 55.88,66.04 -> 55.88,55.88
+rail VCC [power] up 66.04,101.60 -> 53.34,101.60 -> 53.34,93.98
+rail VCC [power] up 127.00,71.12 -> 121.92,71.12 -> 121.92,55.88
+rail GND [ground] down 20.32,66.04 -> 15.24,66.04 -> 15.24,88.90
+rail GND [ground] down 86.36,25.40 -> 88.90,25.40 -> 88.90,33.02
+rail GND [ground] down 86.36,73.66 -> 88.90,73.66 -> 88.90,88.90
+rail GND [ground] down 96.52,73.66 -> 91.44,73.66 -> 91.44,93.98
+rail GND [ground] down 127.00,76.20 -> 119.38,76.20 -> 119.38,88.90
+junction net-5 60.96,91.44
+junction net-5 53.34,91.44
+junction net-6 55.88,109.22
+label [ref/centre] 76.20,18.41 C1
+label [value/centre] 76.20,31.50 10uF
+label [ref/centre] 76.20,66.67 C2
+label [value/centre] 76.20,79.76 0.01uF
+label [ref/centre] 137.16,64.13 J1
+label [value/centre] 137.16,82.30 Conn_01x02
+label [pin/left] 133.35,71.12 1
+label [pin/left] 133.35,76.20 2
+label [ref/centre] 106.68,66.67 LED1
+label [value/centre] 106.68,79.76 LED
+label [ref/centre] 76.20,94.61 R1
+label [value/centre] 76.20,107.70 10k
+label [ref/centre] 76.20,114.93 R2
+label [value/centre] 76.20,128.02 100k
+label [ref/centre] 76.20,38.73 R3
+label [value/centre] 76.20,51.82 330
+label [ref/centre] 35.56,59.05 U1
+label [value/centre] 35.56,87.38 NE555
+label [pin/left] 26.67,66.04 1
+label [pin/left] 26.67,71.12 2
+label [pin/left] 26.67,76.20 3
+label [pin/left] 26.67,81.28 4
+label [pin/right] 44.45,66.04 8
+label [pin/right] 44.45,71.12 7
+label [pin/right] 44.45,76.20 6
+label [pin/right] 44.45,81.28 5
+label [net/left] 12.70,53.34 OUT
+label [net/left] 88.90,53.34 LED_A
+label [net/left] 17.78,91.44 THRESH
+label [net/left] 53.34,109.22 DISCH
+label [net/left] 58.42,88.90 CTRL
