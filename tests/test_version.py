@@ -175,6 +175,34 @@ def test_pyproject_derives_the_version_from_the_package() -> None:
     assert attr == "perfstudio.version.__version__"
 
 
+def test_every_classifier_is_one_pypi_actually_has() -> None:
+    """Trove classifiers are a closed list, and PyPI refuses an upload carrying one that
+    is not on it -- with a 400 and nothing else changed.
+
+    THIS IS THE ONE CHECK THAT HAD TO BE A TEST RATHER THAN A RELEASE STEP. `twine check
+    --strict` does not look at classifiers at all; it checks that the long description
+    renders. So an invented classifier passes the local build, passes `twine check`,
+    passes the release DRY RUN -- which gates the publish step off and therefore never
+    contacts PyPI -- and is refused by the real upload, at which point the tag exists and
+    the version number is gone. 0.8.0 was refused for exactly one string:
+    `Topic :: Scientific/Engineering :: Electronic Design Automation` is not a classifier
+    and `... Electronic Design Automation (EDA)` is.
+
+    `trove_classifiers` is the same list PyPI validates against, shipped as data, so this
+    is the real check and not an approximation of it. Failing here costs a test run;
+    failing there costs a release.
+    """
+    from trove_classifiers import classifiers
+
+    declared = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))["project"]["classifiers"]
+    assert declared, "the package declares no classifiers at all"
+    unknown = [c for c in declared if c not in classifiers]
+    assert unknown == [], (
+        f"PyPI would refuse the upload: {unknown} "
+        f"(the list is `python -c \"from trove_classifiers import classifiers\"`)"
+    )
+
+
 def test_version_module_imports_nothing_at_module_scope() -> None:
     """The build backend reads __version__ out of this file before the package exists.
 

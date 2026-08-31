@@ -35,7 +35,7 @@ classifiers = [
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
-    "Topic :: Scientific/Engineering :: Electronic Design Automation",
+    "Topic :: Scientific/Engineering :: Electronic Design Automation (EDA)",
 ]
 
 dependencies = [
@@ -53,7 +53,18 @@ Changelog = "https://github.com/medinstech/perfstudio/blob/main/CHANGELOG.md"
 Issues = "https://github.com/medinstech/perfstudio/issues"
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-cov", "mypy>=1.13", "ruff>=0.8", "pyinstaller>=6.10"]
+dev = [
+    "pytest>=8",
+    "pytest-cov",
+    "mypy>=1.13",
+    "ruff>=0.8",
+    "pyinstaller>=6.10",
+    # PyPI's own classifier list, as data. `twine check --strict` does NOT validate
+    # classifiers -- it only checks that the description renders -- so an invented one
+    # passes every local check and is refused by the upload, after the tag exists.
+    # That is what happened to 0.8.0. See test_version.py.
+    "trove-classifiers",
+]
 # Capped below 2.0, and the cap is load-bearing rather than cautious. `mcp` 2.0.0 removed
 # `mcp.server.fastmcp` outright -- the decorator API every tool in `mcp/server.py` is
 # bound with -- so the server does not import at all there, and PyInstaller's

@@ -20,6 +20,28 @@ closed without a bump.
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-08-31
+
+### Fixed
+
+- **0.8.0 never reached PyPI.** The upload was refused with a 400 for one string:
+  `Topic :: Scientific/Engineering :: Electronic Design Automation` is not a trove
+  classifier and `... Electronic Design Automation (EDA)` is. Nothing else about 0.8.0 was
+  wrong — the three installers built, published and smoke-tested normally, and are on that
+  release — so this carries the same application with the metadata corrected.
+  - **The gap that let it through is the interesting part, and it is closed.** Classifiers
+    are a closed list PyPI validates against, and NOTHING local validates them: `twine
+    check --strict` checks that the long description renders and does not look at
+    classifiers at all. So an invented one passes the build, passes `twine check`, and
+    passes the release dry run — which gates the publish step off and therefore never
+    contacts PyPI. The first thing that can refuse it is the real upload, by which point
+    the tag exists.
+  - `test_every_classifier_is_one_pypi_actually_has` now checks them against
+    `trove_classifiers`, which is the same list PyPI validates against shipped as data, so
+    it is the real check rather than an approximation. It runs on every push and locally,
+    which is where a release-blocking mistake has to be caught — a check that only runs
+    during a release is a check that first runs when it is too late.
+
 ## [0.8.0] - 2026-08-31
 
 ### Added
@@ -1904,7 +1926,8 @@ was introduced during 0.4.0 development, so they are accurate but were not writt
 release time. Their compare links point at commits rather than tags for the same reason;
 from v0.4.0 onwards every release is tagged.
 
-[Unreleased]: https://github.com/medinstech/perfstudio/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/medinstech/perfstudio/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/medinstech/perfstudio/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/medinstech/perfstudio/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/medinstech/perfstudio/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/medinstech/perfstudio/compare/v0.5.0...v0.6.0
