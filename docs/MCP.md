@@ -94,17 +94,25 @@ conductor at a time.
 | **Netlist** | `create_net` · `connect_pins` · `disconnect_pins` · `update_net` · `delete_net` |
 | **The board** | `set_board` · `add_mounting_hole` · `add_edge_connector` · `cut_track` · `remove_board_feature` |
 | **Editing** | `place_component` · `move_component` · `rotate_component` · `set_component_locked` · `delete_component` · `add_wire` · `add_solder_trace` · `remove_stale_conductors` · `set_height_limit` |
-| **Planning** | `autoroute` · `optimize_placement` |
+| **Planning** | `autoroute` · `reroute` · `optimize_placement` |
 | **Verifying** | `run_drc` · `run_lvs` · `check_heights` |
 | **Output** | `generate_guide` · `export_pdf` |
 | **State** | `snapshot` · `restore` · `undo` · `redo` |
 
-Forty-four, against PLAN.md §2's "~25, deliberately narrow". Each is a verb that cannot
+51 tools, against PLAN.md §2's "~25, deliberately narrow". Each is a verb that cannot
 be composed from the others, and the surface was trimmed rather than grown where it
 could be: the history listing folded into `get_status`, there is no separate "add solder
 bridge" because a bridge is a two-pad solder trace and one concept should not have two
 names, and one `remove_board_feature` covers mounting holes, edge connectors and track
 cuts because the three differ only in which list the id is in.
+
+**That table and this count are now read by a test**
+(`test_every_tool_is_named_in_the_documentation_and_nothing_else_is`), which is why the
+number is a digit rather than the word it used to be. PLAN.md §13's answer to the
+tool-count risk was never the ceiling — it was the rule that every tool is tied here to a
+group and a reason. Nothing measured the rule, so it slipped: `reroute` was registered and
+undocumented, and the count read forty-four here and fifty in the plan while the server
+had fifty. Three numbers in three files is what a rule nobody checks decays into.
 
 **The board group is the newest and the asymmetry it fixes is the argument for it.**
 `get_board_info` reported mounting holes and edge connectors that nothing could add, and
@@ -134,6 +142,11 @@ tool, had no way to look at what it built. The sheet is generated from the nets 
 time and nothing about it is stored (see PLAN.md D3), so there is no layout to keep in
 step — and the notes come back beside the picture, because a pin the netlist names that
 the footprint does not have is a hole in the design that a drawing alone would hide.
+
+`reroute` is `autoroute`'s replacement half. `autoroute` ADDS copper, so calling it again
+after a part has moved grows the board every time: the runs laid for the old position
+still join the right pins, so nothing flags them. `reroute` takes the old ones out first,
+which is the only safe verb after `move_component` or `optimize_placement`.
 
 ## Things worth knowing
 

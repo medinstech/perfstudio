@@ -138,6 +138,20 @@ closed without a bump.
   renderer and a real board meet on all three operating systems: the goldens prove the
   writer says the same thing everywhere, and this proves what it says can still be turned
   into a page.
+
+### Fixed
+
+- **The rule that holds the MCP tool count down had quietly stopped being true, and is now
+  measured.** PLAN.md §13's answer to "the tool surface will explode" was never the ~25
+  ceiling — it was that every tool is tied to a group and a reason in `docs/MCP.md`.
+  Nothing checked it: `reroute` had been registered and never documented, and the count read
+  forty-four in `docs/MCP.md` and fifty in PLAN.md while the server had fifty. Three numbers
+  in three files is what a rule nobody measures decays into.
+  `test_every_tool_is_named_in_the_documentation_and_nothing_else_is` now reads the table
+  and both prose counts, in both directions — an undocumented tool is one nobody had to
+  argue for, and a documented one that no longer exists sends an agent, the reader that
+  document is written for, after something that is not there.
+
 ## [0.8.1] - 2026-08-31
 
 ### Fixed

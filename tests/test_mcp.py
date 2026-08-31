@@ -718,6 +718,47 @@ def test_being_told_a_part_does_not_exist_says_what_to_do_instead(
     message = str(refusal.value)
     assert "list_footprints" in message
     assert "box-<cols>x<rows>" in message, message
+
+
+def test_every_tool_is_named_in_the_documentation_and_nothing_else_is() -> None:
+    """PLAN.md Sec 13's answer to the tool-count risk is a RULE, not a ceiling: every tool
+    is tied to a group and a rationale in docs/MCP.md. Nothing measured the rule, so it
+    slipped -- `reroute` was registered and undocumented, and the count read forty-four in
+    the document and fifty in the plan while the server had fifty. Three numbers in three
+    files is what a rule nobody checks decays into.
+
+    Both directions, because they fail differently. A tool missing from the table is one
+    nobody had to argue for, which is exactly the drift the cap above exists to prevent.
+    A name in the table that no longer exists sends an agent -- the reader this document is
+    written for -- after a tool that is not there.
+    """
+    import asyncio
+    import re
+
+    from perfstudio.mcp import server
+
+    registered = {tool.name for tool in asyncio.run(server.mcp.list_tools())}
+
+    doc = (REPO_ROOT / "docs" / "MCP.md").read_text(encoding="utf-8")
+    rows = doc.split("## The tools", 1)[1].split("## Things worth knowing", 1)[0]
+    documented = {
+        name
+        for line in rows.splitlines()
+        if line.startswith("| **")
+        for name in re.findall(r"`([a-z_0-9]+)`", line)
+    }
+
+    assert documented == registered, (
+        f"undocumented: {sorted(registered - documented)}; "
+        f"documented but gone: {sorted(documented - registered)}"
+    )
+    # The count is also stated in prose, in two files, and both are read here rather than
+    # trusted: the sentence a person actually reads is the one that went wrong.
+    assert f"{len(registered)} tools," in doc
+    plan = (REPO_ROOT / "PLAN.md").read_text(encoding="utf-8")
+    assert f"Gerçekleşen: {len(registered)} tool" in plan
+
+
 def test_nothing_in_the_mcp_package_writes_to_stdout() -> None:
     """On stdio, stdout IS the protocol. One stray print corrupts the stream and the
     client reports something baffling and unrelated -- PLAN.md Sec 9.1's named trap."""

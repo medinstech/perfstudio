@@ -494,6 +494,17 @@ its **address** (`"C7"`), the same language DRC and the guide speak. A refused c
 returns `{"ok": false, "code": ..., "message": ...}` rather than raising, matching
 `CommandBus.dispatch`'s contract — an agent must be able to try something and be told no.
 
+**The defence against the tool count is a rule, not the ceiling, and the rule is now
+measured.** PLAN.md §13 ties every tool to a group and a reason in `docs/MCP.md`. Nothing
+checked that, so it slipped: `reroute` was registered and undocumented, and the count read
+forty-four in the document and fifty in the plan while the server had fifty — three
+numbers in three files.
+`test_mcp.py::test_every_tool_is_named_in_the_documentation_and_nothing_else_is` reads the
+table and both prose counts, in both directions: an undocumented tool is one nobody argued
+for, and a documented one that no longer exists sends an agent after something that is not
+there. Adding a tool therefore means adding its row and its paragraph, and bumping the
+count in `docs/MCP.md` and PLAN.md §13.
+
 ### Stripboard is the board where the copper is subtracted
 
 `board.type` is `pad-per-hole` or `stripboard`, and it is not a display setting. On
