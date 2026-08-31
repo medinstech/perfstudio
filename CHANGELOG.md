@@ -63,6 +63,46 @@ closed without a bump.
     print and the resize. Asking for an alpha channel forces greyscale antialiasing;
     `test_an_exported_png_has_no_subpixel_colour_fringes` measures it, because nothing in
     the code says "no ClearType".
+- **A part the library does not have: Custom Part…, in the Parts dock and in Add a Part.**
+  Sixty-one footprints is a good library and not every part anybody owns, and until now a
+  part that was not in it could not be placed at all — the board could not be built, and the
+  guide said `unknown-footprint` about a component the user had no route to define. That is
+  the likeliest thing to arrive through the "board I could not build" issue template.
+  - **The identifier IS the definition, so nothing is stored anywhere.**
+    `box-4x2-p1-r3-15x10x8` is not a name that refers to a definition kept elsewhere; it is
+    a four-by-two pin grid, three holes between the rows, in a 15 × 10 × 8 mm body, and
+    `footprints.py` builds it on demand. The `.perf` format does not move, the fifteen
+    golden fixtures are untouched, and a board mailed to a stranger opens with the same part
+    on it — no library to install and nothing to go missing. The two alternatives were both
+    worse in a way this project has already ruled on: a footprint stored in the document
+    reopens the byte-for-byte format for something computable (PLAN.md D6's argument about
+    meshes, D3's about symbol positions), and a user library beside the application means a
+    board that opens on the machine that drew it and nowhere else, which is exactly the
+    failure `unknown-footprint` already describes.
+  - **`generic-box` was an archetype nothing built.** It was already coloured by
+    `ui/bodies.py`, phased by the guide, drawn as a labelled box on the schematic and
+    extruded in 3D — every consumer was ready for a part no generator produced.
+    `generic_box_footprint` is that generator, and a rectangle with a grid of leads covers a
+    sensor board, a transformer, a seven-segment display and a module nobody has heard of.
+    Its pins are numbered row by row, which is what a module's silkscreen does; a DIP goes
+    anti-clockwise, and `dip_footprint` is still there for when that is the answer.
+  - **One spelling per part, enforced rather than tested for.** Every parse ends by
+    rebuilding the id from what it read and refusing anything that does not come back
+    identical, so `dip-08` is not a footprint. Without that, a document could hold a part
+    whose own id disagrees with the name it is stored under, and two ids could mean one
+    part. The same requirement is why the auto-generated ids for the electrolytic, disc and
+    film capacitors gained their missing dimension: an id that dropped the can height meant
+    two different parts could be handed one id.
+  - **The dialog never spells an identifier.** It calls the engine's own generator and shows
+    what came back, so there is one description of the grammar and not two — and it refuses
+    to close while the engine will not build the part, with the numbers that caused it still
+    on screen rather than three steps later as a footprint nothing recognises.
+  - **An agent gets told at the moment it needs telling.** Placing an id nothing recognises
+    used to say "call list_footprints"; it now returns the whole grammar. An agent that has
+    just been told a part does not exist is about to give up on the part, and "describe it by
+    its measurements" is not something it could guess from a list of sixty-one names. It is
+    in the refusal rather than a tool description because it is a page long and only matters
+    once.
 - **`render_schematic`, the MCP server's third picture.** `render_2d_view` and
   `render_3d_view` both show COPPER, which is what a circuit was turned *into*; an agent
   that had just called `connect_pins` eleven times had changed the thing this application

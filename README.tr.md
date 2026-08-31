@@ -233,11 +233,20 @@ gelmez — mesh kütüphanesi yok, devralınacak share-alike lisansı yok. Bir p
 çizen spec, 3D'de gövdesini extrude eden spec ile aynıdır; dolayısıyla ikisi birbiriyle
 çelişemez.
 
+**61'in içinde olmayan bir parça kurulmaz, tarif edilir.** *Özel Parça…* bir pin ızgarası
+ve üç ölçü ister, karşılığında bunları kendi taşıyan bir kimlik verir:
+`box-4x2-p1-r3-15x10x8` dört çarpı iki pinlik bir ızgara, sıralar arası üç delik,
+15 × 10 × 8 mm gövde demektir. Hiçbir yere bir şey kaydedilmez — kimliğin kendisi tanımdır
+— dolayısıyla başka kimsede olmayan bir parçayı kullanan bir kart, karşı tarafta da aynı
+parçayla açılır: kurulacak bir kütüphane ve kaybolacak bir dosya yoktur.
+
 ## Nereye gidiyor
 
 Biten: editör, kütüphane, bağlantısallık ve LVS, DRC, router ve yerleştirme
 optimizasyonu, render edilmiş adım görselleri ve montaj oynatması ile montaj rehberi,
-1:1 PDF çıktısı, MCP sunucusu, TR/EN yerelleştirme, bir `v*` etiketiyle çalışan
+1:1 PDF çıktısı, şema paneli ve yanındaki sayfa dışa aktarımı, kütüphanede olmayan
+parçaların kendi ölçüleriyle tarif edilmesi, çökme kurtarma, MCP sunucusu,
+TR/EN yerelleştirme, bir `v*` etiketiyle çalışan
 üç platformluk paketleme, ve yeni sürümü haber verip indiren güncelleme denetimi
 (**Yardım ▸ Güncellemeleri Denetle**; indirdiğini sürümün `SHA256SUMS` dosyasıyla
 doğrulayıp size teslim eder — çalıştırmak sizin tıklamanız).

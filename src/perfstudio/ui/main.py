@@ -121,7 +121,20 @@ from perfstudio.commands import (
 )
 from perfstudio.connectivity import FootprintLookup
 from perfstudio.drc import DrcViolation, run_drc
-from perfstudio.footprints import footprint_lookup, standard_footprints
+from perfstudio.footprints import (
+    axial_footprint,
+    box_film_capacitor_footprint,
+    dip_footprint,
+    disc_ceramic_footprint,
+    footprint_lookup,
+    generic_box_footprint,
+    get_footprint,
+    led_footprint,
+    pin_header_footprint,
+    radial_electrolytic_footprint,
+    screw_terminal_footprint,
+    standard_footprints,
+)
 from perfstudio.geometry import (
     STANDARD_PRESETS,
     BoardPreset,
@@ -1156,6 +1169,300 @@ class GoToPartDialog(QDialog):
         return str(chosen) if chosen is not None else None
 
 
+@dataclasses.dataclass(frozen=True, slots=True)
+class _CustomField:
+    """One number the user sets. ``kind`` picks the widget and the units."""
+
+    key: str
+    label: str
+    kind: Literal["int", "mm", "bool"]
+    minimum: float
+    maximum: float
+    default: float
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _CustomFamily:
+    """A family of parts the engine can generate, and the numbers it needs.
+
+    ``build`` calls the ENGINE's own generator rather than assembling an id here. That is
+    the whole discipline of this dialog: ``footprints.GENERATED_ID_GRAMMAR`` is one place,
+    and a second copy of it in the interface would be a second thing to keep in step -- and
+    the one that goes wrong silently, because a wrong id does not fail, it just names a
+    part nobody has.
+    """
+
+    label: str
+    fields: tuple[_CustomField, ...]
+    build: Callable[[dict[str, float]], Footprint]
+
+
+def _custom_families() -> tuple[_CustomFamily, ...]:
+    """Built by a call rather than held as a constant, because the labels go through
+    ``t()`` and the language is chosen after this module is imported."""
+
+    def whole(values: dict[str, float], key: str) -> int:
+        return round(values[key])
+
+    return (
+        _CustomFamily(
+            label=t("Any rectangular part"),
+            fields=(
+                _CustomField("cols", t("Pins across"), "int", 1, 64, 4),
+                _CustomField("rows", t("Rows of pins"), "int", 1, 64, 2),
+                _CustomField("col_step", t("Holes between pins"), "int", 1, 20, 1),
+                _CustomField("row_step", t("Holes between rows"), "int", 1, 20, 3),
+                _CustomField("width", t("Body width (mm)"), "mm", 0.5, 200, 15),
+                _CustomField("depth", t("Body depth (mm)"), "mm", 0.5, 200, 10),
+                _CustomField("height", t("Body height (mm)"), "mm", 0.5, 200, 8),
+            ),
+            build=lambda v: generic_box_footprint(
+                cols=whole(v, "cols"),
+                rows=whole(v, "rows"),
+                col_step=whole(v, "col_step"),
+                row_step=whole(v, "row_step"),
+                width_mm=v["width"],
+                depth_mm=v["depth"],
+                height_mm=v["height"],
+            ),
+        ),
+        _CustomFamily(
+            label=t("DIP (dual in-line)"),
+            fields=(
+                _CustomField("pins", t("Pins"), "int", 4, 64, 20),
+                _CustomField("wide", t("Wide body (0.6 in)"), "bool", 0, 1, 0),
+            ),
+            build=lambda v: dip_footprint(
+                pin_count=whole(v, "pins"), wide=bool(round(v["wide"]))
+            ),
+        ),
+        _CustomFamily(
+            label=t("Pin header"),
+            fields=(
+                _CustomField("rows", t("Rows"), "int", 1, 8, 1),
+                _CustomField("cols", t("Pins per row"), "int", 1, 64, 12),
+            ),
+            build=lambda v: pin_header_footprint(
+                rows=whole(v, "rows"), cols=whole(v, "cols")
+            ),
+        ),
+        _CustomFamily(
+            label=t("Screw terminal"),
+            fields=(_CustomField("ways", t("Ways"), "int", 2, 24, 4),),
+            build=lambda v: screw_terminal_footprint(ways=whole(v, "ways")),
+        ),
+        _CustomFamily(
+            label=t("Axial part (resistor, diode, choke)"),
+            fields=(
+                _CustomField("span", t("Lead span (holes)"), "int", 1, 40, 8),
+                _CustomField("length", t("Body length (mm)"), "mm", 0.5, 200, 12),
+                _CustomField("diameter", t("Body diameter (mm)"), "mm", 0.5, 100, 5),
+                _CustomField("polarized", t("Polarised (banded end)"), "bool", 0, 1, 0),
+            ),
+            build=lambda v: axial_footprint(
+                span_holes=whole(v, "span"),
+                body_length_mm=v["length"],
+                body_diameter_mm=v["diameter"],
+                polarized=bool(round(v["polarized"])),
+            ),
+        ),
+        _CustomFamily(
+            label=t("Electrolytic capacitor"),
+            fields=(
+                _CustomField("pitch", t("Lead pitch (holes)"), "int", 1, 20, 5),
+                _CustomField("diameter", t("Can diameter (mm)"), "mm", 1, 60, 16),
+                _CustomField("height", t("Can height (mm)"), "mm", 1, 100, 25),
+            ),
+            build=lambda v: radial_electrolytic_footprint(
+                pitch_holes=whole(v, "pitch"),
+                can_diameter_mm=v["diameter"],
+                can_height_mm=v["height"],
+            ),
+        ),
+        _CustomFamily(
+            label=t("Disc ceramic capacitor"),
+            fields=(
+                _CustomField("pitch", t("Lead pitch (holes)"), "int", 1, 20, 2),
+                _CustomField("diameter", t("Disc diameter (mm)"), "mm", 1, 40, 7),
+                _CustomField("thickness", t("Disc thickness (mm)"), "mm", 0.5, 20, 3),
+            ),
+            build=lambda v: disc_ceramic_footprint(
+                pitch_holes=whole(v, "pitch"),
+                body_diameter_mm=v["diameter"],
+                body_thickness_mm=v["thickness"],
+            ),
+        ),
+        _CustomFamily(
+            label=t("Film capacitor"),
+            fields=(
+                _CustomField("pitch", t("Lead pitch (holes)"), "int", 1, 20, 3),
+                _CustomField("length", t("Body length (mm)"), "mm", 1, 60, 10),
+                _CustomField("width", t("Body width (mm)"), "mm", 1, 40, 5),
+                _CustomField("height", t("Body height (mm)"), "mm", 1, 60, 8),
+            ),
+            build=lambda v: box_film_capacitor_footprint(
+                pitch_holes=whole(v, "pitch"),
+                body_length_mm=v["length"],
+                body_width_mm=v["width"],
+                body_height_mm=v["height"],
+            ),
+        ),
+        _CustomFamily(
+            label=t("LED"),
+            fields=(_CustomField("diameter", t("LED diameter (mm)"), "int", 3, 10, 5),),
+            build=lambda v: led_footprint(diameter_mm=whole(v, "diameter")),
+        ),
+    )
+
+
+class CustomPartDialog(QDialog):
+    """Describe a part the library does not have, and get its identifier back.
+
+    WHAT IT IS NOT is the point of the shape it has. It is not a footprint editor -- there
+    is no outline to draw and nothing is saved anywhere -- because a drawn outline would be
+    STATE, state would be a document field, and a document field would reopen the
+    byte-for-byte .perf format for something that can be computed. That is PLAN.md D6's
+    argument about meshes and D3's about symbol positions, arriving a third time.
+
+    What comes out is an ID that carries its own parameters, so the part travels with the
+    board: mail somebody a .perf using ``box-4x2-p1-r3-15x10x8`` and it opens as the same
+    part on their machine, with no library to install and nothing to go missing.
+
+    The preview line is not decoration either. It shows the identifier that will land in
+    the document, and the dialog refuses to close while the engine will not build it -- so
+    a combination that cannot be a part is refused HERE, where the numbers that caused it
+    are still on screen, rather than as an unknown footprint three steps later.
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(t("Custom Part"))
+        self._families = _custom_families()
+        self._footprint: Footprint | None = None
+        self._widgets: dict[str, QWidget] = {}
+
+        self.family = QComboBox()
+        for family in self._families:
+            self.family.addItem(family.label)
+        self.family.currentIndexChanged.connect(self._rebuild_form)
+
+        self.form_host = QWidget()
+        self.form = QFormLayout(self.form_host)
+        self.form.setContentsMargins(0, 0, 0, 0)
+
+        self.summary = QLabel()
+        self.summary.setWordWrap(True)
+        self.summary.setStyleSheet(f"color: {TEXT_DIM};")
+
+        self.identifier = QLabel()
+        self.identifier.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.identifier.setStyleSheet("font-family: monospace;")
+        self.identifier.setToolTip(
+            t(
+                "The identifier this part is stored under. It carries the dimensions, so "
+                "the part travels with the board rather than living in a library the next "
+                "person has to have."
+            )
+        )
+
+        self.buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        self.buttons.accepted.connect(self.accept)
+        self.buttons.rejected.connect(self.reject)
+
+        layout = QVBoxLayout()
+        layout.addWidget(self.family)
+        layout.addWidget(self.form_host)
+        layout.addWidget(self.identifier)
+        layout.addWidget(self.summary)
+        layout.addWidget(self.buttons)
+        self.setLayout(layout)
+        self._rebuild_form()
+
+    # -- the form ------------------------------------------------------------
+
+    def _rebuild_form(self) -> None:
+        while self.form.rowCount():
+            self.form.removeRow(0)
+        self._widgets.clear()
+        for field in self._families[self.family.currentIndex()].fields:
+            widget: QWidget
+            if field.kind == "bool":
+                box = QCheckBox()
+                box.setChecked(bool(round(field.default)))
+                box.toggled.connect(self._refresh)
+                widget = box
+            elif field.kind == "int":
+                spin = QSpinBox()
+                spin.setRange(int(field.minimum), int(field.maximum))
+                spin.setValue(int(field.default))
+                spin.valueChanged.connect(self._refresh)
+                widget = spin
+            else:
+                dspin = QDoubleSpinBox()
+                dspin.setDecimals(2)
+                dspin.setSingleStep(0.5)
+                dspin.setRange(field.minimum, field.maximum)
+                dspin.setValue(field.default)
+                dspin.valueChanged.connect(self._refresh)
+                widget = dspin
+            self._widgets[field.key] = widget
+            self.form.addRow(field.label, widget)
+        self._refresh()
+
+    def _values(self) -> dict[str, float]:
+        values: dict[str, float] = {}
+        for key, widget in self._widgets.items():
+            if isinstance(widget, QCheckBox):
+                values[key] = 1.0 if widget.isChecked() else 0.0
+            elif isinstance(widget, QSpinBox):
+                values[key] = float(widget.value())
+            elif isinstance(widget, QDoubleSpinBox):
+                values[key] = widget.value()
+        return values
+
+    def _refresh(self) -> None:
+        """Rebuild the part and say what it is, or say why there is nothing.
+
+        The engine's own generators raise on a combination that cannot be a part -- an odd
+        DIP pin count, a one-way terminal block -- and this catches that rather than
+        pre-empting it, so the dialog cannot come to disagree with what the engine will
+        accept when the id reaches it.
+        """
+        family = self._families[self.family.currentIndex()]
+        try:
+            footprint: Footprint | None = family.build(self._values())
+        except (ValueError, KeyError):
+            footprint = None
+        # Built here and resolved again through the lookup, because the id is what actually
+        # travels: a part this dialog can build but the grammar cannot read back is a part
+        # that would vanish the next time the document was opened.
+        if footprint is not None and get_footprint(footprint.id) is None:
+            footprint = None
+        self._footprint = footprint
+
+        ok_button = self.buttons.button(QDialogButtonBox.StandardButton.Ok)
+        if ok_button is not None:
+            ok_button.setEnabled(footprint is not None)
+        if footprint is None:
+            self.identifier.setText("")
+            self.summary.setText(t("Those measurements do not make a part."))
+            return
+        self.identifier.setText(footprint.id)
+        self.summary.setText(
+            t("{name} — {pins} pin(s), {height} mm tall").format(
+                name=footprint.name,
+                pins=len(footprint.pins),
+                height=f"{footprint.body_height:g}",
+            )
+        )
+
+    def chosen(self) -> Footprint | None:
+        """The part described, or None. Valid once the dialog has been accepted."""
+        return self._footprint
+
+
 class AddPartDialog(QDialog):
     """Pick a part for the schematic: what it is, what it is called, what it is worth.
 
@@ -1180,6 +1487,20 @@ class AddPartDialog(QDialog):
         #: shared one would remember the last dialog's suggestions and overwrite a typed
         #: reference that happened to match.
         self._suggestions: set[str] = set()
+        #: Parts described in this dialog, plus any the document already uses that the
+        #: library does not have. Not saved anywhere: the id is the definition, so the
+        #: document is already carrying everything there is to keep.
+        self._custom: dict[str, Footprint] = {
+            footprint.id: footprint
+            for footprint in (
+                get_footprint(used)
+                for used in {
+                    *(component.footprint_id for component in document.components),
+                    *(part.footprint_id for part in document.parts),
+                }
+            )
+            if footprint is not None and footprint.id not in standard_footprints()
+        }
 
         self.filter = QLineEdit()
         self.filter.setPlaceholderText(t("Filter parts…  (resistor, dip-8, TO-220)"))
@@ -1214,21 +1535,49 @@ class AddPartDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
 
+        self.custom = QPushButton(t("Custom Part…"))
+        self.custom.setToolTip(
+            t(
+                "Describe a part the library does not have. It is stored as an identifier "
+                "that carries its own dimensions, so it travels with the board."
+            )
+        )
+        self.custom.clicked.connect(self.on_custom_part)
+
         layout = QVBoxLayout()
         layout.addWidget(self.filter)
         layout.addWidget(self.list, 1)
+        layout.addWidget(self.custom)
         layout.addLayout(form)
         layout.addWidget(buttons)
         self.setLayout(layout)
         self._refilter("")
         self.filter.setFocus()
 
+    def on_custom_part(self) -> None:
+        dialog = CustomPartDialog(self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        footprint = dialog.chosen()
+        if footprint is None:
+            return
+        self._custom[footprint.id] = footprint
+        self._refilter(self.filter.text())
+        self.select_footprint(footprint.id)
+
     def _refilter(self, text: str) -> None:
         needle = text.strip().lower()
         self.list.clear()
-        for footprint in sorted(standard_footprints().values(), key=lambda f: f.name):
+        # Custom parts first and never filtered out: one was just described, or is already
+        # on this board, and burying it under sixty-one library parts would make the
+        # dialog's own answer the hardest thing in it to find.
+        offered = list(self._custom.values()) + sorted(
+            standard_footprints().values(), key=lambda f: f.name
+        )
+        for footprint in offered:
+            custom = footprint.id in self._custom
             haystack = f"{footprint.id} {footprint.name} {footprint.body.archetype}".lower()
-            if needle and needle not in haystack:
+            if needle and not custom and needle not in haystack:
                 continue
             item = QListWidgetItem(f"{footprint.name}  ·  {len(footprint.pins)} pin(s)")
             item.setData(Qt.ItemDataRole.UserRole, footprint.id)
@@ -1253,7 +1602,18 @@ class AddPartDialog(QDialog):
         self._suggestions.add(suggested)
 
     def select_footprint(self, footprint_id: str) -> None:
-        """Start on this footprint, for editing a part that already has one."""
+        """Start on this footprint, for editing a part that already has one.
+
+        A part whose footprint is a custom one is not in the library list, so it is put
+        there first. Without that, opening the properties of a part the library does not
+        have would silently land on whatever happened to be first -- and pressing OK would
+        change the part into a resistor.
+        """
+        if footprint_id not in self._custom and footprint_id not in standard_footprints():
+            found = get_footprint(footprint_id)
+            if found is not None:
+                self._custom[footprint_id] = found
+                self._refilter(self.filter.text())
         for index in range(self.list.count()):
             item = self.list.item(index)
             if item is not None and item.data(Qt.ItemDataRole.UserRole) == footprint_id:
@@ -1459,6 +1819,11 @@ class MainWindow(QMainWindow):
         #: in the panel so that a redraw -- which throws the whole scene away -- cannot
         #: lose it.
         self._schematic_ref: str | None = None
+        #: Custom parts described in this window but not yet placed. Everything already ON
+        #: the board is derived from the document instead (``custom_footprints``), because
+        #: the id carries the definition and a saved board therefore needs nothing
+        #: remembered for it.
+        self._described_here: dict[str, Footprint] = {}
         #: Assembly playback. The slider and its friends do not exist until the 3D panel
         #: is first opened, so everything that reads them checks for None first.
         self.assembly_slider: Any = None
@@ -2593,6 +2958,16 @@ class MainWindow(QMainWindow):
         self.library_tree.itemSelectionChanged.connect(self._on_library_selection_changed)
         layout.addWidget(self.library_tree)
 
+        self.button_custom_part = QPushButton(t("Custom Part…"))
+        self.button_custom_part.setToolTip(
+            t(
+                "Describe a part the library does not have. It is stored as an identifier "
+                "that carries its own dimensions, so it travels with the board."
+            )
+        )
+        self.button_custom_part.clicked.connect(self.on_custom_part)
+        layout.addWidget(self.button_custom_part)
+
         self.label_place_hint = QLabel(t("Pick a part, then click the board. Esc cancels."))
         self.label_place_hint.setWordWrap(True)
         self.label_place_hint.setStyleSheet(f"color: {TEXT_DIM};")
@@ -2608,17 +2983,93 @@ class MainWindow(QMainWindow):
         self.dock_library = dock
         self._refresh_library()
 
+    def custom_footprints(self) -> dict[str, Footprint]:
+        """Every part on this board that the library does not have, plus any described in
+        this session.
+
+        DERIVED FROM THE DOCUMENT rather than remembered, which is what makes it survive
+        opening a board somebody else drew: a custom part is an id that carries its own
+        dimensions, so a file using one is already carrying the whole definition and there
+        is nothing for this window to have been told. ``_described_here`` only holds the
+        ones defined but not yet placed, which the document cannot know about yet.
+        """
+        document = self.bus.document
+        used = {
+            *(component.footprint_id for component in document.components),
+            *(part.footprint_id for part in document.parts),
+        }
+        found = dict(self._described_here)
+        for footprint_id in used:
+            if footprint_id in standard_footprints() or footprint_id in found:
+                continue
+            footprint = get_footprint(footprint_id)
+            if footprint is not None:
+                found[footprint_id] = footprint
+        return found
+
+    def on_custom_part(self) -> None:
+        """Describe a part, then arm it for placement like any other.
+
+        Armed straight away because the reason somebody opens this dialog is that they are
+        holding the part -- so the next thing they want is to put it on the board, not to
+        find it again in a list.
+        """
+        dialog = CustomPartDialog(self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        footprint = dialog.chosen()
+        if footprint is None:
+            return
+        self._described_here[footprint.id] = footprint
+        self.library_filter.clear()
+        self._refresh_library()
+        self._select_library_footprint(footprint.id)
+
+    def _select_library_footprint(self, footprint_id: str) -> None:
+        tree = self.library_tree
+        for index in range(tree.topLevelItemCount()):
+            group = tree.topLevelItem(index)
+            if group is None:
+                continue
+            for child_index in range(group.childCount()):
+                leaf = group.child(child_index)
+                if leaf is not None and leaf.data(0, ROLE_FOOTPRINT_ID) == footprint_id:
+                    group.setExpanded(True)
+                    tree.setCurrentItem(leaf)
+                    return
+
     def _refresh_library(self) -> None:
         needle = self.library_filter.text().strip().lower()
         tree = self.library_tree
         tree.blockSignals(True)
         tree.clear()
         by_archetype: dict[str, list[Footprint]] = {}
+        custom = self.custom_footprints()
         for footprint in sorted(standard_footprints().values(), key=lambda f: f.name):
             haystack = f"{footprint.id} {footprint.name} {footprint.body.archetype}".lower()
             if needle and needle not in haystack:
                 continue
             by_archetype.setdefault(footprint.body.archetype, []).append(footprint)
+
+        # In a group of their own rather than filed under their archetype, and first. A
+        # custom DIP-22 among the library's DIPs is the one part in the dock that cannot be
+        # found by knowing what it is, because the only thing that distinguishes it is that
+        # the library does not have it.
+        if custom:
+            ordered = sorted(custom.values(), key=lambda f: f.name)
+            group = QTreeWidgetItem([t("this board"), ""])
+            group.setFlags(group.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+            group.setIcon(0, icons.part_icon(ordered[0]))
+            tree.addTopLevelItem(group)
+            for footprint in ordered:
+                leaf = QTreeWidgetItem([footprint.name, str(len(footprint.pins))])
+                leaf.setData(0, ROLE_FOOTPRINT_ID, footprint.id)
+                leaf.setIcon(0, icons.part_icon(footprint))
+                leaf.setToolTip(
+                    0, f"{footprint.name}\n{footprint.id} — {len(footprint.pins)} pin(s)"
+                )
+                group.addChild(leaf)
+            group.setExpanded(True)
 
         for archetype in sorted(by_archetype):
             group = QTreeWidgetItem([archetype.replace("-", " "), ""])

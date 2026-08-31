@@ -4895,3 +4895,145 @@ def test_the_suggested_reference_counts_the_design_as_well_as_the_board() -> Non
 
     assert next_reference(window.bus.document, "r-axial-3") == "R2"
     _close(window)
+
+
+# ---------------------------------------------------------------------------
+# A part the library does not have
+# ---------------------------------------------------------------------------
+#
+# Sixty-one footprints is a good library and not every part anybody owns. What the dialog
+# produces is an ID that carries its own dimensions, so nothing is stored and the part
+# travels with the board -- and the property everything below is about is that the id it
+# builds is one the ENGINE reads back as the same part. A dialog that produced an id the
+# grammar could not parse would not fail: it would put a part in the document that vanishes
+# the next time the file is opened.
+
+
+def _custom_document():
+    """A board holding one part the library has never heard of."""
+    from perfstudio.model import Board, ComponentInstance, DocumentMeta, HoleCoord, PerfDocument
+
+    board = Board(
+        type="pad-per-hole", cols=30, rows=20, pitch=2.54, thickness=1.6,
+        material="FR4", pad_diameter=1.9, drill_diameter=0.8,
+    )
+    return PerfDocument(
+        meta=DocumentMeta(name="odd", created="", modified=""),
+        board=board,
+        components=(
+            ComponentInstance(
+                id="c1", ref="M1", value="sensor",
+                footprint_id="box-4x2-p1-r3-15x10x8",
+                anchor=HoleCoord(col=5, row=5),
+            ),
+        ),
+    )
+
+
+def test_every_family_in_the_dialog_builds_an_id_the_engine_reads_back() -> None:
+    """The one property the whole feature rests on, checked family by family.
+
+    The dialog never spells an id: it calls the engine's own generator and shows what came
+    back. This walks every family at its defaults and asserts the round trip, so a family
+    wired to the wrong generator -- or given a default outside what the grammar accepts --
+    fails here rather than by putting an unreadable part in somebody's document.
+    """
+    from perfstudio.footprints import get_footprint
+    from perfstudio.ui.main import CustomPartDialog
+
+    dialog = CustomPartDialog()
+    assert dialog.family.count() >= 9
+    for index in range(dialog.family.count()):
+        dialog.family.setCurrentIndex(index)
+        footprint = dialog.chosen()
+        assert footprint is not None, dialog.family.itemText(index)
+        assert get_footprint(footprint.id) == footprint, footprint.id
+        assert dialog.identifier.text() == footprint.id
+    dialog.deleteLater()
+
+
+def test_the_dialog_refuses_a_combination_that_is_not_a_part() -> None:
+    """A DIP has an even pin count, and the spin box cannot know that -- the generator
+    does. Refused HERE, with the number that caused it still on screen, rather than three
+    steps later as a footprint nothing recognises."""
+    from PySide6.QtWidgets import QDialogButtonBox
+
+    from perfstudio.ui.main import CustomPartDialog
+
+    dialog = CustomPartDialog()
+    dip = next(
+        index
+        for index in range(dialog.family.count())
+        if "DIP" in dialog.family.itemText(index)
+    )
+    dialog.family.setCurrentIndex(dip)
+    ok = dialog.buttons.button(QDialogButtonBox.StandardButton.Ok)
+
+    dialog._widgets["pins"].setValue(20)
+    assert dialog.chosen() is not None
+    assert ok is not None and ok.isEnabled()
+
+    dialog._widgets["pins"].setValue(21)
+    assert dialog.chosen() is None
+    assert not ok.isEnabled()
+    assert dialog.identifier.text() == ""
+    dialog.deleteLater()
+
+
+def test_the_parts_dock_offers_the_custom_parts_this_board_already_uses() -> None:
+    """Opening somebody else's board has to show its parts.
+
+    Derived from the document rather than remembered, which is the whole point of putting
+    the dimensions in the id: a file using a custom part is already carrying the definition,
+    so there is nothing this window could have been told and nothing to install.
+    """
+    window = _window_on(_custom_document())
+    try:
+        custom = window.custom_footprints()
+        assert "box-4x2-p1-r3-15x10x8" in custom
+        assert len(custom["box-4x2-p1-r3-15x10x8"].pins) == 8
+
+        from perfstudio.ui.main import ROLE_FOOTPRINT_ID
+
+        labels = []
+        tree = window.library_tree
+        for index in range(tree.topLevelItemCount()):
+            group = tree.topLevelItem(index)
+            for child in range(group.childCount()):
+                labels.append(group.child(child).data(0, ROLE_FOOTPRINT_ID))
+        assert "box-4x2-p1-r3-15x10x8" in labels
+    finally:
+        _close(window)
+
+
+def test_a_custom_part_can_be_placed_and_shows_up_on_the_board() -> None:
+    """The end of it: a part the library does not have, on the board, drawn.
+
+    The scene is built from the document through the same lookup everything else uses, so
+    a footprint that only resolved in the dialog would leave a part on the board with no
+    pads under it.
+    """
+    window = _window_on(_custom_document())
+    try:
+        drawn = [
+            item for item in window.scene.items() if isinstance(item, ComponentItem)
+        ]
+        assert [item.comp.ref for item in drawn] == ["M1"]
+        # Eight pads under it, because the lookup resolved the id rather than
+        # shrugging: a part with no footprint is drawn as a marker with no pins.
+        assert len(drawn[0].fp.pins) == 8
+    finally:
+        _close(window)
+
+
+def test_editing_a_custom_part_does_not_turn_it_into_a_resistor() -> None:
+    """``select_footprint`` puts a part the library does not have into its own list first.
+
+    Without that the properties dialog opens on whatever happens to be first and pressing
+    OK changes the part -- silently, into something with two pins where there were eight.
+    """
+    from perfstudio.ui.main import AddPartDialog
+
+    document = _custom_document()
+    dialog = AddPartDialog(document)
+    dialog.select_footprint("box-4x2-p1-r3-15x10x8")

@@ -75,7 +75,11 @@ from perfstudio.commands import (
 )
 from perfstudio.connectivity import extract_physical_nets
 from perfstudio.drc import run_drc
-from perfstudio.footprints import footprint_lookup, standard_footprints
+from perfstudio.footprints import (
+    GENERATED_ID_GRAMMAR,
+    footprint_lookup,
+    standard_footprints,
+)
 from perfstudio.geometry import (
     all_pin_holes,
     consumed_holes,
@@ -667,10 +671,7 @@ class BoardSession:
         its 3D body and its line in the bill of materials.
         """
         if self.lookup(footprint_id) is None:
-            raise SessionError(
-                f"No footprint {footprint_id!r} in the library. Call list_footprints to see "
-                "what is available."
-            )
+            raise _no_such_footprint(footprint_id)
         return self._dispatch(
             "part.add", AddPartPayload(ref=ref, footprint_id=footprint_id, value=value)
         )
@@ -689,7 +690,7 @@ class BoardSession:
         one pin on two nets.
         """
         if footprint_id is not None and self.lookup(footprint_id) is None:
-            raise SessionError(f"No footprint {footprint_id!r} in the library.")
+            raise _no_such_footprint(footprint_id)
         return self._dispatch(
             "part.update",
             UpdatePartPayload(
@@ -924,10 +925,7 @@ class BoardSession:
         rotation: int = 0,
     ) -> dict[str, Any]:
         if self.lookup(footprint_id) is None:
-            raise SessionError(
-                f"No footprint {footprint_id!r} in the library. Call list_footprints to see "
-                "what is available."
-            )
+            raise _no_such_footprint(footprint_id)
         return self._dispatch(
             "component.place",
             PlaceComponentPayload(
@@ -1597,6 +1595,21 @@ def _ensure_qt_application() -> None:
             "QT_QPA_PLATFORM", "windows" if sys.platform == "win32" else "offscreen"
         )
         QApplication(["perfstudio-mcp"])
+
+
+def _no_such_footprint(footprint_id: str) -> SessionError:
+    """The refusal, carrying the way out with it.
+
+    The grammar is spelled out HERE rather than in a tool description, because this is the
+    moment somebody needs it: an agent that has just been told a part does not exist is
+    about to give up on the part, and the answer -- describe it by its dimensions -- is not
+    something it could have guessed from a list of sixty-one names. Costing nothing until it
+    is needed is the point; a tool docstring pays for it on every listing.
+    """
+    return SessionError(
+        f"No footprint {footprint_id!r} in the library. Call list_footprints to see what is "
+        f"available, or ask for a part by its measurements:\n\n{GENERATED_ID_GRAMMAR}"
+    )
 
 
 def _png_bytes(image: Any) -> bytes:

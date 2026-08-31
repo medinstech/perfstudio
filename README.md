@@ -229,11 +229,20 @@ The 61 THT footprints are **generated from numeric parameters**, not shipped as 
 no mesh library, no share-alike licence to inherit. The same spec that draws a part in 2D
 extrudes its body in 3D, so the two cannot disagree.
 
+**A part that is not among the 61 is described, not installed.** *Custom Part…* asks for a
+pin grid and three dimensions and hands back an identifier that carries them:
+`box-4x2-p1-r3-15x10x8` is a four-by-two pin grid, three holes between the rows, in a
+15 × 10 × 8 mm body. Nothing is stored — the identifier *is* the definition — so a board
+using a part nobody else has still opens as that part on their machine, with no library to
+install and nothing to go missing.
+
 ## Where it is going
 
 Done: the editor, the library, connectivity and LVS, DRC, the router and the placement
 optimiser, the build guide with rendered step images and assembly playback, the 1:1 PDF
-export, the MCP server, TR/EN localisation, the three-platform packaging that a `v*` tag
+export, the schematic panel and the sheet export beside it, parts described by their own
+measurements when the library does not have them, crash recovery, the MCP server, TR/EN
+localisation, the three-platform packaging that a `v*` tag
 runs, and the update check that tells you a release exists and fetches it (**Help ▸ Check
 for Updates**; it verifies the download against the release's `SHA256SUMS` and then hands
 it to you — running it stays your click).

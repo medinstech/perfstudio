@@ -167,8 +167,10 @@ def test_every_catalogue_translates_to_something_different() -> None:
     """A key mapped to itself is a translation somebody forgot to finish."""
     for code, catalogue in CATALOGUES.items():
         same = sorted(key for key, value in catalogue.items() if key == value)
-        # "DRC / LVS" is an acronym pair and is the same in both languages.
-        assert same == ["DRC / LVS"], f"{code} has untranslated entries: {same}"
+        # Acronyms, and the same in both languages. The list stays short on purpose:
+        # everything else that comes out identical is a translation somebody started and
+        # did not finish, which is the whole thing this catches.
+        assert same == ["DRC / LVS", "LED"], f"{code} has untranslated entries: {same}"
 
 
 def test_accelerators_survive_translation() -> None:

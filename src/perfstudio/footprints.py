@@ -49,6 +49,7 @@ Conventions used throughout this file (carried over from the TS source):
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -60,6 +61,15 @@ from .model import STANDARD_PITCH_MM, BodySpec, Footprint, FootprintPin, Mm, Poi
 
 #: Default courtyard clearance beyond a footprint's pins/body: half a grid step.
 COURTYARD_MARGIN_MM: Mm = STANDARD_PITCH_MM / 2
+
+#: Ceilings for a footprint asked for by id rather than chosen from the registry. Nothing
+#: here is a physical limit -- they exist because an id is TEXT, and text arrives from a
+#: hand-edited file, a pasted string or an agent. ``box-999x999`` is a million pins built
+#: before anything gets a chance to refuse it, so the refusal happens at the grammar.
+_MAX_BOX_PINS = 256
+_MAX_GRID_SPAN = 64
+_MAX_STEP_HOLES = 20
+_MAX_BODY_MM: Mm = 200.0
 
 
 def _make_pin(number: str, d_col: int, d_row: int, name: str | None = None) -> FootprintPin:
@@ -188,10 +198,12 @@ def axial_footprint(
     pins = (_make_pin("1", 0, 0), _make_pin("2", span_holes, 0))
     outline = _rect_outline(_to_mm(pins), body_length_mm, body_diameter_mm, COURTYARD_MARGIN_MM)
     fp_id = id if id is not None else (
-        f"axial-{span_holes}h-{_format_mm_token(body_length_mm)}x{_format_mm_token(body_diameter_mm)}"
+        f"axial-{span_holes}h-{_format_mm_token(body_length_mm)}"
+        f"x{_format_mm_token(body_diameter_mm)}{'-pol' if polarized else ''}"
     )
     fp_name = name if name is not None else (
-        f"Axial ({span_holes}-hole span, {body_length_mm}x{body_diameter_mm} mm body)"
+        f"Axial ({span_holes}-hole span, {_format_mm_token(body_length_mm)}"
+        f"x{_format_mm_token(body_diameter_mm)} mm body)"
     )
     return Footprint(
         id=fp_id,
@@ -226,8 +238,11 @@ def radial_electrolytic_footprint(
     lead_diameter = 0.5 if lead_diameter_mm is None else lead_diameter_mm
     pins = (_make_pin("1", 0, 0, "+"), _make_pin("2", pitch_holes, 0, "-"))
     outline = _circle_outline(_to_mm(pins), can_diameter_mm, COURTYARD_MARGIN_MM)
-    fp_id = id if id is not None else f"c-elec-d{_format_mm_token(can_diameter_mm)}-p{pitch_holes}"
-    fp_name = name if name is not None else f"Electrolytic capacitor, {can_diameter_mm} mm dia, {pitch_holes}-hole pitch"
+    fp_id = id if id is not None else (
+        f"c-elec-d{_format_mm_token(can_diameter_mm)}-p{pitch_holes}"
+        f"-h{_format_mm_token(can_height_mm)}"
+    )
+    fp_name = name if name is not None else f"Electrolytic capacitor, {_format_mm_token(can_diameter_mm)} mm dia, {pitch_holes}-hole pitch"
     return Footprint(
         id=fp_id,
         name=fp_name,
@@ -261,8 +276,11 @@ def disc_ceramic_footprint(
     lead_diameter = 0.5 if lead_diameter_mm is None else lead_diameter_mm
     pins = (_make_pin("1", 0, 0), _make_pin("2", pitch_holes, 0))
     outline = _rect_outline(_to_mm(pins), body_diameter_mm, body_thickness, COURTYARD_MARGIN_MM)
-    fp_id = id if id is not None else f"c-disc-d{_format_mm_token(body_diameter_mm)}-p{pitch_holes}"
-    fp_name = name if name is not None else f"Disc ceramic capacitor, {body_diameter_mm} mm dia, {pitch_holes}-hole pitch"
+    fp_id = id if id is not None else (
+        f"c-disc-d{_format_mm_token(body_diameter_mm)}-p{pitch_holes}"
+        f"-t{_format_mm_token(body_thickness)}"
+    )
+    fp_name = name if name is not None else f"Disc ceramic capacitor, {_format_mm_token(body_diameter_mm)} mm dia, {pitch_holes}-hole pitch"
     return Footprint(
         id=fp_id,
         name=fp_name,
@@ -297,9 +315,10 @@ def box_film_capacitor_footprint(
     pins = (_make_pin("1", 0, 0), _make_pin("2", pitch_holes, 0))
     outline = _rect_outline(_to_mm(pins), body_length_mm, body_width_mm, COURTYARD_MARGIN_MM)
     fp_id = id if id is not None else (
-        f"c-film-{_format_mm_token(body_length_mm)}x{_format_mm_token(body_width_mm)}-p{pitch_holes}"
+        f"c-film-{_format_mm_token(body_length_mm)}x{_format_mm_token(body_width_mm)}"
+        f"x{_format_mm_token(body_height_mm)}-p{pitch_holes}"
     )
-    fp_name = name if name is not None else f"Film capacitor, {body_length_mm}x{body_width_mm} mm, {pitch_holes}-hole pitch"
+    fp_name = name if name is not None else f"Film capacitor, {_format_mm_token(body_length_mm)}x{_format_mm_token(body_width_mm)} mm, {pitch_holes}-hole pitch"
     return Footprint(
         id=fp_id,
         name=fp_name,
@@ -728,6 +747,93 @@ def relay_footprint(
 
 
 # ---------------------------------------------------------------------------
+# The generic box: whatever the sixty-one are not
+# ---------------------------------------------------------------------------
+#
+# THE ARCHETYPE WAS ALREADY HERE AND NOTHING BUILT ONE. `generic-box` is coloured by
+# `ui/bodies.py`, phased by `guide.PHASE_BY_ARCHETYPE`, drawn as a labelled box by
+# `schematic.py` and extruded in 3D -- every consumer was ready for a part no generator
+# produced. This is that generator, and it is the answer to "the library does not have my
+# part": a rectangular package with a grid of leads covers a sensor board, a transformer,
+# a seven-segment display, an optocoupler on an odd pitch and a module nobody has heard of.
+#
+# IT IS DELIBERATELY NOT A SHAPE EDITOR. An arbitrary outline would have to be STORED, and
+# stored geometry is a document field, and a document field reopens the byte-for-byte .perf
+# format for something that can be computed -- the same argument PLAN.md D6 makes about
+# meshes and D3 makes about symbol positions. A box, a pin grid and three millimetre
+# dimensions is what fits in an id, and an id is what a document already carries.
+
+
+def generic_box_footprint(
+    *,
+    cols: int,
+    rows: int,
+    width_mm: Mm,
+    depth_mm: Mm,
+    height_mm: Mm,
+    col_step: int = 1,
+    row_step: int = 1,
+    lead_diameter_mm: Mm | None = None,
+    id: str | None = None,
+    name: str | None = None,
+) -> Footprint:
+    """A rectangular part with a grid of leads, sized in grid steps and millimetres.
+
+    Pin 1 is the anchor at (0,0) like every other footprint here, and the rest are numbered
+    ROW BY ROW, left to right and then down. That is a choice this generator has to make and
+    cannot derive: a DIP is numbered anti-clockwise down one side and back up the other, a
+    module's silkscreen is numbered straight across, and nothing in an id says which package
+    convention an unknown part follows. Straight across is the one a person reading a
+    two-row header or a display module expects -- and `dip_footprint` already exists for
+    when the answer is the other one.
+
+    ``col_step``/``row_step`` are whole grid steps, so a part on a 5.08 mm pitch is
+    ``col_step=2``. A single row or column forces its own step to 1: with one line of pins
+    the other spacing describes nothing, and leaving it free would give one part two ids.
+    """
+    if cols < 1 or rows < 1:
+        raise ValueError("a generic box needs at least one pin")
+    if cols * rows > _MAX_BOX_PINS:
+        raise ValueError(f"a generic box is limited to {_MAX_BOX_PINS} pins")
+    if col_step < 1 or row_step < 1:
+        raise ValueError("pin steps are whole grid steps and start at 1")
+    if width_mm <= 0 or depth_mm <= 0 or height_mm <= 0:
+        raise ValueError("a body needs a positive width, depth and height")
+    # One line of pins has no second spacing to describe, so it gets exactly one spelling.
+    col_step = col_step if cols > 1 else 1
+    row_step = row_step if rows > 1 else 1
+
+    lead_diameter = 0.6 if lead_diameter_mm is None else lead_diameter_mm
+    pins = tuple(
+        _make_pin(str(row * cols + col + 1), col * col_step, row * row_step)
+        for row in range(rows)
+        for col in range(cols)
+    )
+    outline = _rect_outline(_to_mm(pins), width_mm, depth_mm, COURTYARD_MARGIN_MM)
+    fp_id = id if id is not None else (
+        f"box-{cols}x{rows}-p{col_step}-r{row_step}-{_format_mm_token(width_mm)}"
+        f"x{_format_mm_token(depth_mm)}x{_format_mm_token(height_mm)}"
+    )
+    fp_name = name if name is not None else (
+        f"Custom part, {cols}x{rows} pins, {_format_mm_token(width_mm)}"
+        f"x{_format_mm_token(depth_mm)}x{_format_mm_token(height_mm)} mm"
+    )
+    return Footprint(
+        id=fp_id,
+        name=fp_name,
+        pins=pins,
+        body_outline=outline,
+        body_height=height_mm,
+        body=BodySpec(
+            archetype="generic-box",
+            dims={"width": width_mm, "depth": depth_mm, "height": height_mm},
+        ),
+        lead_diameter=lead_diameter,
+        polarized=False,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Standard registry
 # ---------------------------------------------------------------------------
 
@@ -896,9 +1002,176 @@ def standard_footprints() -> dict[str, Footprint]:
     return _cached_registry
 
 
+# ---------------------------------------------------------------------------
+# Footprints that are not in the registry: the id IS the definition
+# ---------------------------------------------------------------------------
+#
+# THE PROBLEM. Sixty-one footprints is a good library and it is not every part anybody
+# owns, and until now there was no way to add one: the part could not be placed, so the
+# board could not be built, and the guide said `unknown-footprint` about a component the
+# user had no route to define. That is the likeliest thing to arrive through the
+# "board I could not build" issue template.
+#
+# WHERE A CUSTOM FOOTPRINT LIVES, AND WHY IT LIVES NOWHERE. It is not stored in the
+# document, which would reopen the byte-for-byte .perf format for something computable, and
+# it is not in a user library beside the application, which would mean a board that opens
+# on the machine that drew it and nowhere else -- exactly the failure the guide's
+# `unknown-footprint` warning already describes. Instead the ID CARRIES THE PARAMETERS:
+# ``box-4x2-p1-r3-15x10x8`` is not a name that refers to a definition, it IS the
+# definition, and `footprints.py` generates it on demand. The document changes not at all,
+# the fifteen golden fixtures are untouched, and a board mailed to a stranger opens with
+# the same part on it. This is PLAN.md D6's argument -- generate, do not ship -- applied to
+# the parts the library does not have.
+#
+# ONE SPELLING PER PART, ENFORCED STRUCTURALLY. Every parse ends by rebuilding the id from
+# what it read and refusing anything that does not come back identical, so ``dip-08`` and
+# ``box-2x1-p01-...`` are not accepted. Without that a document could hold a footprint id
+# that its own footprint disagrees with, and two ids could mean one part.
+
+#: The grammar, in one string, because two places have to tell somebody what to type: the
+#: MCP tool that an agent reads and the custom-part dialog a person reads. Engine text, so
+#: it is not translated -- these are identifiers, and an identifier does not have a Turkish
+#: spelling any more than a hole address does.
+GENERATED_ID_GRAMMAR = """A footprint the library does not have can be asked for by an id
+that carries its own parameters. Steps are whole 2.54 mm grid steps; millimetres take at
+most two decimals and are written without units.
+
+  box-<cols>x<rows>-p<colStep>-r<rowStep>-<W>x<D>x<H>   any rectangular part: a grid of
+                                                        pins and a body in mm
+  dip-<pins>[-wide]                                     a DIP of any pin count
+  hdr-<rows>x<cols>                                     a pin header
+  screw-terminal-<ways>                                 a screw terminal
+  axial-<span>h-<L>x<D>[-pol]                           resistor, inductor, diode
+  c-elec-d<D>-p<pitch>-h<H>                             radial electrolytic
+  c-disc-d<D>-p<pitch>-t<T>                             disc ceramic
+  c-film-<L>x<W>x<H>-p<pitch>                           boxed film capacitor
+  led-<D>mm                                             round LED
+
+box-8x2-p1-r3-20.32x7.62x4 is a 16-pin module on a 0.1 inch grid, two rows three holes
+apart. Lead diameter is not in the grammar: it is a manufacturing detail with a sensible
+default per family, and putting it in every id would make every id unreadable."""
+
+
+def _grid(text: str, limit: int = _MAX_GRID_SPAN) -> int:
+    value = int(text)
+    if not 1 <= value <= limit:
+        raise ValueError(f"{value} is outside 1..{limit}")
+    return value
+
+
+def _step(text: str) -> int:
+    return _grid(text, _MAX_STEP_HOLES)
+
+
+def _mm(text: str) -> Mm:
+    value = float(text)
+    if not 0.1 <= value <= _MAX_BODY_MM:
+        raise ValueError(f"{value} mm is outside 0.1..{_MAX_BODY_MM}")
+    return value
+
+
+#: Pattern to builder. Ordered, and every pattern is anchored: an id is a whole word, and a
+#: prefix match would let ``dip-8-oops`` build a DIP-8 and put a footprint in a document
+#: under a name that is not its own.
+_GENERATED: tuple[tuple[re.Pattern[str], Callable[[re.Match[str]], Footprint]], ...] = (
+    (
+        re.compile(r"^box-(\d+)x(\d+)-p(\d+)-r(\d+)-([\d.]+)x([\d.]+)x([\d.]+)$"),
+        lambda m: generic_box_footprint(
+            cols=_grid(m[1]),
+            rows=_grid(m[2]),
+            col_step=_step(m[3]),
+            row_step=_step(m[4]),
+            width_mm=_mm(m[5]),
+            depth_mm=_mm(m[6]),
+            height_mm=_mm(m[7]),
+        ),
+    ),
+    (
+        re.compile(r"^dip-(\d+)(-wide)?$"),
+        lambda m: dip_footprint(pin_count=_grid(m[1]), wide=m[2] is not None),
+    ),
+    (
+        re.compile(r"^hdr-(\d+)x(\d+)$"),
+        lambda m: pin_header_footprint(rows=_grid(m[1]), cols=_grid(m[2])),
+    ),
+    (
+        re.compile(r"^screw-terminal-(\d+)$"),
+        lambda m: screw_terminal_footprint(ways=_grid(m[1])),
+    ),
+    (
+        re.compile(r"^axial-(\d+)h-([\d.]+)x([\d.]+)(-pol)?$"),
+        lambda m: axial_footprint(
+            span_holes=_grid(m[1]),
+            body_length_mm=_mm(m[2]),
+            body_diameter_mm=_mm(m[3]),
+            polarized=m[4] is not None,
+        ),
+    ),
+    (
+        re.compile(r"^c-elec-d([\d.]+)-p(\d+)-h([\d.]+)$"),
+        lambda m: radial_electrolytic_footprint(
+            can_diameter_mm=_mm(m[1]), pitch_holes=_grid(m[2]), can_height_mm=_mm(m[3])
+        ),
+    ),
+    (
+        re.compile(r"^c-disc-d([\d.]+)-p(\d+)-t([\d.]+)$"),
+        lambda m: disc_ceramic_footprint(
+            body_diameter_mm=_mm(m[1]), pitch_holes=_grid(m[2]), body_thickness_mm=_mm(m[3])
+        ),
+    ),
+    (
+        re.compile(r"^c-film-([\d.]+)x([\d.]+)x([\d.]+)-p(\d+)$"),
+        lambda m: box_film_capacitor_footprint(
+            body_length_mm=_mm(m[1]),
+            body_width_mm=_mm(m[2]),
+            body_height_mm=_mm(m[3]),
+            pitch_holes=_grid(m[4]),
+        ),
+    ),
+    (
+        re.compile(r"^led-(\d+)mm$"),
+        lambda m: led_footprint(diameter_mm=_grid(m[1])),
+    ),
+)
+
+
+def generated_footprint(id: str) -> Footprint | None:
+    """Build the footprint an id describes, or ``None`` if it describes nothing.
+
+    ``None`` rather than an exception, because this is a LOOKUP: an id that means nothing is
+    an unknown footprint, which every consumer already handles -- the guide warns
+    ``unknown-footprint``, the schematic draws a dashed box, the 2D view falls back to a
+    plain pad. A raise here would turn a typo in a hand-edited file into a crash.
+
+    The last two lines are the ones that matter. Rebuilding the id and comparing it is what
+    makes the mapping one-to-one in both directions: without it ``dip-08`` builds a DIP-8
+    and the document ends up holding a footprint whose own ``id`` is ``dip-8``, which is a
+    part that disagrees with the name it is stored under.
+    """
+    for pattern, build in _GENERATED:
+        match = pattern.match(id)
+        if match is None:
+            continue
+        try:
+            footprint = build(match)
+        except (ValueError, KeyError, IndexError):
+            # A well-formed id asking for something impossible: an odd DIP pin count, a
+            # one-way screw terminal, an LED diameter no table has. The generators already
+            # refuse those, and refusing them here is the same answer.
+            return None
+        return footprint if footprint.id == id else None
+    return None
+
+
 def get_footprint(id: str) -> Footprint | None:
-    """Looks up a single standard footprint by id."""
-    return standard_footprints().get(id)
+    """The footprint an id names: a standard one, or one the id itself describes.
+
+    The registry wins, always. A generated id can never shadow a library part, so
+    ``dip-8`` is the library's DIP-8 rather than something rebuilt from its name -- and a
+    board saved before a part joined the library still opens as the same part afterwards.
+    """
+    standard = standard_footprints().get(id)
+    return standard if standard is not None else generated_footprint(id)
 
 
 def footprint_lookup() -> Callable[[str], Footprint | None]:

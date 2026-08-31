@@ -140,7 +140,12 @@ def get_net_connections(name: str) -> dict[str, Any]:
 @mcp.tool()
 def list_footprints(search: str = "") -> list[dict[str, Any]]:
     """The parts library. Free text matches the id, the name or the body type — try
-    "dip", "resistor", "electrolytic", or leave it empty for all of them."""
+    "dip", "resistor", "electrolytic", or leave it empty for all of them.
+
+    A part that is NOT in this list can still be used: ask for one by its
+    measurements instead of its name. Placing an id nothing recognises returns the
+    grammar for that, which is where it is spelled out rather than here — it is a
+    page long and only matters once."""
     return session.list_footprints(search)
 
 

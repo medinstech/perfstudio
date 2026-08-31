@@ -682,6 +682,42 @@ def test_an_agent_can_look_at_the_circuit_and_not_only_at_the_copper(
     assert meta["parts"] > 0
     assert meta["width_px"] > 0 and meta["height_px"] > 0
     assert isinstance(meta["notes"], list)
+
+
+def test_a_part_the_library_does_not_have_can_still_be_placed(loaded: BoardSession) -> None:
+    """An agent holding an odd part is not stuck with the sixty-one.
+
+    The id carries the dimensions, so nothing is installed and nothing is stored: the board
+    this places the part on can be saved, mailed and opened by somebody else with the same
+    part on it.
+    """
+    result = loaded.place_component("M1", "box-4x2-p1-r3-15x10x8", "C12", value="sensor")
+    assert result["ok"], result
+
+    placed = next(c for c in loaded.list_components() if c["ref"] == "M1")
+    assert placed["footprint_id"] == "box-4x2-p1-r3-15x10x8"
+    # The flag every consumer keys on: an unknown footprint is what the guide warns
+    # about and the schematic dashes, and this part is not one.
+    assert placed["footprint_known"] is True
+    assert len(loaded.get_component("M1")["pins"]) == 8
+
+
+def test_being_told_a_part_does_not_exist_says_what_to_do_instead(
+    loaded: BoardSession,
+) -> None:
+    """The refusal carries the way out.
+
+    An agent that has just been told a footprint does not exist is about to give up on the
+    part, and "describe it by its measurements" is not something it could guess from a list
+    of sixty-one names. The grammar lives in the refusal rather than in a tool description
+    so it costs nothing until the moment it is the answer.
+    """
+    with pytest.raises(SessionError) as refusal:
+        loaded.place_component("M1", "some-module-nobody-has", "C12")
+
+    message = str(refusal.value)
+    assert "list_footprints" in message
+    assert "box-<cols>x<rows>" in message, message
 def test_nothing_in_the_mcp_package_writes_to_stdout() -> None:
     """On stdio, stdout IS the protocol. One stray print corrupts the stream and the
     client reports something baffling and unrelated -- PLAN.md Sec 9.1's named trap."""

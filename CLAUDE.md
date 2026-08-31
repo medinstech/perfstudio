@@ -220,6 +220,34 @@ Preserve the original's arithmetic and generation order, not merely its intent.
 `BodySpec.dims` keys stay camelCase (`"rowSpacing"`, `"tabHeight"`) because `dims` is a
 free-form dict, not a model field — there is nothing there for `persist.py` to rename.
 
+**A part the library does not have is asked for by an id that carries its parameters.**
+Sixty-one is a good library and not every part anybody owns, and the answer is neither a
+document field nor a user library on disk: `box-4x2-p1-r3-15x10x8` IS the definition, and
+`generated_footprint` builds it on demand. `get_footprint` resolves the registry first and
+the grammar second, so a generated id can never shadow a library part. The `.perf` format
+does not move, the 15 golden fixtures are untouched, and a board mailed to a stranger opens
+with the same part on it. `GENERATED_ID_GRAMMAR` is the single description of the grammar —
+`docs/MCP.md`, the MCP refusal message and `tests/test_footprints.py` all read that one
+string, and `ui/main.CustomPartDialog` never spells an id at all: it calls the generator and
+shows what came back.
+
+Three things hold it together:
+
+- **One spelling per part, enforced structurally.** Every parse ends by rebuilding the id
+  and refusing anything that does not come back identical, so `dip-08` is not a footprint.
+  Without it a document could hold a part whose own `id` disagrees with the name it is
+  stored under.
+- **The id a generator writes for itself must reproduce it.** That is why the auto-ids for
+  the electrolytic, disc and film capacitors gained their missing dimension: an auto-id
+  that dropped the can height meant two different parts could be given one id, which
+  `_build_standard_footprints` would have refused as a duplicate.
+- **`generic_box_footprint` is not a shape editor**, and for the reason D3 declined a
+  schematic editor: an arbitrary outline would be state, state would be a document field,
+  and a document field reopens the byte-for-byte format. A pin grid and three millimetre
+  dimensions is what fits in an id. Its pins are numbered ROW BY ROW, which is a module's
+  silkscreen convention and not a DIP's — `dip_footprint` is for when the answer is the
+  other one.
+
 ### Hole addressing
 
 `HoleCoord(col, row)` is 0-indexed from the top-left, row growing downward.

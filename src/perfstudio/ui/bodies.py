@@ -250,6 +250,11 @@ _DIM_KEYS: dict[BodyArchetype, tuple[str, str, Literal["x", "y"]]] = {
     "tactile-switch": ("width", "depth", "x"),
     "crystal-hc49": ("width", "depth", "x"),
     "relay-box": ("length", "width", "x"),
+    # The one archetype whose dimension names were chosen rather than inherited from a
+    # datasheet, because `generic_box_footprint` invents the part: width across the pin
+    # rows, depth along them. Listed rather than left to the fallback so a reader can see
+    # which way round it is without deducing it from a default.
+    "generic-box": ("width", "depth", "x"),
 }
 
 

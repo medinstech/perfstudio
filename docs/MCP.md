@@ -143,6 +143,15 @@ gets every other tool; the render tools report their absence instead of taking t
 down at import. Only the 3D one needs GL — the schematic is drawn as an SVG by a pure
 engine module and rasterised by Qt, so it works where `render_3d_view` cannot.
 
+**A part that is not in the library can still be used.** `list_footprints` returns 61 and
+that is not every part anybody owns, so a footprint can be asked for by its MEASUREMENTS
+instead of its name: `box-8x2-p1-r3-20.32x7.62x4` is a sixteen-pin module on a 0.1 inch
+grid, two rows three holes apart, and `dip-22` is a DIP nobody put in the library. The id
+carries the dimensions, so nothing is stored and nothing is installed — a board using one
+opens as the same part on somebody else's machine. Placing an id nothing recognises returns
+the whole grammar, which is why it is not repeated in a tool description: it is a page long
+and it only matters once.
+
 **A netlist no longer has to come from KiCad.** `create_net` / `connect_pins` build one
 up on the board itself, which is what makes `autoroute` and `run_lvs` reachable on a
 board that never had a schematic — without a net there is no ratsnest, and so nothing to

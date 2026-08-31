@@ -528,6 +528,58 @@ TURKISH: Mapping[str, str] = {
     "&Copy This Finding": "Bu Bulguyu &Kopyala",
     "Copy &All Findings": "&Tüm Bulguları Kopyala",
     "findings copied to the clipboard": "bulgu panoya kopyalandı",
+    # -- a part the library does not have --------------------------------------
+    #
+    # The families and their measurements. Not identifiers: the IDENTIFIER a custom part
+    # gets (`box-4x2-p1-r3-15x10x8`) is engine text and stays untranslated, like a hole
+    # address or a DRC rule name, because it is what goes into the file.
+    "Custom Part": "Özel Parça",
+    "Custom Part…": "Özel Parça…",
+    "Describe a part the library does not have. It is stored as an identifier "
+    "that carries its own dimensions, so it travels with the board.": (
+        "Kütüphanede olmayan bir parçayı tarif edin. Ölçülerini kendi taşıyan bir kimlik "
+        "olarak saklanır, böylece kartla birlikte gider."
+    ),
+    "The identifier this part is stored under. It carries the dimensions, so "
+    "the part travels with the board rather than living in a library the next "
+    "person has to have.": (
+        "Bu parçanın saklandığı kimlik. Ölçüleri kendisi taşıdığı için parça, bir sonraki "
+        "kişinin kurması gereken bir kütüphanede değil, kartın kendisiyle birlikte gider."
+    ),
+    "Those measurements do not make a part.": "Bu ölçüler bir parça etmiyor.",
+    "{name} — {pins} pin(s), {height} mm tall": (
+        "{name} — {pins} pin, {height} mm yükseklik"
+    ),
+    "this board": "bu kart",
+    "Any rectangular part": "Herhangi bir dikdörtgen parça",
+    "DIP (dual in-line)": "DIP (çift sıra)",
+    "Pin header": "Pin başlığı",
+    "Screw terminal": "Vidalı klemens",
+    "Axial part (resistor, diode, choke)": "Eksenel parça (direnç, diyot, bobin)",
+    "Electrolytic capacitor": "Elektrolitik kondansatör",
+    "Disc ceramic capacitor": "Disk seramik kondansatör",
+    "Film capacitor": "Film kondansatör",
+    "LED": "LED",
+    "Pins across": "Yatay pin sayısı",
+    "Rows of pins": "Pin sırası sayısı",
+    "Holes between pins": "Pinler arası delik",
+    "Holes between rows": "Sıralar arası delik",
+    "Pins per row": "Sıra başına pin",
+    "Ways": "Yol sayısı",
+    "Wide body (0.6 in)": "Geniş gövde (0,6 inç)",
+    "Polarised (banded end)": "Kutuplu (bantlı uç)",
+    "Lead span (holes)": "Bacak açıklığı (delik)",
+    "Lead pitch (holes)": "Bacak aralığı (delik)",
+    "Body width (mm)": "Gövde genişliği (mm)",
+    "Body depth (mm)": "Gövde derinliği (mm)",
+    "Body height (mm)": "Gövde yüksekliği (mm)",
+    "Body length (mm)": "Gövde uzunluğu (mm)",
+    "Body diameter (mm)": "Gövde çapı (mm)",
+    "Can diameter (mm)": "Kutu çapı (mm)",
+    "Can height (mm)": "Kutu yüksekliği (mm)",
+    "Disc diameter (mm)": "Disk çapı (mm)",
+    "Disc thickness (mm)": "Disk kalınlığı (mm)",
+    "LED diameter (mm)": "LED çapı (mm)",
     # -- the language of the interface itself ----------------------------------
     "&Language": "&Dil",
     "English": "İngilizce",
