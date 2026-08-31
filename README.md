@@ -1,21 +1,21 @@
 # PerfStudio
 
 [![CI](https://github.com/medinstech/perfstudio/actions/workflows/ci.yml/badge.svg)](https://github.com/medinstech/perfstudio/actions/workflows/ci.yml)
-[![Licence: Apache-2.0](https://img.shields.io/badge/licence-Apache--2.0-blue.svg)](./LICENSE)
+[![Licence: Apache-2.0](https://img.shields.io/badge/licence-Apache--2.0-blue.svg)](https://github.com/medinstech/perfstudio/blob/main/LICENSE)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
 
-**English** · [Türkçe](./README.tr.md)
+**English** · [Türkçe](https://github.com/medinstech/perfstudio/blob/main/README.tr.md)
 
 Design circuits on perfboard the way you would on a PCB — then get a soldering guide
 you can actually build from.
 
-![The 2D editor with an NE555 astable placed and routed](./docs/images/editor-component-side.png)
+![The 2D editor with an NE555 astable placed and routed](https://raw.githubusercontent.com/medinstech/perfstudio/main/docs/images/editor-component-side.png)
 
 > **Status: pre-alpha, and end to end.** A netlist goes in and a soldering guide comes
 > out: 2D editor, 3D view, placement optimiser, autorouter, DRC, LVS, the build guide,
 > an exact 1:1 PDF export and an MCP server. What is missing is the dogfood test —
 > nobody has yet built a real board by following a generated guide, and
-> [PLAN.md](./PLAN.md) §11 says M5 does not close until somebody has. Everything else
+> [PLAN.md](https://github.com/medinstech/perfstudio/blob/main/PLAN.md) §11 says M5 does not close until somebody has. Everything else
 > runs: **v0.4.0** ships an installer for each of the three desktop platforms, none of
 > them code-signed.
 
@@ -66,17 +66,17 @@ The solder side is where the copper is, so it is a first-class view rather than 
 mode — and copper on the face you are *not* looking at is hatched, because a board is
 opaque and a trace drawn solid says *this is in front of you*.
 
-![The solder side, with far-side copper hatched](./docs/images/editor-solder-side.png)
+![The solder side, with far-side copper hatched](https://raw.githubusercontent.com/medinstech/perfstudio/main/docs/images/editor-solder-side.png)
 
 The 3D view is a checking tool, not a picture. Three rules exist that a top-down view
 cannot see at all: a part too tall for the case, a jumper trapped under a body that will
 be soldered down on top of it, and a heat-sensitive part sitting too close to a hot one.
 
-![The same board in 3D](./docs/images/board-3d.png)
+![The same board in 3D](https://raw.githubusercontent.com/medinstech/perfstudio/main/docs/images/board-3d.png)
 
 ## The guide has an order, and you can watch it
 
-![The NE555 board assembling itself: parts first, then the board turns over and the copper goes on](./docs/images/assembly.gif)
+![The NE555 board assembling itself: parts first, then the board turns over and the copper goes on](https://raw.githubusercontent.com/medinstech/perfstudio/main/docs/images/assembly.gif)
 
 Parts go in **shortest first** — a tall part fitted early stops the board lying flat on
 the bench while the short ones are soldered. Then the board is turned over and the copper
@@ -95,21 +95,23 @@ actually give you.
 Requires **Python 3.12+**. The desktop app is PySide6 (Qt 6) with a VTK viewport.
 
 ```sh
-git clone https://github.com/medinstech/perfstudio.git
-cd perfstudio
-pip install -e .
+pip install perfstudio
 
 perfstudio                   # launch on a blank board
 perfstudio some/board.perf   # ...or open a document
 perfstudio --version
 ```
 
-Or install it: **[the releases page](https://github.com/medinstech/perfstudio/releases)**
+Qt and VTK are most of a 400 MB download the first time; there is no smaller build,
+because the 3D view is a checking tool the application depends on rather than an optional
+extra. From a clone, `pip install -e .` instead.
+
+Or install it as an application: **[the releases page](https://github.com/medinstech/perfstudio/releases)**
 carries a Windows installer, a Linux AppImage and a macOS disk image, each built and
 smoke-tested by the tag itself. **None of them is code-signed**, so each warns on first
 run and the release notes say how to get past it — a Windows EV certificate is ~$300/year
 and Apple notarization $99/year. Running from source avoids the warning entirely. See
-[docs/RELEASING.md](./docs/RELEASING.md).
+[docs/RELEASING.md](https://github.com/medinstech/perfstudio/blob/main/docs/RELEASING.md).
 
 The interface speaks **English and Turkish** (`--lang tr`, or follow the system locale).
 
@@ -118,13 +120,13 @@ The interface speaks **English and Turkish** (`--lang tr`, or follow the system 
 In the app: **File → Import KiCad Netlist** on `examples/ne555-astable.net`, accept the
 offered placement, **Place → Auto-place Board** (`Ctrl+Shift+A`), **`Ctrl+R`** to route,
 then **File → Export Build Guide** (`Ctrl+B`). That is the exact sequence the screenshots
-above come out of — see [`tools/screenshots.py`](./tools/screenshots.py).
+above come out of — see [`tools/screenshots.py`](https://github.com/medinstech/perfstudio/blob/main/tools/screenshots.py).
 
 You do not need KiCad: nets can be built by hand in the app or over MCP.
 
 ### Or open one that is already built
 
-[Four examples](./examples/README.md) ship as both the netlist and the finished board:
+[Four examples](https://github.com/medinstech/perfstudio/blob/main/examples/README.md) ship as both the netlist and the finished board:
 
 ```sh
 perfstudio examples/lm317-supply.perf
@@ -150,7 +152,7 @@ claude mcp add perfstudio -- python -m perfstudio.mcp
 ```
 
 Forty-four tools, every hole addressed the way people talk about perfboard (`A1`, `C7`,
-`AC12`) and never as raw coordinates. See [docs/MCP.md](./docs/MCP.md) for the tool list,
+`AC12`) and never as raw coordinates. See [docs/MCP.md](https://github.com/medinstech/perfstudio/blob/main/docs/MCP.md) for the tool list,
 the JSON config other clients want, and the rest of the setup.
 
 ### Headless
@@ -204,24 +206,24 @@ runs, and the update check that tells you a release exists and fetches it (**Hel
 for Updates**; it verifies the download against the release's `SHA256SUMS` and then hands
 it to you — running it stays your click).
 
-Next, in the order [PLAN.md](./PLAN.md) §11 puts them:
+Next, in the order [PLAN.md](https://github.com/medinstech/perfstudio/blob/main/PLAN.md) §11 puts them:
 
 - **The dogfood build (M5).** Somebody has to solder a real board from a generated guide.
   Until that has happened, every claim on this page is a claim about software rather than
   about a working circuit. It is also the one thing on this list that a stranger can do
-  for the project — there is [an issue template for it](./.github/ISSUE_TEMPLATE/board_i_could_not_build.yml).
+  for the project — there is [an issue template for it](https://github.com/medinstech/perfstudio/blob/main/.github/ISSUE_TEMPLATE/board_i_could_not_build.yml).
 - **Code signing.** A Windows EV certificate is ~$300/year and Apple notarization
   $99/year, so until then the installers warn on first run and the release notes say how
   to get past it.
 
 ## Contributing
 
-Issues and pull requests are welcome. Please read [CONTRIBUTING.md](./CONTRIBUTING.md)
+Issues and pull requests are welcome. Please read [CONTRIBUTING.md](https://github.com/medinstech/perfstudio/blob/main/CONTRIBUTING.md)
 first — it covers how to run the suite, which checks are gates and which are not, and one
 licence boundary that matters more here than in most projects: **do not read or port code
 from the GPL-licensed tools in this space.** PerfStudio is clean-room with respect to
-them, and that has to stay true. The record is in [docs/prior-art.md](./docs/prior-art.md).
+them, and that has to stay true. The record is in [docs/prior-art.md](https://github.com/medinstech/perfstudio/blob/main/docs/prior-art.md).
 
 ## Licence
 
-Apache-2.0. See [LICENSE](./LICENSE) and [NOTICE](./NOTICE).
+Apache-2.0. See [LICENSE](https://github.com/medinstech/perfstudio/blob/main/LICENSE) and [NOTICE](https://github.com/medinstech/perfstudio/blob/main/NOTICE).

@@ -96,16 +96,18 @@ oynatılarak üretiliyor — yani rehberin gerçekten vermediği bir sırayı g�
 **Python 3.12+** gerekir. Masaüstü uygulaması PySide6 (Qt 6) ve VTK viewport kullanır.
 
 ```sh
-git clone https://github.com/medinstech/perfstudio.git
-cd perfstudio
-pip install -e .
+pip install perfstudio
 
 perfstudio                   # boş bir kartla başlat
 perfstudio bir/kart.perf     # ...ya da bir doküman aç
 perfstudio --version
 ```
 
-Ya da kurun: **[releases sayfası](https://github.com/medinstech/perfstudio/releases)**
+Qt ve VTK ilk seferde ~400 MB indirmenin çoğunu oluşturur; daha küçük bir sürüm yok, çünkü
+3D görünüm isteğe bağlı bir ek değil, uygulamanın dayandığı bir kontrol aracı. Klondan
+kurmak için `pip install -e .`.
+
+Ya da uygulama olarak kurun: **[releases sayfası](https://github.com/medinstech/perfstudio/releases)**
 Windows kurulum paketini, Linux AppImage'ını ve macOS disk imajını taşıyor; üçü de
 etiketin kendisi tarafından üretilip smoke-test ediliyor. **Hiçbiri kod imzalı değil**,
 o yüzden her biri ilk açılışta uyarı veriyor ve release notları uyarının nasıl geçileceğini

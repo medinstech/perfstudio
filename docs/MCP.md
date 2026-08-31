@@ -6,19 +6,27 @@ command bus the desktop app does — undo works, the journal is shared, and the 
 cannot reach the document by any other route.
 
 ```sh
-pip install -e ".[mcp]"
-python -m perfstudio.mcp          # stdio, the primary transport
-python -m perfstudio.mcp board.perf   # ...opening a document
-python -m perfstudio.mcp --http   # streamable HTTP on localhost
+pip install "perfstudio[mcp]"     # ...or pip install -e ".[mcp]" from a clone
+perfstudio-mcp                    # stdio, the primary transport
+perfstudio-mcp board.perf         # ...opening a document
+perfstudio-mcp --http             # streamable HTTP on localhost
 ```
+
+`python -m perfstudio.mcp` is the same server and takes the same arguments; the console
+script is easier to point a client at, because it lives beside the Python that has
+PerfStudio installed rather than needing that Python to be named.
 
 ## Registering it
 
 **Claude Code**
 
 ```sh
-claude mcp add perfstudio -- python -m perfstudio.mcp
+claude mcp add perfstudio -- uvx --from "perfstudio[mcp]" perfstudio-mcp
 ```
+
+`uvx` fetches the package into its own cache on first use, so nothing has to be installed
+first and nothing else on the machine is touched. With PerfStudio already installed,
+`claude mcp add perfstudio -- perfstudio-mcp` is the same server without the fetch.
 
 **Anything that reads a JSON config** (Claude Desktop, Antigravity, Cursor, …):
 
@@ -26,15 +34,17 @@ claude mcp add perfstudio -- python -m perfstudio.mcp
 {
   "mcpServers": {
     "perfstudio": {
-      "command": "python",
-      "args": ["-m", "perfstudio.mcp"]
+      "command": "uvx",
+      "args": ["--from", "perfstudio[mcp]", "perfstudio-mcp"]
     }
   }
 }
 ```
 
-Use the absolute path to the Python that has PerfStudio installed if it is not the one
-on `PATH` — a virtualenv's `bin/python` (or `Scripts\python.exe` on Windows).
+Without `uv`, use the absolute path to the `perfstudio-mcp` in the environment that has
+PerfStudio installed — a virtualenv's `bin/` (or `Scripts\perfstudio-mcp.exe` on Windows).
+A bare `python -m perfstudio.mcp` finds whichever Python is first on `PATH`, which is the
+usual reason a client reports that the server exited immediately.
 
 ## The shape of a session
 

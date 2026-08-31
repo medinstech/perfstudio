@@ -498,7 +498,11 @@ class UpdateBar(QFrame):
             # rather than pretending there is a file to fetch.
             self.act_download.setText(t("Open the Download Page"))
             self.act_download.setToolTip(
-                t("This build was not installed from a package, so the release page is the answer.")
+                t(
+                    "There is no installer for this build. If you installed with pip, the "
+                    "update is “pip install -U perfstudio”; the release page carries "
+                    "everything else."
+                )
             )
         self.progress.hide()
         self._show_buttons(self.act_download, self.act_notes, self.act_hide)

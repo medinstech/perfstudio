@@ -5,12 +5,52 @@ name = "perfstudio"
 # disagree with itself, usually inside a released artefact.
 dynamic = ["version"]
 description = "Perfboard layout designer: netlist-driven placement and routing, perfboard-specific design rules, layout-vs-schematic verification, and a step-by-step soldering guide with measurement checkpoints."
+# The project page on PyPI IS this file, and `twine check --strict` in release.yml fails
+# without it -- which is how the first wheel was found to have no description at all.
+#
+# README.md carries absolute github.com/raw.githubusercontent.com links rather than
+# relative ones, and that is this field's doing: PyPI resolves neither images nor links
+# relative to the repository, so a README written the natural way renders there as four
+# broken images and fourteen dead links. GitHub renders the absolute form identically, so
+# there is still one README and no second copy to drift. README.tr.md keeps its relative
+# links, because nothing packages it.
+readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"
+# "perf" in the name is what PLAN.md §12 chose it for; these are the rest of the
+# discoverability, and the classifier list is the only place a package says which field it
+# belongs to. No `License ::` classifier: `license` above is an SPDX expression (PEP 639)
+# and setuptools rejects being told twice.
+keywords = [
+    "perfboard", "stripboard", "veroboard", "protoboard", "eda", "pcb",
+    "kicad", "netlist", "autorouter", "drc", "lvs", "electronics", "soldering",
+]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Environment :: X11 Applications :: Qt",
+    "Intended Audience :: Manufacturing",
+    "Intended Audience :: Science/Research",
+    "Natural Language :: English",
+    "Natural Language :: Turkish",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Electronic Design Automation",
+]
+
 dependencies = [
     "PySide6>=6.10",
     "vtk>=9.6",
 ]
+
+# The sidebar of the PyPI page. Kept here rather than folded into the description because
+# PyPI links them individually and a person landing on the page from a search has no other
+# route back to the repository.
+[project.urls]
+Homepage = "https://github.com/medinstech/perfstudio"
+Repository = "https://github.com/medinstech/perfstudio"
+Changelog = "https://github.com/medinstech/perfstudio/blob/main/CHANGELOG.md"
+Issues = "https://github.com/medinstech/perfstudio/issues"
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-cov", "mypy>=1.13", "ruff>=0.8", "pyinstaller>=6.10"]

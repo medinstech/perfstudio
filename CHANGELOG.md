@@ -20,6 +20,45 @@ closed without a bump.
 
 ## [Unreleased]
 
+### Added
+
+- **`pip install perfstudio`.** The application has been telling people to do this since
+  0.7.0 — `ui/updater.py` offers a `pip` install no download at all, on the grounds that
+  "its update is `pip install -U perfstudio`" — and there was nothing on PyPI to install.
+  `release.yml` now builds an sdist and a pure-Python wheel on every tag and every dry
+  run, and publishes them by **trusted publishing**, so there is no API token anywhere in
+  this repository. The one-time setup on the PyPI side is written down in
+  [docs/RELEASING.md](./docs/RELEASING.md#pypi); the environment name in it is not
+  optional.
+  - **It does not wait for the three installer jobs.** A wheel has different failure modes
+    from a PyInstaller bundle, and hanging it off ninety minutes of Qt packing would make a
+    broken sdist the last thing anybody heard about. It also means the wheel is still
+    published when an installer fails — which is the right way round, since the wheel is
+    what a platform with no bundle falls back to. An Intel Mac and an ARM Linux box have an
+    install now.
+  - **The wheel is installed and run before it is published**, with its dependencies, in a
+    clean virtualenv, from a directory that is not the checkout. Nothing else in the
+    workflow tests the claim a PyPI release actually makes: the three installers carry
+    their own Python and never resolve a dependency.
+  - Two checks that only exist because the answers are invisible until published. `twine
+    check --strict` — which failed on the first wheel built here, because `pyproject.toml`
+    had no `readme` and the project page would have shipped blank. And the wheel's contents
+    against `[tool.setuptools.package-data]`, because that list is written out file by file
+    on purpose, and a list nothing checks is a glob that stops matching the day an icon is
+    renamed.
+  - `docs/MCP.md` can now point an agent at `uvx --from "perfstudio[mcp]" perfstudio-mcp`,
+    which needs nothing installed first. The old instructions required a clone, an editable
+    install and then the absolute path of the Python that had received it — which the
+    document had to warn about, because a bare `python -m perfstudio.mcp` finds whichever
+    Python is first on `PATH` and that is the usual reason a client reports the server
+    exiting immediately.
+  - `README.md` carries absolute links now rather than relative ones. That is `readme =
+    "README.md"` doing it: PyPI resolves neither images nor links against the repository,
+    so the natural form renders there as four broken images and fourteen dead links.
+    GitHub renders the absolute form identically, so there is still one README and no
+    second copy to drift out of step. `README.tr.md` keeps its relative links — nothing
+    packages it.
+
 ## [0.7.0] - 2026-08-25
 
 ### Added

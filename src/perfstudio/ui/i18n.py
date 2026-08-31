@@ -177,8 +177,12 @@ TURKISH: Mapping[str, str] = {
     "Fetch the installer into your Downloads folder and check it arrived intact.":
         "Kurulum dosyasını İndirilenler klasörüne indirir ve eksiksiz geldiğini doğrular.",
     "Open the Download Page": "İndirme Sayfasını Aç",
-    "This build was not installed from a package, so the release page is the answer.":
-        "Bu yapı bir paketten kurulmadı; doğru adres sürüm sayfası.",
+    "There is no installer for this build. If you installed with pip, the "
+    "update is “pip install -U perfstudio”; the release page carries "
+    "everything else.": (
+        "Bu yapı için kurulum dosyası yok. pip ile kurduysanız güncelleme "
+        "“pip install -U perfstudio”; geri kalan her şey sürüm sayfasında."
+    ),
     "What Changed": "Ne Değişti",
     "Open this release's notes on GitHub.": "Bu sürümün notlarını GitHub'da açar.",
     "Show the File": "Dosyayı Göster",
