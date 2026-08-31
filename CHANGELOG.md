@@ -20,6 +20,20 @@ closed without a bump.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The AppImage build fetches its own runtime.** v0.9.0's release job died on
+  `Failed to download runtime: server returned status code 302` twenty minutes after
+  the same job had passed on a dry run: an AppImage is a squashfs image behind a small
+  runtime, appimagetool downloads that runtime itself at build time, and its fetcher
+  does not follow a redirect. `curl -L` does, and `--runtime-file` is the way round that
+  appimagetool's own error message names.
+  - It also closes a hole the script was already arguing against. `appimagetool` is
+    pinned to a release because "whatever was on the server that morning" is not
+    something a release can be reproduced from — and the runtime, which is the part that
+    ends up INSIDE the artefact, was being pulled from `continuous` by something nobody
+    could see. It is a visible input now.
+
 ## [0.9.0] - 2026-08-31
 
 ### Added

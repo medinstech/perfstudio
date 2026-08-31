@@ -96,12 +96,30 @@ if [ ! -x "$tool" ]; then
     chmod +x "$tool"
 fi
 
+# The runtime is fetched HERE rather than left to appimagetool, and that is a fix rather
+# than a preference.  An AppImage is a squashfs image behind a small runtime, and
+# appimagetool downloads that runtime itself at build time -- with a fetcher that does not
+# follow a redirect.  GitHub answered one with a 302 during the v0.9.0 release and the job
+# died on `Failed to download runtime: server returned status code 302`, twenty minutes
+# after the same job had passed on a dry run.  curl -L follows it, and `--runtime-file` is
+# the way round that appimagetool's own error message names.
+#
+# It also closes the hole in the paragraph above.  The tool is pinned because "whatever was
+# on the server that morning" is not something a release can be reproduced from -- and the
+# runtime, which is the part that actually ends up INSIDE the artefact, was being fetched
+# from `continuous` by something nobody could see.  Now it is a visible input with a name.
+runtime="build/appimage-runtime-${ARCH}"
+if [ ! -s "$runtime" ]; then
+    curl -fsSL -o "$runtime" \
+        "https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-${ARCH}"
+fi
+
 # The tool is itself an AppImage, so on a machine or a CI runner with no FUSE it cannot
 # mount itself either.  This is the documented way round that, and it is why the build
 # does not need root to install libfuse2.
 export APPIMAGE_EXTRACT_AND_RUN=1
 out="$OUT_DIR/perfstudio-${version}-${ARCH}.AppImage"
 rm -f "$out"
-ARCH="$ARCH" "$tool" "$appdir" "$out"
+ARCH="$ARCH" "$tool" --runtime-file "$runtime" "$appdir" "$out"
 
 ls -l "$out"
