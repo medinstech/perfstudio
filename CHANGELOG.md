@@ -20,6 +20,8 @@ closed without a bump.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-09-02
+
 A polish release: nothing new to learn, and a long list of things that were almost right.
 Four audits — the window, the three views, the engine's own prose and the loader's
 tolerance for bad files — each came back with what they found, and what follows is what
@@ -2317,7 +2319,8 @@ was introduced during 0.4.0 development, so they are accurate but were not writt
 release time. Their compare links point at commits rather than tags for the same reason;
 from v0.4.0 onwards every release is tagged.
 
-[Unreleased]: https://github.com/medinstech/perfstudio/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/medinstech/perfstudio/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/medinstech/perfstudio/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/medinstech/perfstudio/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/medinstech/perfstudio/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/medinstech/perfstudio/compare/v0.7.0...v0.8.0
