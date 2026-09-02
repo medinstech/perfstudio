@@ -5892,3 +5892,90 @@ def test_a_refused_new_net_is_said_in_a_dialog_and_the_form_comes_back(monkeypat
     finally:
         _StubNetDialog.accept_times = None
         _close(window)
+
+
+# ---------------------------------------------------------------------------
+# Holes that read as holes, and leads that go down them
+# ---------------------------------------------------------------------------
+#
+# Two things a photograph of the 3D view showed and no test could: every hole was a black
+# cap standing ABOVE its own pad, so the board read as a grid of buttons rather than as
+# perfboard; and every part hovered over the holes it is meant to be soldered into,
+# because a lead stopped in mid-air at the pin position and a DIP had no pins at all.
+# Neither is visible from the default camera, which is why both survived so long.
+
+
+def test_a_hole_is_drawn_under_the_copper_and_not_over_it() -> None:
+    """The bore has to be visible through the pad's hole from either face WITHOUT
+    standing above the metal around it -- a cap proud of the copper occludes the pads on
+    the rows behind it at every grazing angle, which is what made holes look plugged."""
+    from perfstudio.ui import view3d
+
+    board = _load_dense().board
+    top, bottom = view3d.bore_span_z(board)
+
+    assert 0.0 < top < view3d.pad_z(board, "top"), "under the top copper, over the substrate"
+    assert view3d.pad_z(board, "bottom") < bottom < -board.thickness, "and the same underneath"
+
+
+def test_every_archetype_puts_a_lead_through_every_one_of_its_holes() -> None:
+    """One footprint per archetype, because the failure was per-builder.
+
+    The lead has to start above the board and end past the far copper: that is what makes
+    a part look soldered INTO the board rather than resting on top of it, and it is the
+    only evidence the solder side has that anything came through at all.
+    """
+    from perfstudio.footprints import standard_footprints
+    from perfstudio.model import ComponentInstance
+    from perfstudio.ui import view3d
+
+    board = _load_dense().board
+    lookup = footprint_lookup()
+    one_per_archetype: dict[str, str] = {}
+    for footprint_id, footprint in sorted(standard_footprints().items()):
+        one_per_archetype.setdefault(footprint.body.archetype, footprint_id)
+
+    for archetype, footprint_id in sorted(one_per_archetype.items()):
+        comp = ComponentInstance(
+            id="c1", ref="X1", value="", footprint_id=footprint_id, anchor=HoleCoord(4, 4)
+        )
+        body = view3d._world_body(lookup, comp, board)
+        assert body is not None, footprint_id
+        footprint = lookup(footprint_id)
+        assert footprint is not None
+        builder = view3d._BUILDERS.get(archetype, view3d._box_pieces)
+
+        leads = [
+            piece
+            for piece in builder(body)
+            if piece.instances and piece.rgb == view3d.LEAD_RGB
+        ]
+
+        assert len(leads) == 1, f"{archetype}: expected one instanced lead piece"
+        lead = leads[0]
+        assert len(lead.instances) == len(body.pins), f"{archetype}: a lead per pin"
+        # The source is built upright and glyphed at each pin, so its own bounds give the
+        # length and the instance z gives where the middle of it sits.
+        low, high = lead.source.GetOutput().GetBounds()[4:6]
+        centre_z = lead.instances[0][2]
+        assert centre_z + high > view3d.pad_z(board, "top"), f"{archetype}: starts above the board"
+        assert centre_z + low < view3d.pad_z(board, "bottom"), f"{archetype}: comes out the other side"
+
+
+def test_a_lead_is_thin_enough_to_fit_the_hole_it_goes_down() -> None:
+    """A lead wider than the drill would be a part that cannot be fitted, drawn as one
+    that has been."""
+    from perfstudio.model import ComponentInstance
+    from perfstudio.ui import view3d
+
+    board = _load_dense().board
+    comp = ComponentInstance(
+        id="c1", ref="R1", value="10k", footprint_id="r-axial-5", anchor=HoleCoord(4, 4)
+    )
+    body = view3d._world_body(footprint_lookup(), comp, board)
+    assert body is not None
+
+    lead = next(p for p in view3d._axial_pieces(body) if p.instances)
+    bounds = lead.source.GetOutput().GetBounds()
+
+    assert bounds[1] - bounds[0] < board.drill_diameter, "the lead fits the drilled hole"

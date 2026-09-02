@@ -135,9 +135,42 @@ def build_substrate(board: Board) -> vtk.vtkActor:
     return actor
 
 
+#: How far each face's copper stands off the substrate: enough that a flat pad never
+#: z-fights the board it lies on, small enough to be invisible.
+PAD_LIFT_MM = 0.05
+
+#: How far the dark bore stops SHORT of each face's copper.
+#:
+#: It used to overshoot by 0.10 mm instead, and a hole that stands proud of its own pad is
+#: not a hole. At any grazing angle -- which is most of them, since this view is orbited --
+#: every bore showed a black cap standing above the copper and occluding the pads on the
+#: rows behind it, so a board read as a grid of black buttons rather than as one with
+#: holes drilled through it. Below the copper on both faces, the ring is the topmost thing
+#: at every hole, which is what makes it read as a hole.
+BORE_UNDER_PAD_MM = 0.015
+
+#: How far a trimmed lead stands proud of the solder-side copper. Enough to see that
+#: something came through the hole, not enough to look like a board nobody has cut the
+#: legs off yet.
+LEAD_TRIM_MM = 0.07
+
+
 def pad_z(board: Board, side: BoardSide) -> float:
     """Where one face's copper sits, in board z. Pure, so it can be asserted directly."""
-    return 0.05 if side == "top" else -board.thickness - 0.05
+    return PAD_LIFT_MM if side == "top" else -board.thickness - PAD_LIFT_MM
+
+
+def bore_span_z(board: Board) -> tuple[float, float]:
+    """The dark bore's top and bottom, in board z. Pure, for the reason ``pad_z`` is.
+
+    Between the two faces' copper and never past it, while still standing clear of the
+    substrate's own faces: the bore has to be visible through the pad's hole from either
+    side without standing above the metal around it.
+    """
+    return (
+        pad_z(board, "top") - BORE_UNDER_PAD_MM,
+        pad_z(board, "bottom") + BORE_UNDER_PAD_MM,
+    )
 
 
 #: What a conductor measures on the board, in mm.
@@ -323,6 +356,7 @@ def build_drills(board: Board, consumed: frozenset[str] = frozenset()) -> vtk.vt
     looking at a perfboard from 200 mm away can tell the difference, and the alternative
     is a board with no holes in it.
     """
+    top, bottom = bore_span_z(board)
     points = vtk.vtkPoints()
     for col in range(board.cols):
         for row in range(board.rows):
@@ -332,15 +366,15 @@ def build_drills(board: Board, consumed: frozenset[str] = frozenset()) -> vtk.vt
             if consumed and hole_key(HoleCoord(col, row)) in consumed:
                 continue
             x, y = _xy(board, HoleCoord(col, row))
-            points.InsertNextPoint(x, y, -board.thickness / 2)
+            points.InsertNextPoint(x, y, (top + bottom) / 2)
     data = vtk.vtkPolyData()
     data.SetPoints(points)
 
     bore = vtk.vtkCylinderSource()
     bore.SetRadius(board.drill_diameter / 2)
-    # Slightly longer than the board so its caps never z-fight with the pads at either
-    # face, which shows up as a flickering speckle across the whole grid.
-    bore.SetHeight(board.thickness + 0.3)
+    # Stopping just under the copper at each face rather than just over it -- see
+    # BORE_UNDER_PAD_MM, which is the whole difference between a hole and a black button.
+    bore.SetHeight(top - bottom)
     bore.SetResolution(BORE_SIDES)
     # vtkCylinderSource stands along Y; the board's thickness is along Z.
     upright = vtk.vtkTransform()
@@ -448,11 +482,15 @@ def build_mounting_holes(doc: PerfDocument) -> list[vtk.vtkActor]:
     board = doc.board
     if not doc.mounting_holes:
         return []
+    top, bottom = bore_span_z(board)
     actors: list[vtk.vtkActor] = []
     for mount in doc.mounting_holes:
         bore = vtk.vtkCylinderSource()
         bore.SetRadius(mount.diameter / 2)
-        bore.SetHeight(board.thickness + 0.3)
+        # The same span as every other hole, for the reason in this function's docstring:
+        # a mounting hole drawn to a different depth from the grid it sits in reads as a
+        # different kind of thing.
+        bore.SetHeight(top - bottom)
         bore.SetResolution(28)
         x, y = _xy(board, mount.at)
         actor = vtk.vtkActor()
@@ -461,7 +499,7 @@ def build_mounting_holes(doc: PerfDocument) -> list[vtk.vtkActor]:
         actor.SetMapper(mapper)
         # vtkCylinderSource stands along Y; the board's thickness is along Z.
         actor.SetOrientation(90.0, 0.0, 0.0)
-        actor.SetPosition(x, y, -board.thickness / 2)
+        actor.SetPosition(x, y, (top + bottom) / 2)
         actor.GetProperty().SetColor(*DRILL_RGB)
         actor.GetProperty().SetSpecular(0.0)
         actor.GetProperty().SetAmbient(0.25)
@@ -689,6 +727,30 @@ def _cylinder(radius: float, height: float, resolution: int = 24) -> Any:
     return cyl
 
 
+def _upright_cylinder(radius: float, height: float, resolution: int = 12) -> Any:
+    """A cylinder standing along Z, ready to be glyphed at every pin of one component.
+
+    The turn is baked into the SOURCE rather than set on the actor because the instanced
+    path in ``_actor_for`` has no actor to turn -- one glyph mapper draws every copy, and
+    ``SetOrient(False)`` means each copy arrives exactly as the source was built.
+
+    ``SetInputData`` and not ``SetInputConnection``: a connection keeps a RAW pointer back
+    to the algorithm that produced it, and the cylinder here is a local that dies with
+    this function. Connecting one segfaults the interpreter outright -- measured, not
+    feared. Handing over the computed polydata takes a real reference to it and leaves no
+    producer to outlive.
+    """
+    cylinder = _cylinder(radius, height, resolution)
+    cylinder.Update()
+    upright = vtk.vtkTransform()
+    upright.RotateX(90)
+    turn = vtk.vtkTransformPolyDataFilter()
+    turn.SetTransform(upright)
+    turn.SetInputData(cylinder.GetOutput())
+    turn.Update()
+    return turn
+
+
 def _sphere(radius: float, resolution: int = 20) -> Any:
     sphere = vtk.vtkSphereSource()
     sphere.SetRadius(radius)
@@ -709,6 +771,9 @@ class _WorldBody:
     height: float
     axis: str
     style: BodyStyle
+    #: The board's own thickness. A body knows where its pins are; without this it does
+    #: not know how deep their holes go, and a lead cannot be drawn through one.
+    thickness: float
     #: World positions of every pin, and of the polarity pin if the part has one.
     pins: tuple[tuple[float, float], ...]
     polarity: tuple[float, float] | None
@@ -723,6 +788,15 @@ class _WorldBody:
     @property
     def across(self) -> float:
         return self.size_y if self.axis == "x" else self.size_x
+
+    @property
+    def lead_bottom_z(self) -> float:
+        """Where a lead ends: just past the solder-side copper, as a trimmed one does.
+
+        Not at the copper: an end coplanar with the pad would z-fight it, and a lead you
+        cannot see from underneath is one the solder side has no evidence of.
+        """
+        return -self.thickness - PAD_LIFT_MM - LEAD_TRIM_MM
 
     @property
     def surface(self) -> Surface:
@@ -763,6 +837,7 @@ def _world_body(lookup: FootprintLookup, comp: Any, board: Board) -> _WorldBody 
         height=placement.height,
         axis=axis,
         style=style_for(fp),
+        thickness=board.thickness,
         pins=tuple(
             (hole.col * board.pitch, -hole.row * board.pitch)
             for _pin, hole in all_pin_holes(comp, fp)
@@ -773,9 +848,43 @@ def _world_body(lookup: FootprintLookup, comp: Any, board: Board) -> _WorldBody 
     )
 
 
+def _through_hole_pieces(body: _WorldBody, top_z: float, radius: float = 0.28) -> list[_Piece]:
+    """The part of every lead that goes down its hole, in ONE instanced actor.
+
+    THE LEADS USED TO STOP IN MID-AIR. A resistor's wire ran horizontally to the pin
+    position and ended there, a hand's breadth above the board at this scale, and a DIP
+    had no pins at all -- so every part hovered over the holes it is supposed to be
+    soldered into, which is the one thing this view exists to show. The lead now turns
+    down at the pin, disappears into the hole (the bore is opaque, as a board is) and
+    reappears trimmed on the solder side.
+
+    Instanced rather than an actor per pin, for the reason the pad grid is: a 2x20 header
+    has forty pins, and forty actors for one connector would cost more than every pad on
+    the board.
+    """
+    bottom = body.lead_bottom_z
+    height = top_z - bottom
+    if height <= 0 or not body.pins:
+        return []
+    return [
+        _Piece(
+            source=_upright_cylinder(radius, height),
+            rgb=LEAD_RGB,
+            position=(0.0, 0.0, 0.0),
+            specular=0.6,
+            specular_power=30.0,
+            instances=tuple((pin_x, pin_y, bottom + height / 2) for pin_x, pin_y in body.pins),
+        )
+    ]
+
+
 def _lead_pieces(body: _WorldBody, radius: float = 0.28) -> list[_Piece]:
-    """Tinned wire from each pin to the body edge, for parts whose body is shorter than
-    their lead span. This is most of what makes a resistor read as a resistor."""
+    """Tinned wire from each pin to the body edge, and down through the hole from there.
+
+    This is most of what makes a resistor read as a resistor: the horizontal run says the
+    part is standing on its own leads, and the bend down at each end says which holes
+    those leads are in.
+    """
     pieces: list[_Piece] = []
     half = body.along / 2
     z = min(body.across, 1.4) / 2 + _LIFT
@@ -810,7 +919,11 @@ def _lead_pieces(body: _WorldBody, radius: float = 0.28) -> list[_Piece]:
                     specular=0.6,
                 )
             )
-    return pieces
+    # The drop is added for EVERY pin, including the ones with no horizontal run: a pin
+    # under its own body still has to reach the hole it is in. It starts at the TOP of the
+    # horizontal run rather than at its centreline, so its flat cap is buried inside that
+    # tube and the corner reads as a bend rather than as two pieces meeting.
+    return pieces + _through_hole_pieces(body, z + radius, radius)
 
 
 def _axial_pieces(body: _WorldBody) -> list[_Piece]:
@@ -910,7 +1023,9 @@ def _can_pieces(body: _WorldBody) -> list[_Piece]:
                 specular=0.1,
             )
         )
-    return pieces
+    # Under the can, so only the hole and the solder side ever show them -- which is
+    # exactly where a radial capacitor's legs are.
+    return pieces + _through_hole_pieces(body, _LIFT + 0.15)
 
 
 def _disc_pieces(body: _WorldBody) -> list[_Piece]:
@@ -955,7 +1070,10 @@ def _dip_pieces(body: _WorldBody) -> list[_Piece]:
                 specular=0.1,
             )
         )
-    return pieces
+    # From half way up the package, because a DIP's rows are wider than its body: the pins
+    # run down the OUTSIDE of the two long sides, which is what they do on the real part
+    # and what tells you at a glance which way the package is turned.
+    return pieces + _through_hole_pieces(body, body.height / 2 + _LIFT)
 
 
 def _to92_pieces(body: _WorldBody) -> list[_Piece]:
@@ -1000,6 +1118,7 @@ def _to220_pieces(body: _WorldBody) -> list[_Piece]:
             specular=0.7,
             specular_power=40.0,
         ),
+        *_through_hole_pieces(body, _LIFT + 0.15),
     ]
 
 
@@ -1066,6 +1185,9 @@ def _header_pieces(body: _WorldBody) -> list[_Piece]:
                 (pin_x, pin_y, moulding_h + pin_h / 2 + _LIFT) for pin_x, pin_y in body.pins
             ),
         ),
+        # The same pin continues below the moulding and through the board, which is what
+        # is soldered -- the part standing above it is only the half you can see.
+        *_through_hole_pieces(body, _LIFT + 0.15),
     ]
 
 
@@ -1091,7 +1213,7 @@ def _screw_terminal_pieces(body: _WorldBody) -> list[_Piece]:
                 specular_power=35.0,
             )
         )
-    return pieces
+    return pieces + _through_hole_pieces(body, _LIFT + 0.15)
 
 
 def _pot_pieces(body: _WorldBody) -> list[_Piece]:
@@ -1115,6 +1237,7 @@ def _pot_pieces(body: _WorldBody) -> list[_Piece]:
             specular=0.6,
             specular_power=35.0,
         ),
+        *_through_hole_pieces(body, _LIFT + 0.15),
     ]
 
 
@@ -1136,6 +1259,7 @@ def _switch_pieces(body: _WorldBody) -> list[_Piece]:
             orientation=_ALONG_Z,
             specular=0.3,
         ),
+        *_through_hole_pieces(body, _LIFT + 0.15),
     ]
 
 

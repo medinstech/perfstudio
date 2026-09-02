@@ -20,6 +20,32 @@ closed without a bump.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Every lead now goes down its hole and out the other side.** A part in the 3D view
+  hovered over the holes it is meant to be soldered into: an axial lead ran horizontally
+  to the pin position and stopped there in mid-air, a radial capacitor had no legs at all,
+  and a DIP had no pins — it was a black block resting on the board. The lead turns down
+  at the pin, disappears into the hole (the bore is opaque, as a board is) and reappears
+  trimmed on the solder side, which is the only evidence that face has that anything came
+  through it. Every archetype, because the omission was per-builder, and a DIP's pins run
+  down the OUTSIDE of its two long sides the way the real package's do.
+  - One instanced actor per component, not one per pin: a 2×20 header has forty, and the
+    pad grid is instanced for exactly this reason.
+  - `_upright_cylinder` hands the glyph its polydata rather than a pipeline connection.
+    A connection holds a RAW pointer back to the source that produced it, and the source
+    there is a local — connecting one segfaults the interpreter outright, which is how
+    this was found rather than reasoned about.
+- **The holes read as holes rather than as buttons.** The dark bore stood 0.10 mm PROUD of
+  the copper at both faces, so at any grazing angle — which is most of them, since this
+  view is orbited — every hole showed a black cap above its own pad, occluding the pads on
+  the rows behind it. A board of 700 holes read as a grid of black buttons. The bore now
+  stops just short of the copper on both faces (`BORE_UNDER_PAD_MM`), so the ring is the
+  topmost thing at every hole. Mounting bores use the same span, because a screw hole
+  drawn to a different depth from the grid around it reads as a different kind of thing.
+  - `pad_z` and the new `bore_span_z` are pure and asserted directly, as the pad plane
+    already was: what a photograph shows and no test could see is exactly what needs one.
+
 ## [0.10.0] - 2026-09-02
 
 A polish release: nothing new to learn, and a long list of things that were almost right.
