@@ -76,6 +76,7 @@ from perfstudio.geometry import (
     is_inside_board,
     legend_strip_mm,
     manhattan,
+    mounting_hole_centre_mm,
     pad_extent_mm,
     path_length_mm,
     printed_row_label,
@@ -264,6 +265,19 @@ def _outline_rect(board: Board) -> QRectF:
     """
     outline = board_outline_mm(board)
     return QRectF(outline.x, outline.y, outline.width, outline.height)
+
+
+def mm_to_screen(x_mm: float, y_mm: float, board: Board, side: BoardSide) -> QPointF:
+    """A board-millimetre point -> scene position, for whichever side is being VIEWED.
+
+    The same reflection :func:`hole_to_screen` applies, for the things that are NOT on the
+    grid: a mounting bore sitting in the printed border, a finger's inset. About the hole
+    span, never the substrate -- see the comment on ``hole_to_screen``.
+    """
+    if side == "bottom":
+        span_w, _span_h = hole_span_mm(board)
+        return QPointF(span_w - x_mm, y_mm)
+    return QPointF(x_mm, y_mm)
 
 
 def hole_to_screen(hole: HoleCoord, board: Board, side: BoardSide) -> QPointF:
@@ -698,13 +712,24 @@ class MountingHoleItem(QGraphicsItem):
         self.side = side
         self.setZValue(-85)  # Over the pads it removed, under the parts.
 
+    def _centre(self) -> QPointF:
+        """Where the bore actually is.
+
+        ``mounting_hole_centre_mm``, never the hole address: the offset is what lets a
+        corner hole sit in the BORDER, and reading the address alone drew every one of
+        them back on the grid -- in the middle of four pads that are perfectly intact, and
+        a whole pad's width away from where the 3D view and DRC both put it.
+        """
+        centre = mounting_hole_centre_mm(self.mount, self.board)
+        return mm_to_screen(centre.x, centre.y, self.board, self.side)
+
     def boundingRect(self) -> QRectF:
-        centre = hole_to_screen(self.mount.at, self.board, self.side)
+        centre = self._centre()
         r = max(self.mount.head_diameter, self.mount.diameter) / 2 + 0.5
         return QRectF(centre.x() - r, centre.y() - r, 2 * r, 2 * r)
 
     def paint(self, painter: QPainter, option: Any, widget: Any = None) -> None:
-        centre = hole_to_screen(self.mount.at, self.board, self.side)
+        centre = self._centre()
         head_r = self.mount.head_diameter / 2
         painter.setBrush(Qt.BrushStyle.NoBrush)
         pen = QPen(MOUNT_KEEPOUT, 0.12)

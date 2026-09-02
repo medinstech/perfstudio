@@ -6135,3 +6135,82 @@ def _piece_top(piece) -> float:
         data = piece.source.GetOutput() if hasattr(piece.source, "GetOutput") else piece.source
         return max(z for _x, _y, z in piece.instances) + data.GetBounds()[5]
     return float(actor.GetBounds()[5])
+
+
+# ---------------------------------------------------------------------------
+# The two views draw the same board
+# ---------------------------------------------------------------------------
+#
+# "The 2D and the 3D board should look the same, and be right." They did not: a corner
+# mounting hole was drawn on the grid in 2D and in the border in 3D, and the copper in 3D
+# was clipped to a flat yellow that the 2D view never paints.
+
+
+def test_a_mounting_hole_is_drawn_where_its_offset_puts_it_in_2d_too() -> None:
+    """The offset is what lets a corner hole sit in the BORDER. view2d read the hole
+    ADDRESS alone, so it drew every corner bore back on the grid -- a whole pad's width
+    from where the 3D view and DRC both put it. CLAUDE.md has said not to do that since
+    the feature was written."""
+    from perfstudio.geometry import mounting_hole_centre_mm
+    from perfstudio.model import MountingHole
+    from perfstudio.ui.view2d import MountingHoleItem, mm_to_screen
+
+    board = _load_dense().board
+    mount = MountingHole(
+        id="mh-1", at=HoleCoord(0, 0), offset_x_mm=-2.11, offset_y_mm=-2.11, diameter=2.2
+    )
+
+    for side in ("top", "bottom"):
+        item = MountingHoleItem(mount, board, side)  # type: ignore[arg-type]
+        centre = mounting_hole_centre_mm(mount, board)
+        expected = mm_to_screen(centre.x, centre.y, board, side)  # type: ignore[arg-type]
+
+        assert item._centre() == expected
+        assert item._centre() != hole_to_screen(mount.at, board, side), "not the grid hole"
+
+
+def test_a_bore_in_the_border_leaves_the_holes_beside_it_alone() -> None:
+    """The patch of plate laid over a bore takes whole tiles, and the first version grew
+    it OUT to tile edges -- so a corner hole sitting in the border swallowed the tile
+    beside it, and the board came out with a blind hole next to every screw: pad drawn,
+    no hole through it."""
+    from perfstudio.geometry import consumed_holes
+    from perfstudio.model import MountingHole
+    from perfstudio.ui import view3d
+
+    document = _load_dense()
+    corner = MountingHole(
+        id="mh-1", at=HoleCoord(0, 0), offset_x_mm=-2.11, offset_y_mm=-2.11, diameter=2.2
+    )
+    document = dataclasses.replace(document, mounting_holes=(corner,))
+
+    assert consumed_holes(document) == frozenset(), "it eats no copper, so it eats no tile"
+    assert view3d.patched_holes(document) == frozenset()
+
+
+@requires_offscreen_gl
+def test_the_board_s_copper_is_never_blown_out(tmp_path) -> None:
+    """VTK's default specular POWER is 1.0, which is not a highlight: it adds the specular
+    term flat across the whole surface. A pad carrying 0.4 of it rendered a fifth brighter
+    than its own colour and clipped -- measured at (255, 255, 125) against the `#c8a951`
+    the 2D view paints from the same table. Clipping does not just shift the hue, it
+    flattens the shading off the metal, which is what made the 3D board a grid of flat
+    yellow rings.
+    """
+    from PySide6.QtGui import QImage
+
+    from perfstudio.ui import view3d
+
+    out = tmp_path / "board.png"
+    view3d.render_offscreen(_load_dense(), footprint_lookup(), str(out), width=700, height=500)
+    image = QImage(str(out))
+    assert not image.isNull()
+
+    blown = 0
+    for y in range(image.height()):
+        for x in range(image.width()):
+            colour = image.pixelColor(x, y)
+            if colour.red() >= 254 and colour.green() >= 254 and colour.blue() < 200:
+                blown += 1
+
+    assert blown == 0, f"{blown} pixels of copper clipped to flat yellow"

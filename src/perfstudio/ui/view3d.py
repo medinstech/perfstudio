@@ -255,21 +255,6 @@ def _reach(bore_x: float, bore_y: float, angle: float, rects: tuple[_Rect, ...])
     return reach
 
 
-def _snapped_rect(rect: _Rect, board: Board) -> _Rect:
-    """Grow a rectangle out to the nearest tile edges, so it takes WHOLE tiles.
-
-    Half a tile left behind is a sliver of substrate floating beside the bore.
-    """
-    pitch = board.pitch
-    x0, y0, x1, y1 = rect
-    return (
-        (math.floor(x0 / pitch + 0.5) - 0.5) * pitch,
-        (math.floor(y0 / pitch + 0.5) - 0.5) * pitch,
-        (math.ceil(x1 / pitch - 0.5) + 0.5) * pitch,
-        (math.ceil(y1 / pitch - 0.5) + 0.5) * pitch,
-    )
-
-
 def _mounting_bores(doc: PerfDocument) -> list[_Bore]:
     board = doc.board
     bores: list[_Bore] = []
@@ -286,11 +271,19 @@ def _mounting_bores(doc: PerfDocument) -> list[_Bore]:
             for row in range(board.rows)
             if _overlaps(_tile_rect(board, col, row), x, y, radius)
         ]
-        # A bore the tiles do not enclose -- one sitting out in the printed border -- gets
-        # a rectangle of its own, and the border strip has it taken out below.
-        angles = [2 * math.pi * index / TILE_SIDES for index in range(TILE_SIDES)]
-        if any(_reach(x, y, angle, tuple(covers)) < radius for angle in angles):
-            covers.append(_snapped_rect((x - radius, y - radius, x + radius, y + radius), board))
+        # Whatever of the bore lies OUTSIDE the tiled grid -- a corner hole in the printed
+        # border is entirely outside it -- is patched as a rectangle of its own, clipped so
+        # it cannot reach a tile the bore never touched. Growing it to whole tiles instead
+        # was the first attempt, and it swallowed the neighbouring hole: the pad was still
+        # drawn, over solid board, so the board came out with a blind hole beside every
+        # screw.
+        margin = radius * 0.2
+        covers.extend(
+            _rect_without(
+                (x - radius - margin, y - radius - margin, x + radius + margin, y + radius + margin),
+                _tile_grid_rect(board),
+            )
+        )
         bores.append(_Bore(x=x, y=y, radius=radius, covers=tuple(covers)))
     return bores
 
@@ -521,6 +514,18 @@ BORE_UNDER_PAD_MM = 0.015
 #: something came through the hole, not enough to look like a board nobody has cut the
 #: legs off yet.
 LEAD_TRIM_MM = 0.07
+
+
+#: How tight the highlight on the board's own copper is.
+#:
+#: VTK's DEFAULT IS 1.0, which is not a highlight at all: it adds the specular term flat
+#: across the whole surface, so a pad carrying 0.4 of it rendered a fifth brighter than its
+#: own colour and CLIPPED -- a pad measured (255, 255, 125) against the very same
+#: `#c8a951` the 2D view paints from the same table. Clipping does not merely shift the
+#: hue, it flattens the shading off the copper, which is why the 3D board came out a grid
+#: of flat yellow rings while the 2D one looked like metal. Measured, not chosen: at this
+#: power the pad renders within a few levels of the 2D view's.
+COPPER_SPECULAR_POWER = 30.0
 
 
 def pad_z(board: Board, side: BoardSide) -> float:
@@ -808,6 +813,7 @@ def build_pads(
     actor.SetMapper(glyph)
     actor.GetProperty().SetColor(*scheme_for(board.material).pad_rgb)
     actor.GetProperty().SetSpecular(0.4)
+    actor.GetProperty().SetSpecularPower(COPPER_SPECULAR_POWER)
     return actor
 
 
@@ -844,6 +850,7 @@ def build_strips(doc: PerfDocument) -> list[vtk.vtkActor]:
         actor.SetPosition((first_x + last_x) / 2, (first_y + last_y) / 2, z)
         actor.GetProperty().SetColor(*scheme_for(board.material).pad_rgb)
         actor.GetProperty().SetSpecular(0.4)
+        actor.GetProperty().SetSpecularPower(COPPER_SPECULAR_POWER)
         actors.append(actor)
     return actors
 
@@ -909,6 +916,7 @@ def build_edge_connectors(doc: PerfDocument) -> list[vtk.vtkActor]:
             actor.SetMapper(mapper)
             actor.GetProperty().SetColor(*scheme_for(board.material).pad_rgb)
             actor.GetProperty().SetSpecular(0.4)
+            actor.GetProperty().SetSpecularPower(COPPER_SPECULAR_POWER)
             actors.append(actor)
     return actors
 
@@ -2342,6 +2350,7 @@ def _pick_out(actor: vtk.vtkActor) -> vtk.vtkActor:
     )
     prop.SetAmbient(0.45)
     prop.SetSpecular(0.15)
+    prop.SetSpecularPower(COPPER_SPECULAR_POWER)
     return actor
 
 
