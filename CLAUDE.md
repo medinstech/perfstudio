@@ -379,6 +379,18 @@ they are easy to get wrong the same way again:
 renderers still draw the holes on the bare face — a face with neither holes nor pads is a
 blank slab.
 
+**In 3D the board is PUNCHED, not painted.** A face is one tile — a pitch square with its
+hole taken out (`view3d._tile_with_hole`) — glyphed at every hole, so both faces of a
+945-hole board cost one source and two actors where a boolean subtraction per hole would
+be nearly two thousand. Tiles are exactly a pitch across so neighbours share an edge; the
+strip left over is the printed border, as rectangles, and a mounting bore is cut out of
+whichever of the two it lands in. The tiles a bore takes are exactly the holes
+`consumed_holes` reports the copper gone from — one bore, one answer, for the renderer and
+for DRC — and its centre comes from `mounting_hole_centre_mm`, never from `mount.at`.
+Every lead is drawn through its hole and trimmed just past the far copper
+(`view3d._through_hole_pieces`), which is the only evidence the solder side has that
+anything came through it.
+
 ### The guide's order is physical, and its checks are derived
 
 `guide.py` has nine phases (`PHASE_TITLES`, 0–8) and the order is not editorial: parts go

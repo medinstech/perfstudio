@@ -20,6 +20,45 @@ closed without a bump.
 
 ## [Unreleased]
 
+### Changed
+
+- **The board in 3D has holes in it.** Which sounds like a statement of the obvious and
+  was not true: the substrate was one solid cube and every hole on it was faked by laying
+  a dark cylinder over the top. A dark disc on green reads as a mark printed on the board,
+  not as something you can push a lead through — and it was worst on a mounting bore,
+  which has no copper ring around it to explain the darkness, so a screw hole read as a
+  sticker. The plate is punched now: both faces, every hole, and the wall of the bore
+  visible inside it.
+  - **Affordably, which is why the fake existed.** A boolean subtraction per hole is
+    nearly two thousand of them on a 945-hole board, and that argument still holds. This
+    is neither: a face is ONE TILE — a pitch square with its hole taken out — glyphed at
+    every hole, so both faces of any board cost one source and two actors. The tiles are
+    exactly a pitch across, so neighbours share an edge and the surface is watertight;
+    what is left between the outermost tiles and the board's edge is the printed border,
+    drawn as rectangles, and a bore in it is cut out of them.
+  - **A mounting bore takes whole tiles and lays one patch over them**, and the tiles it
+    takes are exactly the holes `geometry.consumed_holes` reports the copper gone from —
+    one bore, one answer, in the renderer and in DRC. It was also being drawn at its hole
+    ADDRESS rather than at `mounting_hole_centre_mm`, so every corner hole appeared back
+    on the grid in the middle of four pads that are perfectly intact. CLAUDE.md has said
+    not to do that since the feature was written.
+  - An edge-connector finger keeps a solid tile: it is a contact with no bore, and
+    drilling through it is what made a finger look like a long pad.
+- **The parts look like the parts.** A resistor's body was a flat-ended tube; it has the
+  moulded shoulder at each end now, with the barrel shortened by what the domes add back
+  so the part still measures the length its footprint says it does. An electrolytic gained
+  the aluminium top and the vent scored into it — which is what you are looking at from
+  the angle this view opens at, and what a failing capacitor shows first. A DIP's pins are
+  flat blades rather than round wire, and it has the semicircular notch at the pin-1 end
+  as well as the dot, because the dot is what disappears under a label.
+- **No mesh library, and that is still the decision.** The only comprehensive set of
+  through-hole models is KiCad's, under CC-BY-SA-4.0: a share-alike licence in a
+  repository that is Apache-2.0, for assets that would then have to be shipped, versioned
+  and kept in step with the footprints. PLAN.md D6 declined it and the reason has not
+  changed — and there is a second one now, which is that `bodies.py` derives the 2D
+  footprint and the 3D solid from the same `BodySpec`, so a mesh would be a third
+  description of a part free to disagree with both.
+
 ### Fixed
 
 - **Every lead now goes down its hole and out the other side.** A part in the 3D view

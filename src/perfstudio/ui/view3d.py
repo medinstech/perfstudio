@@ -31,12 +31,12 @@ from perfstudio.geometry import (
     board_edge_margin_mm,
     board_size_mm,
     column_label,
-    consumed_holes,
     edge_connector_holes,
     edge_finger_rect,
     hole_key,
     holes_without_grid_pad,
     legend_strip_mm,
+    mounting_hole_centre_mm,
     pad_extent_mm,
     printed_row_label,
     transform_offset,
@@ -116,23 +116,384 @@ def _board_size_mm(board: Board) -> tuple[float, float]:
 # --------------------------------------------------------------------------- pieces
 
 
-def build_substrate(board: Board) -> vtk.vtkActor:
+#: A rectangle in board millimetres: x0, y0, x1, y1, with y increasing upwards as the
+#: renderer has it (a row further down the board is a smaller y).
+_Rect = tuple[float, float, float, float]
+
+
+def board_outline_rect(board: Board) -> _Rect:
+    """The substrate's own extent. Pure, so it can be asserted directly.
+
+    From ``board_size_mm``, never from the hole span: the two differ by the printed
+    border, and a board whose substrate is drawn to the hole span has no border to print
+    the row letters on.
+    """
     w, h = _board_size_mm(board)
-    cube = vtk.vtkCubeSource()
-    cube.SetXLength(w)
-    cube.SetYLength(h)
-    cube.SetZLength(board.thickness)
-    cube.SetCenter(
-        (board.cols - 1) * board.pitch / 2,
-        -(board.rows - 1) * board.pitch / 2,
-        -board.thickness / 2,
+    centre_x = (board.cols - 1) * board.pitch / 2
+    centre_y = -(board.rows - 1) * board.pitch / 2
+    return (centre_x - w / 2, centre_y - h / 2, centre_x + w / 2, centre_y + h / 2)
+
+
+def _tile_grid_rect(board: Board) -> _Rect:
+    """What the tiles cover: half a pitch beyond the outermost hole centres, all round."""
+    half = board.pitch / 2
+    return (
+        -half,
+        -(board.rows - 1) * board.pitch - half,
+        (board.cols - 1) * board.pitch + half,
+        half,
     )
-    mapper = vtk.vtkPolyDataMapper()
-    mapper.SetInputConnection(cube.GetOutputPort())
+
+
+def _border_rects(board: Board) -> list[_Rect]:
+    """The bare strip between the tiles and the board's edge, as up to four rectangles.
+
+    Empty on a flush-cut board, which is the usual case: most stock is cut on the grid and
+    ``border_x_mm``/``border_y_mm`` are zero.
+    """
+    x0, y0, x1, y1 = board_outline_rect(board)
+    gx0, gy0, gx1, gy1 = _tile_grid_rect(board)
+    # A tolerance, not a bare comparison: a flush-cut board's border is zero and the two
+    # rectangles are computed by different routes, so they differ in the last bit and the
+    # naive test produces four rectangles a thousandth of a micron wide.
+    slop = board.pitch * 1e-6
+    rects: list[_Rect] = []
+    if gy1 + slop < y1:
+        rects.append((x0, gy1, x1, y1))
+    if gy0 - slop > y0:
+        rects.append((x0, y0, x1, gy0))
+    if gx0 - slop > x0:
+        rects.append((x0, gy0, gx0, gy1))
+    if gx1 + slop < x1:
+        rects.append((gx1, gy0, x1, gy1))
+    return rects
+
+
+def _rect_without(rect: _Rect, hole: _Rect) -> list[_Rect]:
+    """What is left of one rectangle once another is taken out of it: up to four pieces."""
+    x0, y0, x1, y1 = rect
+    hx0, hy0, hx1, hy1 = hole
+    if hx1 <= x0 or hx0 >= x1 or hy1 <= y0 or hy0 >= y1:
+        return [rect]
+    pieces: list[_Rect] = []
+    if hy1 < y1:
+        pieces.append((x0, hy1, x1, y1))
+    if hy0 > y0:
+        pieces.append((x0, y0, x1, hy0))
+    band_y0, band_y1 = max(y0, hy0), min(y1, hy1)
+    if hx0 > x0:
+        pieces.append((x0, band_y0, hx0, band_y1))
+    if hx1 < x1:
+        pieces.append((hx1, band_y0, x1, band_y1))
+    return pieces
+
+
+def _rects_without(rects: list[_Rect], holes: list[_Rect]) -> list[_Rect]:
+    for hole in holes:
+        rects = [piece for rect in rects for piece in _rect_without(rect, hole)]
+    return rects
+
+
+@dataclass(frozen=True, slots=True)
+class _Bore:
+    """A hole wider than the grid's own, with the patch of plate it is punched in.
+
+    ``covers`` is the set of tile squares the bore reaches into. They are taken out of the
+    tiled surface and this one patch is laid over the lot -- the outer boundary of their
+    union, with the bore taken out of the middle. A bore that lands on a hole reaches into
+    that tile and its four orthogonal neighbours and no further, which is exactly the set
+    ``geometry.consumed_holes`` reports the copper gone from: one bore, one answer, in the
+    renderer and in DRC.
+    """
+
+    x: float
+    y: float
+    radius: float
+    covers: tuple[_Rect, ...]
+
+
+def _tile_rect(board: Board, col: int, row: int) -> _Rect:
+    half = board.pitch / 2
+    x, y = _xy(board, HoleCoord(col, row))
+    return (x - half, y - half, x + half, y + half)
+
+
+def _reach(bore_x: float, bore_y: float, angle: float, rects: tuple[_Rect, ...]) -> float:
+    """How far a ray from the bore's centre stays inside a union of rectangles.
+
+    Walked as intervals rather than "the furthest rectangle it hits", because a diagonal
+    ray out of a cross-shaped patch leaves through the middle tile's corner and must stop
+    there -- the arm it would reach next is not connected along that ray.
+    """
+    dx, dy = math.cos(angle), math.sin(angle)
+    spans: list[tuple[float, float]] = []
+    for x0, y0, x1, y1 in rects:
+        near, far = 0.0, math.inf
+        for origin, delta, low, high in ((bore_x, dx, x0, x1), (bore_y, dy, y0, y1)):
+            if abs(delta) < 1e-9:
+                if not low <= origin <= high:
+                    near, far = 1.0, -1.0
+                    break
+                continue
+            first, second = (low - origin) / delta, (high - origin) / delta
+            near = max(near, min(first, second))
+            far = min(far, max(first, second))
+        if far > max(near, 0.0):
+            spans.append((max(near, 0.0), far))
+    spans.sort()
+    reach = 0.0
+    for start, end in spans:
+        if start <= reach + 1e-9:
+            reach = max(reach, end)
+    return reach
+
+
+def _snapped_rect(rect: _Rect, board: Board) -> _Rect:
+    """Grow a rectangle out to the nearest tile edges, so it takes WHOLE tiles.
+
+    Half a tile left behind is a sliver of substrate floating beside the bore.
+    """
+    pitch = board.pitch
+    x0, y0, x1, y1 = rect
+    return (
+        (math.floor(x0 / pitch + 0.5) - 0.5) * pitch,
+        (math.floor(y0 / pitch + 0.5) - 0.5) * pitch,
+        (math.ceil(x1 / pitch - 0.5) + 0.5) * pitch,
+        (math.ceil(y1 / pitch - 0.5) + 0.5) * pitch,
+    )
+
+
+def _mounting_bores(doc: PerfDocument) -> list[_Bore]:
+    board = doc.board
+    bores: list[_Bore] = []
+    for mount in doc.mounting_holes:
+        # mounting_hole_centre_mm, NEVER hole_to_mm(mount.at): the offset is what puts a
+        # corner hole in the border, and this view was drawing every one of them back on
+        # the grid -- in the middle of four pads that are perfectly intact.
+        centre = mounting_hole_centre_mm(mount, board)
+        x, y = centre.x, -centre.y
+        radius = mount.diameter / 2
+        covers = [
+            _tile_rect(board, col, row)
+            for col in range(board.cols)
+            for row in range(board.rows)
+            if _overlaps(_tile_rect(board, col, row), x, y, radius)
+        ]
+        # A bore the tiles do not enclose -- one sitting out in the printed border -- gets
+        # a rectangle of its own, and the border strip has it taken out below.
+        angles = [2 * math.pi * index / TILE_SIDES for index in range(TILE_SIDES)]
+        if any(_reach(x, y, angle, tuple(covers)) < radius for angle in angles):
+            covers.append(_snapped_rect((x - radius, y - radius, x + radius, y + radius), board))
+        bores.append(_Bore(x=x, y=y, radius=radius, covers=tuple(covers)))
+    return bores
+
+
+def patched_holes(doc: PerfDocument) -> frozenset[str]:
+    """Grid positions a mounting bore's patch has taken over, as ``hole_key`` strings.
+
+    The plate has no hole at these -- the patch is solid board from its outer edge to the
+    bore -- so nothing may drill one either, or a tube stands in a place with nothing
+    around it. A superset of ``geometry.consumed_holes`` and usually the same set: a bore
+    that ate a pad necessarily reaches into that tile.
+    """
+    board = doc.board
+    rects = [rect for bore in _mounting_bores(doc) for rect in bore.covers]
+    return frozenset(
+        hole_key(HoleCoord(col, row))
+        for col in range(board.cols)
+        for row in range(board.rows)
+        for x, y in (_xy(board, HoleCoord(col, row)),)
+        if any(x0 <= x <= x1 and y0 <= y <= y1 for x0, y0, x1, y1 in rects)
+    )
+
+
+def _overlaps(rect: _Rect, x: float, y: float, radius: float) -> bool:
+    """Whether a circle reaches into a rectangle. The usual nearest-point test."""
+    x0, y0, x1, y1 = rect
+    near_x = min(max(x, x0), x1)
+    near_y = min(max(y, y0), y1)
+    return (near_x - x) ** 2 + (near_y - y) ** 2 < radius**2
+
+
+class _Mesh:
+    """Polygons accumulated by hand, for the parts of the plate there is only one of.
+
+    The tiled surface is glyphed and costs nothing per hole; the border, the bore patches
+    and the four edges are a handful of polygons each and go into one actor together.
+    """
+
+    def __init__(self) -> None:
+        self.points = vtk.vtkPoints()
+        self.polys = vtk.vtkCellArray()
+
+    def polygon(self, ring: list[tuple[float, float, float]]) -> None:
+        first = self.points.GetNumberOfPoints()
+        for x, y, z in ring:
+            self.points.InsertNextPoint(x, y, z)
+        self.polys.InsertNextCell(len(ring))
+        for index in range(len(ring)):
+            self.polys.InsertCellPoint(first + index)
+
+    def rectangle(self, rect: _Rect, z: float) -> None:
+        x0, y0, x1, y1 = rect
+        self.polygon([(x0, y0, z), (x1, y0, z), (x1, y1, z), (x0, y1, z)])
+
+    def data(self) -> vtk.vtkPolyData:
+        data = vtk.vtkPolyData()
+        data.SetPoints(self.points)
+        data.SetPolys(self.polys)
+        return data
+
+
+def _patch(mesh: _Mesh, bore: _Bore, z: float) -> None:
+    """The plate around one bore: the outline of the tiles it took, minus the bore."""
+    corners = [
+        (corner_x, corner_y)
+        for x0, y0, x1, y1 in bore.covers
+        for corner_x, corner_y in ((x0, y0), (x1, y0), (x1, y1), (x0, y1))
+    ]
+    # The corners of the patch are sample points, or its outline would be cut across and
+    # leave a gap against the tiles beside it.
+    angles = sorted(
+        {math.atan2(cy - bore.y, cx - bore.x) % (2 * math.pi) for cx, cy in corners}
+        | {2 * math.pi * index / TILE_SIDES for index in range(TILE_SIDES)}
+    )
+    outer: list[tuple[float, float]] = []
+    inner: list[tuple[float, float]] = []
+    for angle in angles:
+        reach = max(_reach(bore.x, bore.y, angle, bore.covers), bore.radius)
+        dx, dy = math.cos(angle), math.sin(angle)
+        outer.append((bore.x + reach * dx, bore.y + reach * dy))
+        inner.append((bore.x + bore.radius * dx, bore.y + bore.radius * dy))
+    for index in range(len(angles)):
+        following = (index + 1) % len(angles)
+        mesh.polygon(
+            [
+                (*outer[index], z),
+                (*outer[following], z),
+                (*inner[following], z),
+                (*inner[index], z),
+            ]
+        )
+
+
+#: Facets round a hole punched in the board itself, and round the bore's wall. A multiple
+#: of four, and the tile is sampled from a corner, so all four corners of a tile are
+#: vertices -- a contour that cut them off would leave a pinhole in the board at the
+#: corner of every tile.
+TILE_SIDES = 24
+
+#: How much wider the hole's wall is than the hole punched in the surface. The wall then
+#: sits just BEHIND the rim rather than exactly on it, so no sliver of background can show
+#: through the seam between the two.
+WALL_OVERSIZE_MM = 0.01
+
+
+def _tile_with_hole(board: Board) -> vtk.vtkPolyData:
+    """One pitch square of substrate with its hole taken out of the middle.
+
+    Tiles are exactly a pitch across, so neighbours share an edge exactly and the tiled
+    surface is watertight.
+    """
+    half = board.pitch / 2
+    radius = board.drill_diameter / 2
+    angles = [math.pi / 4 + 2 * math.pi * index / TILE_SIDES for index in range(TILE_SIDES)]
+    outer: list[tuple[float, float]] = []
+    inner: list[tuple[float, float]] = []
+    for angle in angles:
+        dx, dy = math.cos(angle), math.sin(angle)
+        reach = half / max(abs(dx), abs(dy))
+        outer.append((reach * dx, reach * dy))
+        inner.append((radius * math.cos(angle), radius * math.sin(angle)))
+    return _annulus(outer, inner)
+
+
+def _solid_tile(board: Board) -> vtk.vtkPolyData:
+    """The same square with nothing taken out, for a position that was never drilled: an
+    edge-connector finger is a solid contact on solid board."""
+    half = board.pitch / 2
+    mesh = _Mesh()
+    mesh.rectangle((-half, -half, half, half), 0.0)
+    return mesh.data()
+
+
+def _glyphed(points: vtk.vtkPoints, source: vtk.vtkPolyData) -> vtk.vtkActor:
+    data = vtk.vtkPolyData()
+    data.SetPoints(points)
+    glyph = vtk.vtkGlyph3DMapper()
+    glyph.SetInputData(data)
+    glyph.SetSourceData(source)
+    glyph.SetOrient(False)
+    glyph.SetScaling(False)
     actor = vtk.vtkActor()
-    actor.SetMapper(mapper)
-    actor.GetProperty().SetColor(*scheme_for(board.material).rgb)
+    actor.SetMapper(glyph)
     return actor
+
+
+def build_substrate(doc: PerfDocument) -> list[vtk.vtkActor]:
+    """The board itself, WITH ITS HOLES IN IT.
+
+    It used to be one solid cube, and every hole on it was faked by laying a dark cylinder
+    over the top. A dark disc on green reads as a mark printed on the board rather than as
+    something you can push a lead through -- and on a mounting bore, which has no pad ring
+    around it to explain the darkness, it read as a sticker. The fake was chosen because a
+    boolean subtraction per hole is thousands of them on a real board, which remains true.
+    This is neither: the face is ONE TILE, a pitch square with its hole taken out, glyphed
+    at every hole. Both faces come out of the same glyph, so a 945-hole board costs one
+    source and two actors rather than 1890 subtractions.
+
+    Three actors: the drilled tiles, the few undrilled ones, and one mesh holding the
+    printed border, the patch around each mounting bore and the four edges.
+    """
+    board = doc.board
+    top, bottom = 0.0, -board.thickness
+    bores = _mounting_bores(doc)
+    patched = [rect for bore in bores for rect in bore.covers]
+    undrilled = undrilled_holes(doc)
+
+    drilled_at = vtk.vtkPoints()
+    solid_at = vtk.vtkPoints()
+    for col in range(board.cols):
+        for row in range(board.rows):
+            x, y = _xy(board, HoleCoord(col, row))
+            if any(x0 <= x <= x1 and y0 <= y <= y1 for x0, y0, x1, y1 in patched):
+                continue  # A bore took this tile; its patch covers the ground instead.
+            target = solid_at if hole_key(HoleCoord(col, row)) in undrilled else drilled_at
+            for z in (top, bottom):
+                target.InsertNextPoint(x, y, z)
+
+    mesh = _Mesh()
+    for z in (top, bottom):
+        for rect in _rects_without(_border_rects(board), patched):
+            mesh.rectangle(rect, z)
+        for bore in bores:
+            _patch(mesh, bore, z)
+    x0, y0, x1, y1 = board_outline_rect(board)
+    for (ax, ay), (bx, by) in (
+        ((x0, y0), (x1, y0)),
+        ((x1, y0), (x1, y1)),
+        ((x1, y1), (x0, y1)),
+        ((x0, y1), (x0, y0)),
+    ):
+        mesh.polygon([(ax, ay, top), (bx, by, top), (bx, by, bottom), (ax, ay, bottom)])
+
+    rgb = scheme_for(board.material).rgb
+    actors: list[vtk.vtkActor] = []
+    for points, source in (
+        (drilled_at, _tile_with_hole(board)),
+        (solid_at, _solid_tile(board)),
+    ):
+        if points.GetNumberOfPoints() == 0:
+            continue
+        actors.append(_glyphed(points, source))
+    edges = vtk.vtkActor()
+    edge_mapper = vtk.vtkPolyDataMapper()
+    edge_mapper.SetInputData(mesh.data())
+    edges.SetMapper(edge_mapper)
+    actors.append(edges)
+    for actor in actors:
+        actor.GetProperty().SetColor(*rgb)
+    return actors
 
 
 #: How far each face's copper stands off the substrate: enough that a flat pad never
@@ -321,79 +682,89 @@ def _pad_annulus(board: Board) -> vtk.vtkPolyData:
     outer = _stadium_contour(extent_x, extent_y, PAD_SEGMENTS)
     n = len(outer)
     drill_r = board.drill_diameter / 2
+    inner = [
+        (drill_r * math.cos(2 * math.pi * i / n), drill_r * math.sin(2 * math.pi * i / n))
+        for i in range(n)
+    ]
+    return _annulus(outer, inner)
 
+
+def _annulus(
+    outer: list[tuple[float, float]], inner: list[tuple[float, float]]
+) -> vtk.vtkPolyData:
+    """A flat ring between two closed contours, paired point by point.
+
+    Every punched surface here is one of these -- a pad, a tile of substrate, the patch of
+    board around a mounting bore -- so the winding and the pairing are decided once rather
+    than three times. The two contours need the same number of points and nothing else:
+    the pad's outer contour is a stadium walked by arc and its inner one a circle walked by
+    angle, and the quads between them are none the worse for it.
+    """
+    n = len(outer)
     points = vtk.vtkPoints()
-    for x, y in outer:
+    for x, y in (*outer, *inner):
         points.InsertNextPoint(x, y, 0.0)
-    for i in range(n):
-        angle = 2 * math.pi * i / n
-        points.InsertNextPoint(drill_r * math.cos(angle), drill_r * math.sin(angle), 0.0)
-
     polys = vtk.vtkCellArray()
     for i in range(n):
         j = (i + 1) % n
         polys.InsertNextCell(4)
         for index in (i, j, n + j, n + i):
             polys.InsertCellPoint(index)
-
     data = vtk.vtkPolyData()
     data.SetPoints(points)
     data.SetPolys(polys)
     return data
 
 
-def build_drills(board: Board, consumed: frozenset[str] = frozenset()) -> vtk.vtkActor:
-    """The holes, as dark cylinders straight through the board.
+def _hole_wall(board: Board, radius: float) -> vtk.vtkPolyData:
+    """The inside of one hole: a tube through the board, open at both ends.
 
-    THE BOARD HAD NO HOLES FROM UNDERNEATH. The substrate is one cube and the pads sat
-    only on top, so turning the board over showed a blank green slab -- on the very view
-    whose job is to check the solder side.
-
-    Cut rather than drawn would be the obvious fix and is not affordable: a boolean
-    subtraction per hole is thousands of them on a real board. A near-black cylinder
-    spanning the full thickness and a little beyond reads as a hole from either face, at
-    the cost of one glyphed source -- so the instancing claim survives intact. Nobody
-    looking at a perfboard from 200 mm away can tell the difference, and the alternative
-    is a board with no holes in it.
+    OPEN is the point. A capped cylinder is a plug -- it was the plug this view used to
+    fake every hole with, and you cannot see through a plug. With the surface punched
+    (see :func:`build_substrate`) this is the wall the drill left, and a hole shows what
+    is behind the board, which is what a hole does.
     """
-    top, bottom = bore_span_z(board)
+    wall = vtk.vtkCylinderSource()
+    wall.SetRadius(radius + WALL_OVERSIZE_MM)
+    wall.SetHeight(board.thickness)
+    wall.SetResolution(BORE_SIDES)
+    wall.CappingOff()
+    wall.Update()
+    upright = vtk.vtkTransform()
+    upright.RotateX(90)  # vtkCylinderSource stands along Y; thickness is along Z.
+    turn = vtk.vtkTransformPolyDataFilter()
+    turn.SetTransform(upright)
+    turn.SetInputData(wall.GetOutput())
+    turn.Update()
+    return turn.GetOutput()
+
+
+def build_drills(board: Board, consumed: frozenset[str] = frozenset()) -> vtk.vtkActor:
+    """Every hole's wall, in one instanced actor.
+
+    THE BOARD HAD NO HOLES FROM UNDERNEATH before any of this: the substrate was one cube
+    and the pads sat only on top, so turning the board over showed a blank green slab, on
+    the very view whose job is to check the solder side. The first answer was a dark
+    cylinder laid over the surface, which is what this replaces.
+    """
     points = vtk.vtkPoints()
     for col in range(board.cols):
         for row in range(board.rows):
-            # A mounting bore is a bigger hole in the same place, drawn by
-            # `build_mounting_holes`. Leaving this one in as well puts a 1 mm cylinder
-            # inside a 3.2 mm one, which z-fights along its whole length.
+            # A mounting bore is a bigger hole in the same place, walled by
+            # `build_mounting_holes`. Leaving this one in as well puts a 1 mm tube inside
+            # a 3.2 mm one, which z-fights along its whole length.
             if consumed and hole_key(HoleCoord(col, row)) in consumed:
                 continue
             x, y = _xy(board, HoleCoord(col, row))
-            points.InsertNextPoint(x, y, (top + bottom) / 2)
-    data = vtk.vtkPolyData()
-    data.SetPoints(points)
+            points.InsertNextPoint(x, y, -board.thickness / 2)
 
-    bore = vtk.vtkCylinderSource()
-    bore.SetRadius(board.drill_diameter / 2)
-    # Stopping just under the copper at each face rather than just over it -- see
-    # BORE_UNDER_PAD_MM, which is the whole difference between a hole and a black button.
-    bore.SetHeight(top - bottom)
-    bore.SetResolution(BORE_SIDES)
-    # vtkCylinderSource stands along Y; the board's thickness is along Z.
-    upright = vtk.vtkTransform()
-    upright.RotateX(90)
-    turn = vtk.vtkTransformPolyDataFilter()
-    turn.SetTransform(upright)
-    turn.SetInputConnection(bore.GetOutputPort())
-
-    glyph = vtk.vtkGlyph3DMapper()
-    glyph.SetInputData(data)
-    glyph.SetSourceConnection(turn.GetOutputPort())
-    glyph.SetOrient(False)
-    glyph.SetScaling(False)
-
-    actor = vtk.vtkActor()
-    actor.SetMapper(glyph)
-    actor.GetProperty().SetColor(*DRILL_RGB)
-    actor.GetProperty().SetSpecular(0.0)
-    actor.GetProperty().SetAmbient(0.25)
+    actor = _glyphed(points, _hole_wall(board, board.drill_diameter / 2))
+    prop = actor.GetProperty()
+    # The cut edge of the laminate, in shadow: darker than the face, and the same hue --
+    # a hole in a brown phenolic board is not the same colour as one in green FR-4.
+    prop.SetColor(*(channel * 0.55 for channel in scheme_for(board.material).rgb))
+    prop.SetSpecular(0.0)
+    prop.SetAmbient(0.15)
     return actor
 
 
@@ -471,38 +842,26 @@ def build_strips(doc: PerfDocument) -> list[vtk.vtkActor]:
 
 
 def build_mounting_holes(doc: PerfDocument) -> list[vtk.vtkActor]:
-    """The screw bores, straight through the board.
+    """The screw bores' walls. The plate around them is punched by :func:`build_substrate`.
 
-    Same trick as :func:`build_drills` -- a dark cylinder rather than a boolean
-    subtraction from the substrate -- and for the same reason, except that here there are
-    four of them rather than thousands, so the cost was never the argument. Consistency
-    is: a mounting hole that was cut properly would look different from every other hole
-    on the board, which would read as the two being different kinds of thing.
+    A mounting hole is where the old fake was worst. Every other hole had a copper ring
+    round it, which explained the darkness in the middle; a bore has its copper taken away,
+    so a dark disc lying on bare green read as a sticker on the board rather than a hole
+    through it. It is punched now, like every other hole and by the same machinery, which
+    is also what stops the two reading as different kinds of thing.
     """
     board = doc.board
     if not doc.mounting_holes:
         return []
-    top, bottom = bore_span_z(board)
     actors: list[vtk.vtkActor] = []
-    for mount in doc.mounting_holes:
-        bore = vtk.vtkCylinderSource()
-        bore.SetRadius(mount.diameter / 2)
-        # The same span as every other hole, for the reason in this function's docstring:
-        # a mounting hole drawn to a different depth from the grid it sits in reads as a
-        # different kind of thing.
-        bore.SetHeight(top - bottom)
-        bore.SetResolution(28)
-        x, y = _xy(board, mount.at)
-        actor = vtk.vtkActor()
-        mapper = vtk.vtkPolyDataMapper()
-        mapper.SetInputConnection(bore.GetOutputPort())
-        actor.SetMapper(mapper)
-        # vtkCylinderSource stands along Y; the board's thickness is along Z.
-        actor.SetOrientation(90.0, 0.0, 0.0)
-        actor.SetPosition(x, y, (top + bottom) / 2)
-        actor.GetProperty().SetColor(*DRILL_RGB)
-        actor.GetProperty().SetSpecular(0.0)
-        actor.GetProperty().SetAmbient(0.25)
+    for bore in _mounting_bores(doc):
+        points = vtk.vtkPoints()
+        points.InsertNextPoint(bore.x, bore.y, -board.thickness / 2)
+        actor = _glyphed(points, _hole_wall(board, bore.radius))
+        prop = actor.GetProperty()
+        prop.SetColor(*(channel * 0.55 for channel in scheme_for(board.material).rgb))
+        prop.SetSpecular(0.0)
+        prop.SetAmbient(0.15)
         actors.append(actor)
     return actors
 
@@ -848,7 +1207,12 @@ def _world_body(lookup: FootprintLookup, comp: Any, board: Board) -> _WorldBody 
     )
 
 
-def _through_hole_pieces(body: _WorldBody, top_z: float, radius: float = 0.28) -> list[_Piece]:
+def _through_hole_pieces(
+    body: _WorldBody,
+    top_z: float,
+    radius: float = 0.28,
+    blade: tuple[float, float] | None = None,
+) -> list[_Piece]:
     """The part of every lead that goes down its hole, in ONE instanced actor.
 
     THE LEADS USED TO STOP IN MID-AIR. A resistor's wire ran horizontally to the pin
@@ -866,9 +1230,14 @@ def _through_hole_pieces(body: _WorldBody, top_z: float, radius: float = 0.28) -
     height = top_z - bottom
     if height <= 0 or not body.pins:
         return []
+    # ``blade`` is a flat pin rather than a round lead: a DIP and a header are stamped from
+    # sheet, and a round pin on a DIP is the detail that makes a rendered package look like
+    # a toy. A box needs no turning, so the instanced path takes it as it is.
     return [
         _Piece(
-            source=_upright_cylinder(radius, height),
+            source=_box(blade[0], blade[1], height)
+            if blade is not None
+            else _upright_cylinder(radius, height),
             rgb=LEAD_RGB,
             position=(0.0, 0.0, 0.0),
             specular=0.6,
@@ -937,9 +1306,14 @@ def _axial_pieces(body: _WorldBody) -> list[_Piece]:
     z = radius + _LIFT
     orientation = _ALONG_X if body.axis == "x" else _ALONG_Y
     surface = body.surface
+    # A resistor's body is not a tin can: it is moulded with a shoulder at each end, and a
+    # flat-ended cylinder is the single thing that made these read as machined blanks. The
+    # barrel is shortened by what the two domes add back, so the part still measures the
+    # length its footprint says it does.
+    dome = min(radius * 0.55, body.along * 0.16)
     pieces = [
         _Piece(
-            source=_cylinder(radius, body.along),
+            source=_cylinder(radius, body.along - 2 * dome),
             rgb=_rgb(body.style.fill),
             position=(body.x, body.y, z),
             orientation=orientation,
@@ -947,6 +1321,22 @@ def _axial_pieces(body: _WorldBody) -> list[_Piece]:
             specular_power=surface.specular_power,
         )
     ]
+    for end in (-1.0, 1.0):
+        along = 1.0 if body.axis == "x" else 0.0
+        pieces.append(
+            _Piece(
+                source=_sphere(radius),
+                rgb=_rgb(body.style.fill),
+                position=_offset_along(body, end * (body.along / 2 - dome), z),
+                # Squashed along the part's own axis, so the end is a shoulder rather than
+                # a ball stuck on the end of a tube.
+                scale=(
+                    (dome / radius, 1.0, 1.0) if along else (1.0, dome / radius, 1.0)
+                ),
+                specular=surface.specular,
+                specular_power=surface.specular_power,
+            )
+        )
 
     # The printed colour code, as rings standing a hair proud of the body. Same layout as
     # the 2D view draws (bodies.resistor_bands is the shared source): three bands in the
@@ -996,8 +1386,33 @@ def _can_pieces(body: _WorldBody) -> list[_Piece]:
             position=(body.x, body.y, body.height / 2 + _LIFT),
             orientation=_ALONG_Z,
             specular=0.35,
-        )
+        ),
+        # The aluminium top, and the vent scored into it. Both are what you are looking at
+        # from directly above -- the angle this view opens at -- where the can was
+        # otherwise a plain coloured disc, and they are also what a bulging capacitor shows
+        # first, which is the reason to know what one looks like.
+        _Piece(
+            source=_cylinder(radius * 0.92, 0.25, resolution=28),
+            rgb=_rgb(body.style.accent),
+            position=(body.x, body.y, body.height + _LIFT - 0.12),
+            orientation=_ALONG_Z,
+            specular=0.5,
+            specular_power=30.0,
+        ),
     ]
+    for across in (False, True):
+        pieces.append(
+            _Piece(
+                source=(
+                    _box(radius * 1.3, radius * 0.16, 0.16)
+                    if across
+                    else _box(radius * 0.16, radius * 1.3, 0.16)
+                ),
+                rgb=_rgb(body.style.fill),
+                position=(body.x, body.y, body.height + _LIFT - 0.02),
+                specular=0.2,
+            )
+        )
     if body.polarity is not None:
         # The stripe marks the end AWAY from pin 1: pin 1 is the positive lead, so the printed
         # band belongs on the negative side.
@@ -1070,10 +1485,30 @@ def _dip_pieces(body: _WorldBody) -> list[_Piece]:
                 specular=0.1,
             )
         )
+        # AND the notch at the pin-1 end, which is the marking people actually use: the
+        # dot goes under a label often enough that a chip is oriented by the semicircle
+        # moulded into the end of the package. Cut into the end rather than printed on it,
+        # so it reads from the side as well as from above.
+        notch_r = min(body.across * 0.22, body.along * 0.12)
+        pieces.append(
+            _Piece(
+                source=_cylinder(notch_r, body.height * 0.9, resolution=18),
+                rgb=_rgb(body.style.fill),
+                position=_offset_along(
+                    body,
+                    _towards(body, body.polarity) * body.along / 2,
+                    body.height / 2 + _LIFT,
+                ),
+                orientation=_ALONG_Z,
+                specular=0.02,
+            )
+        )
     # From half way up the package, because a DIP's rows are wider than its body: the pins
     # run down the OUTSIDE of the two long sides, which is what they do on the real part
-    # and what tells you at a glance which way the package is turned.
-    return pieces + _through_hole_pieces(body, body.height / 2 + _LIFT)
+    # and what tells you at a glance which way the package is turned. Flat, because a DIP's
+    # pins are stamped from sheet and a round one reads as a model of a chip.
+    blade = (0.5, 0.26) if body.axis == "x" else (0.26, 0.5)
+    return pieces + _through_hole_pieces(body, body.height / 2 + _LIFT, blade=blade)
 
 
 def _to92_pieces(body: _WorldBody) -> list[_Piece]:
@@ -1186,8 +1621,9 @@ def _header_pieces(body: _WorldBody) -> list[_Piece]:
             ),
         ),
         # The same pin continues below the moulding and through the board, which is what
-        # is soldered -- the part standing above it is only the half you can see.
-        *_through_hole_pieces(body, _LIFT + 0.15),
+        # is soldered -- the part standing above it is only the half you can see. Square,
+        # because that is what the pin above the moulding already is.
+        *_through_hole_pieces(body, _LIFT + 0.15, blade=(0.64, 0.64)),
     ]
 
 
@@ -1753,7 +2189,8 @@ def populate_renderer(
     # makes this safe to call repeatedly without re-adding a light every time.
     ren.RemoveAllViewProps()
 
-    ren.AddActor(build_substrate(board))
+    for actor in build_substrate(doc):
+        ren.AddActor(actor)
     # The board's own copper goes down before the pads, so a stripboard reads as strips
     # with holes in them rather than as a grid of islands that happen to line up.
     for actor in build_strips(doc):
@@ -1765,8 +2202,9 @@ def populate_renderer(
         if board.single_sided and face == "top":
             continue
         ren.AddActor(build_pads(board, face, holes_without_grid_pad(doc, face) | cut_holes(doc)))
-    # A finger has no bore, so it gets no drill cylinder either.
-    ren.AddActor(build_drills(board, consumed_holes(doc) | undrilled_holes(doc)))
+    # A finger has no bore, so it gets no wall either -- and neither does a position a
+    # mounting bore's patch has taken over, where the plate is solid.
+    ren.AddActor(build_drills(board, patched_holes(doc) | undrilled_holes(doc)))
     for actor in build_legend(doc):
         ren.AddActor(actor)
     for actor in build_edge_connectors(doc):

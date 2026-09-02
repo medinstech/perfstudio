@@ -5955,7 +5955,10 @@ def test_every_archetype_puts_a_lead_through_every_one_of_its_holes() -> None:
         lead = leads[0]
         assert len(lead.instances) == len(body.pins), f"{archetype}: a lead per pin"
         # The source is built upright and glyphed at each pin, so its own bounds give the
-        # length and the instance z gives where the middle of it sits.
+        # length and the instance z gives where the middle of it sits. Updated first: a
+        # source that has never been asked for its output reports VTK's "no bounds yet"
+        # sentinel, which reads as a lead an inch below the board.
+        lead.source.Update()
         low, high = lead.source.GetOutput().GetBounds()[4:6]
         centre_z = lead.instances[0][2]
         assert centre_z + high > view3d.pad_z(board, "top"), f"{archetype}: starts above the board"
@@ -5976,6 +5979,114 @@ def test_a_lead_is_thin_enough_to_fit_the_hole_it_goes_down() -> None:
     assert body is not None
 
     lead = next(p for p in view3d._axial_pieces(body) if p.instances)
+    lead.source.Update()
     bounds = lead.source.GetOutput().GetBounds()
 
     assert bounds[1] - bounds[0] < board.drill_diameter, "the lead fits the drilled hole"
+
+
+# ---------------------------------------------------------------------------
+# The board has holes in it
+# ---------------------------------------------------------------------------
+#
+# The substrate was one solid cube and every hole was a dark cylinder laid over it. A
+# photograph of the view showed what that is: a mark printed on the board, not something
+# you can push a lead through. The plate is punched now, and these are the properties
+# that make the punching correct rather than merely present.
+
+
+def test_the_plate_is_punched_at_every_drilled_hole() -> None:
+    """One tile per hole, and the tile has the drill taken out of the middle of it."""
+    from perfstudio.ui import view3d
+
+    board = _load_dense().board
+    tile = view3d._tile_with_hole(board)
+
+    points = [tile.GetPoint(index) for index in range(tile.GetNumberOfPoints())]
+    reaches = sorted(round((x**2 + y**2) ** 0.5, 6) for x, y, _z in points)
+    assert reaches[0] == pytest.approx(board.drill_diameter / 2), "the hole is the drill"
+    assert reaches[-1] == pytest.approx(board.pitch / 2 * 2**0.5), "and the tile is a pitch square"
+
+
+def test_a_tile_covers_exactly_one_pitch_so_the_surface_is_watertight() -> None:
+    """Tiles are laid one per hole. A tile smaller than the pitch leaves a slot between
+    every pair of holes; a larger one overlaps its neighbour and z-fights it."""
+    from perfstudio.ui import view3d
+
+    board = _load_dense().board
+    bounds = view3d._tile_with_hole(board).GetBounds()
+
+    assert bounds[1] - bounds[0] == pytest.approx(board.pitch)
+    assert bounds[3] - bounds[2] == pytest.approx(board.pitch)
+
+
+def test_a_flush_cut_board_has_no_border_and_a_bordered_one_does() -> None:
+    from perfstudio.geometry import STANDARD_PRESETS, board_from_preset
+    from perfstudio.ui import view3d
+
+    flush = _load_dense().board
+    assert flush.border_x_mm == 0 and flush.border_y_mm == 0
+    assert view3d._border_rects(flush) == [], "no strip to draw, and no sliver either"
+
+    preset = next(p for p in STANDARD_PRESETS if not p.single_sided and p.cols >= 20)
+    bordered = board_from_preset(preset, flush)
+    if bordered.border_x_mm or bordered.border_y_mm:
+        rects = view3d._border_rects(bordered)
+        assert rects, "the printed border is part of the board and has to be drawn"
+        x0, y0, x1, y1 = view3d.board_outline_rect(bordered)
+        for rx0, ry0, rx1, ry1 in rects:
+            assert x0 - 1e-9 <= rx0 < rx1 <= x1 + 1e-9
+            assert y0 - 1e-9 <= ry0 < ry1 <= y1 + 1e-9
+
+
+def test_a_mounting_bore_is_drawn_where_its_offset_puts_it() -> None:
+    """The offset is what lets a corner hole sit in the border, and this view was reading
+    the hole address alone -- so every corner bore was drawn back on the grid, in the
+    middle of four pads that are perfectly intact."""
+    from perfstudio.geometry import mounting_hole_centre_mm
+    from perfstudio.model import MountingHole
+    from perfstudio.ui import view3d
+
+    document = _load_dense()
+    mount = MountingHole(
+        id="mh-1", at=HoleCoord(0, 0), offset_x_mm=-2.1, offset_y_mm=-2.1, diameter=3.2
+    )
+    document = dataclasses.replace(document, mounting_holes=(mount,))
+
+    bore = view3d._mounting_bores(document)[0]
+
+    centre = mounting_hole_centre_mm(mount, document.board)
+    assert (bore.x, bore.y) == pytest.approx((centre.x, -centre.y))
+    assert bore.radius == pytest.approx(mount.diameter / 2)
+
+
+def test_a_bore_takes_exactly_the_tiles_whose_copper_it_ate() -> None:
+    """One bore, one answer. The patch of plate laid over the hole covers the tiles the
+    bore reaches into, and those are the holes ``consumed_holes`` reports the copper gone
+    from -- so the renderer and DRC cannot disagree about which pads a screw destroyed."""
+    from perfstudio.geometry import consumed_holes
+    from perfstudio.model import MountingHole
+    from perfstudio.ui import view3d
+
+    document = _load_dense()
+    document = dataclasses.replace(
+        document, mounting_holes=(MountingHole(id="mh-1", at=HoleCoord(4, 4), diameter=3.2),)
+    )
+
+    assert view3d.patched_holes(document) == consumed_holes(document)
+
+
+def test_taking_a_rectangle_out_of_another_leaves_the_rest_of_it() -> None:
+    """The printed border is drawn as rectangles and a bore in it has to be cut out of
+    them. Pure arithmetic, and the one part of the plate that is not glyphed."""
+    from perfstudio.ui import view3d
+
+    whole = (0.0, 0.0, 10.0, 10.0)
+    assert view3d._rect_without(whole, (20.0, 20.0, 30.0, 30.0)) == [whole], "no overlap"
+    assert view3d._rect_without(whole, (-1.0, -1.0, 11.0, 11.0)) == [], "swallowed whole"
+
+    pieces = view3d._rect_without(whole, (4.0, 4.0, 6.0, 6.0))
+
+    assert len(pieces) == 4, "a hole in the middle leaves a frame of four"
+    area = sum((x1 - x0) * (y1 - y0) for x0, y0, x1, y1 in pieces)
+    assert area == pytest.approx(100.0 - 4.0)
