@@ -68,6 +68,29 @@ closed without a bump.
   - An **electrolytic** gained the crimped rim and the vent scored into its top. It had
     been given a WHITE top — and two of them on a board then read as screw heads, which is
     exactly what the first person to see it called them.
+- **The 2D and the 3D board draw the same board.** Three things had them disagreeing, and
+  all three were the 2D view or the renderer being wrong rather than a difference of
+  opinion:
+  - **A corner mounting hole was drawn on the grid in 2D.** `MountingHoleItem` read the
+    hole ADDRESS and ignored the offset — the very thing CLAUDE.md says to go through
+    `mounting_hole_centre_mm` for — so a bore that sits in the printed border was drawn a
+    whole pad's width away from where 3D and DRC both put it. `view2d.mm_to_screen` is the
+    mapping it needed: the same reflection `hole_to_screen` applies, for the things that
+    are not on the grid.
+  - **A bore in the border blinded the hole beside it.** The patch of plate laid over a
+    mounting bore takes whole tiles, and it was grown OUT to tile edges — so a corner bore
+    that touches no tile at all swallowed its neighbour, leaving a pad drawn over solid
+    board with no hole through it. The patch now takes the tiles the bore actually reaches
+    and, for whatever of it lies outside the tiled grid, a rectangle clipped so it cannot
+    reach a tile the bore never touched.
+  - **The copper was clipping.** VTK's default specular POWER is 1.0, which is not a
+    highlight — it adds the specular term flat across the whole surface. A pad carrying
+    0.4 of it rendered a fifth brighter than its own colour and blew out: measured at
+    (255, 255, 125) against the `#c8a951` the 2D view paints from the same table, which
+    also flattened the shading off the metal and made the board a grid of flat yellow
+    rings. `COPPER_SPECULAR_POWER` is on the pads, the strips and the fingers now, and
+    `test_the_board_s_copper_is_never_blown_out` renders a board and counts the clipped
+    pixels.
 - **A part is now the height its footprint says it is, and that is measured.** VTK applies
   an actor's scale BEFORE its orientation, and the turn that stands a cylinder up maps the
   source's own z onto world y — so a scale written to flatten the width of an upright can
