@@ -97,6 +97,13 @@ def _hex_rgb(value: str | None, fallback: tuple[float, float, float]) -> tuple[f
     return (int(value[1:3], 16) / 255, int(value[3:5], 16) / 255, int(value[5:7], 16) / 255)
 
 
+def _lit(value: str, factor: float) -> tuple[float, float, float]:
+    """One colour a shade lighter or darker, clamped. For a detail that belongs to the
+    part it sits on -- a capacitor's crimped rim, the groove scored into its top -- where
+    a second colour from the table would read as a second material."""
+    return tuple(min(1.0, channel * factor) for channel in _rgb(value))  # type: ignore[return-value]
+
+
 def _rgb(value: str) -> tuple[float, float, float]:
     """A colour from ui/bodies.py, which is where 2D and 3D agree on what a part looks like."""
     return _hex_rgb(value, BODY_RGB)
@@ -1063,6 +1070,18 @@ _ALONG_X = (0.0, 0.0, 90.0)
 _ALONG_Y = (0.0, 0.0, 0.0)
 _ALONG_Z = (90.0, 0.0, 0.0)
 
+
+def _upright_scale(scale: tuple[float, float, float]) -> tuple[float, float, float]:
+    """A world scale rewritten for a cylinder stood upright by ``_ALONG_Z``.
+
+    VTK scales BEFORE it orients, and that turn maps the source's own z onto world y -- so
+    a scale written to flatten the world y of an upright can flattens its LENGTH instead.
+    The crystal came out a quarter too short with its domed cap floating in the air above
+    it, which is what measuring the actors' bounds says and what squinting at the render
+    did not.
+    """
+    return (scale[0], 1.0, scale[1])
+
 #: Component bodies sit this far above the board so they never z-fight with the pads.
 _LIFT = 0.12
 
@@ -1108,6 +1127,33 @@ def _upright_cylinder(radius: float, height: float, resolution: int = 12) -> Any
     turn.SetInputData(cylinder.GetOutput())
     turn.Update()
     return turn
+
+
+def _d_prism(radius: float, flat: float, height: float, resolution: int = 22) -> vtk.vtkPolyData:
+    """A cylinder with ONE side flattened, standing along Z: the shape of a TO-92.
+
+    The flat is not decoration -- it is the only thing on the package that says which way
+    round the three legs go, and squashing a cylinder to fake it gives an ellipse, which
+    has two flats and marks nothing. Built as a profile rather than as a source because
+    VTK has no source for it.
+    """
+    limit = math.asin(min(max(flat / radius, -1.0), 1.0))
+    span = math.pi + 2 * limit
+    profile = [
+        (
+            radius * math.cos(math.pi - limit + span * index / (resolution - 1)),
+            radius * math.sin(math.pi - limit + span * index / (resolution - 1)),
+        )
+        for index in range(resolution)
+    ]
+    mesh = _Mesh()
+    top, bottom = height / 2, -height / 2
+    mesh.polygon([(x, y, top) for x, y in profile])
+    mesh.polygon([(x, y, bottom) for x, y in reversed(profile)])
+    for index in range(len(profile)):
+        (ax, ay), (bx, by) = profile[index], profile[(index + 1) % len(profile)]
+        mesh.polygon([(ax, ay, bottom), (bx, by, bottom), (bx, by, top), (ax, ay, top)])
+    return mesh.data()
 
 
 def _sphere(radius: float, resolution: int = 20) -> Any:
@@ -1387,30 +1433,40 @@ def _can_pieces(body: _WorldBody) -> list[_Piece]:
             orientation=_ALONG_Z,
             specular=0.35,
         ),
-        # The aluminium top, and the vent scored into it. Both are what you are looking at
-        # from directly above -- the angle this view opens at -- where the can was
-        # otherwise a plain coloured disc, and they are also what a bulging capacitor shows
-        # first, which is the reason to know what one looks like.
+        # The crimped rim at the top, where the sleeve is folded over the can. A thin
+        # bright ring and nothing more: this was a WHITE DISC across the whole top, and
+        # the two capacitors on a board then read as screw heads -- the first person to
+        # see it called them mounting holes.
         _Piece(
-            source=_cylinder(radius * 0.92, 0.25, resolution=28),
-            rgb=_rgb(body.style.accent),
-            position=(body.x, body.y, body.height + _LIFT - 0.12),
+            source=_cylinder(radius, 0.22, resolution=28),
+            rgb=_lit(body.style.fill, 1.5),
+            position=(body.x, body.y, body.height + _LIFT - 0.11),
             orientation=_ALONG_Z,
-            specular=0.5,
-            specular_power=30.0,
+            specular=0.55,
+            specular_power=35.0,
+        ),
+        # The top itself is the sleeve, as it is on the real part.
+        _Piece(
+            source=_cylinder(radius * 0.93, 0.24, resolution=28),
+            rgb=_lit(body.style.fill, 1.12),
+            position=(body.x, body.y, body.height + _LIFT - 0.1),
+            orientation=_ALONG_Z,
+            specular=0.3,
         ),
     ]
+    # The vent, scored into that top rather than printed on it: two shallow grooves, which
+    # is what a radial can carries and what it splits along when one lets go.
     for across in (False, True):
         pieces.append(
             _Piece(
                 source=(
-                    _box(radius * 1.3, radius * 0.16, 0.16)
+                    _box(radius * 1.45, radius * 0.1, 0.1)
                     if across
-                    else _box(radius * 0.16, radius * 1.3, 0.16)
+                    else _box(radius * 0.1, radius * 1.45, 0.1)
                 ),
-                rgb=_rgb(body.style.fill),
+                rgb=_lit(body.style.fill, 0.55),
                 position=(body.x, body.y, body.height + _LIFT - 0.02),
-                specular=0.2,
+                specular=0.05,
             )
         )
     if body.polarity is not None:
@@ -1444,20 +1500,68 @@ def _can_pieces(body: _WorldBody) -> list[_Piece]:
 
 
 def _disc_pieces(body: _WorldBody) -> list[_Piece]:
-    """A ceramic disc standing on edge: a cylinder whose axis lies ACROSS the leads."""
+    """A ceramic disc standing on edge -- a LENS, not a coin.
+
+    The dipped case is thicker in the middle and thins to a rounded edge, and a flat
+    cylinder with a sharp rim was the single thing that made these read as washers stood
+    up on the board. A sphere squashed across the leads is the shape, and costs the same
+    one solid.
+    """
     diameter = body.along
     thickness = body.across
-    orientation = _ALONG_Y if body.axis == "x" else _ALONG_X
+    squash = max(thickness / diameter, 0.08)
     return [
         _Piece(
-            source=_cylinder(diameter / 2, thickness, resolution=24),
+            source=_sphere(diameter / 2, resolution=24),
             rgb=_rgb(body.style.fill),
             position=(body.x, body.y, diameter / 2 + _LIFT),
-            orientation=orientation,
+            # Flattened across the leads: the disc's faces look sideways, which is how one
+            # is fitted and why two of them side by side need the room they do.
+            scale=(1.0, squash, 1.0) if body.axis == "x" else (squash, 1.0, 1.0),
             specular=0.15,
         ),
         *_lead_pieces(body),
     ]
+
+
+def _film_pieces(body: _WorldBody) -> list[_Piece]:
+    """A box film capacitor: a slab with ROUNDED ENDS, which is what a dipped case is.
+
+    A bare cuboid was the worst model in the library -- an orange brick sitting on the
+    board with nothing about it that said capacitor. The ends are half-round in plan, so
+    the case is a stadium prism: one box and two upright cylinders.
+    """
+    surface = body.surface
+    fill = _rgb(body.style.fill)
+    radius = body.across / 2
+    middle = max(body.along - 2 * radius, body.along * 0.1)
+    pieces = [
+        _Piece(
+            source=(
+                _box(middle, body.across, body.height)
+                if body.axis == "x"
+                else _box(body.across, middle, body.height)
+            ),
+            rgb=fill,
+            position=(body.x, body.y, body.height / 2 + _LIFT),
+            specular=surface.specular,
+            specular_power=surface.specular_power,
+        )
+    ]
+    for end in (-1.0, 1.0):
+        pieces.append(
+            _Piece(
+                source=_cylinder(radius, body.height, resolution=20),
+                rgb=fill,
+                position=_offset_along(
+                    body, end * (body.along / 2 - radius), body.height / 2 + _LIFT
+                ),
+                orientation=_ALONG_Z,
+                specular=surface.specular,
+                specular_power=surface.specular_power,
+            )
+        )
+    return pieces + _lead_pieces(body)
 
 
 def _dip_pieces(body: _WorldBody) -> list[_Piece]:
@@ -1472,17 +1576,20 @@ def _dip_pieces(body: _WorldBody) -> list[_Piece]:
         )
     ]
     if body.polarity is not None:
-        dot_r = min(body.size_x, body.size_y) * 0.09
+        dot_r = min(body.size_x, body.size_y) * 0.055
         # Pulled in from the corner so the dot sits on the package rather than over its edge.
         dot_x = body.x + (body.polarity[0] - body.x) * 0.62
         dot_y = body.y + (body.polarity[1] - body.y) * 0.62
         pieces.append(
             _Piece(
-                source=_cylinder(dot_r, 0.3, resolution=14),
-                rgb=_rgb(body.style.accent),
-                position=(dot_x, dot_y, body.height + _LIFT),
+                # A DIMPLE pressed into the plastic, which is what it is: the accent
+                # colour at nearly a tenth of the package made it a headlamp, and the one
+                # marking on the part came out looking like a component of its own.
+                source=_cylinder(dot_r, 0.24, resolution=14),
+                rgb=_lit(body.style.fill, 0.55),
+                position=(dot_x, dot_y, body.height + _LIFT - 0.06),
                 orientation=_ALONG_Z,
-                specular=0.1,
+                specular=0.05,
             )
         )
         # AND the notch at the pin-1 end, which is the marking people actually use: the
@@ -1493,7 +1600,9 @@ def _dip_pieces(body: _WorldBody) -> list[_Piece]:
         pieces.append(
             _Piece(
                 source=_cylinder(notch_r, body.height * 0.9, resolution=18),
-                rgb=_rgb(body.style.fill),
+                # Darker than the package, or a notch cut into black plastic is invisible
+                # against black plastic -- which is what the first attempt drew.
+                rgb=_lit(body.style.fill, 0.45),
                 position=_offset_along(
                     body,
                     _towards(body, body.polarity) * body.along / 2,
@@ -1512,17 +1621,28 @@ def _dip_pieces(body: _WorldBody) -> list[_Piece]:
 
 
 def _to92_pieces(body: _WorldBody) -> list[_Piece]:
-    """A small oval case: one cylinder, squashed by a non-uniform actor scale."""
+    """The D-shaped case, with the flat face the legs are read against.
+
+    It was a squashed cylinder, which is an ellipse: no flat, so nothing on the part said
+    which way round it goes -- and getting a transistor round the wrong way is the classic
+    way to spend an evening. The flat faces the row of pins, as it does on the real part.
+    """
     radius = max(body.size_x, body.size_y) / 2
-    squash = min(body.size_x, body.size_y) / max(body.size_x, body.size_y)
-    scale = (1.0, squash, 1.0) if body.size_x >= body.size_y else (squash, 1.0, 1.0)
     return [
         _Piece(
-            source=_cylinder(radius, body.height, resolution=22),
+            # The chord sits where the case's own DEPTH puts it: a flat at half the depth
+            # shaves a sliver off a cylinder and reads as no flat at all, which is what
+            # the first attempt drew.
+            source=_d_prism(
+                radius,
+                max(min(body.size_x, body.size_y) - radius, radius * 0.25),
+                body.height,
+            ),
             rgb=_rgb(body.style.fill),
             position=(body.x, body.y, body.height / 2 + _LIFT),
-            orientation=_ALONG_Z,
-            scale=scale,
+            # The profile is built with its flat towards +y; a part whose pins run along y
+            # wants it towards +x instead.
+            orientation=(0.0, 0.0, 0.0) if body.axis == "x" else (0.0, 0.0, 90.0),
             specular=0.15,
         ),
         *_lead_pieces(body),
@@ -1534,7 +1654,15 @@ def _to220_pieces(body: _WorldBody) -> list[_Piece]:
     clears its neighbours and whether it can be bolted to a heatsink."""
     plastic_h = body.height * 0.62
     tab_h = body.height - plastic_h
-    tab_thickness = body.across * 0.35
+    # The tab is a sheet of metal the plastic is moulded AROUND, so it is thin and it is
+    # flush with the back face -- not a slab the width of the package sitting on top of it,
+    # which is what this was and what made a TO-220 read as a two-tone brick. Which face is
+    # the back does not matter electrically; that it has one does, because that is the side
+    # a heatsink bolts to.
+    tab_thickness = min(body.across * 0.22, 1.4)
+    back = (body.across - tab_thickness) / 2
+    offset_x, offset_y = (0.0, back) if body.axis == "x" else (back, 0.0)
+    hole_r = min(body.across, body.along) * 0.16
     return [
         _Piece(
             source=_box(body.size_x, body.size_y, plastic_h),
@@ -1549,9 +1677,24 @@ def _to220_pieces(body: _WorldBody) -> list[_Piece]:
                 else _box(tab_thickness, body.size_y, tab_h)
             ),
             rgb=_rgb(body.style.accent),
-            position=(body.x, body.y, plastic_h + tab_h / 2 + _LIFT),
+            position=(body.x + offset_x, body.y + offset_y, plastic_h + tab_h / 2 + _LIFT),
             specular=0.7,
             specular_power=40.0,
+        ),
+        # The bolt hole, as a dark disc through the tab rather than a hole cut in it: this
+        # is a 3 mm feature on a vertical face, where the board's own holes are the surface
+        # you spend the whole time looking at. It says the part can be bolted down, which
+        # is the fact a height check cares about.
+        _Piece(
+            source=_cylinder(hole_r, tab_thickness * 1.4, resolution=16),
+            rgb=_lit(body.style.accent, 0.3),
+            position=(
+                body.x + offset_x,
+                body.y + offset_y,
+                plastic_h + tab_h * 0.62 + _LIFT,
+            ),
+            orientation=_ALONG_Y if body.axis == "x" else _ALONG_X,
+            specular=0.1,
         ),
         *_through_hole_pieces(body, _LIFT + 0.15),
     ]
@@ -1643,7 +1786,10 @@ def _screw_terminal_pieces(body: _WorldBody) -> list[_Piece]:
             _Piece(
                 source=_cylinder(head_r, 0.5, resolution=14),
                 rgb=_rgb(body.style.accent),
-                position=(pin_x, pin_y, body.height + _LIFT),
+                # Sunk into the top rather than sitting on it, so the block is exactly as
+                # tall as its footprint says -- which is the number the height rule and
+                # the case check are both working from.
+                position=(pin_x, pin_y, body.height + _LIFT - 0.25),
                 orientation=_ALONG_Z,
                 specular=0.7,
                 specular_power=35.0,
@@ -1711,15 +1857,39 @@ def _crystal_pieces(body: _WorldBody) -> list[_Piece]:
     squash = min(body.size_x, body.size_y) / max(body.size_x, body.size_y)
     scale = (1.0, squash, 1.0) if body.size_x >= body.size_y else (squash, 1.0, 1.0)
     surface = body.surface
+    # The can is drawn short of its full height and domed over, because a real HC-49 is
+    # closed with a pressed cap and a flat-topped tube reads as a slug of metal. The lip
+    # near the base is where the can is welded to its header, and it is the detail that
+    # says which way up the part goes.
+    # Shallow: a can closed with a pressed cap has a rounded shoulder, and a dome the
+    # height of its own radius turns the part into a bullet.
+    dome = min(radius * squash * 0.55, body.height * 0.16)
+    barrel = body.height - dome
     return [
         _Piece(
-            source=_cylinder(radius, body.height, resolution=24),
+            source=_cylinder(radius, barrel, resolution=24),
             rgb=_rgb(body.style.fill),
-            position=(body.x, body.y, body.height / 2 + _LIFT),
+            position=(body.x, body.y, barrel / 2 + _LIFT),
             orientation=_ALONG_Z,
-            scale=scale,
+            scale=_upright_scale(scale),
             specular=surface.specular,
             specular_power=surface.specular_power,
+        ),
+        _Piece(
+            source=_sphere(radius, resolution=24),
+            rgb=_rgb(body.style.fill),
+            position=(body.x, body.y, barrel + _LIFT),
+            scale=(scale[0], scale[1], dome / radius),
+            specular=surface.specular,
+            specular_power=surface.specular_power,
+        ),
+        _Piece(
+            source=_cylinder(radius * 1.06, 0.35, resolution=24),
+            rgb=_lit(body.style.fill, 0.8),
+            position=(body.x, body.y, 0.35 / 2 + _LIFT),
+            orientation=_ALONG_Z,
+            scale=_upright_scale(scale),
+            specular=surface.specular * 0.7,
         ),
         *_lead_pieces(body),
     ]
@@ -1744,7 +1914,7 @@ _BUILDERS: dict[str, Any] = {
     "axial-cylinder": _axial_pieces,
     "radial-electrolytic": _can_pieces,
     "disc-ceramic": _disc_pieces,
-    "box-film": _box_pieces,
+    "box-film": _film_pieces,
     "dip": _dip_pieces,
     "to92": _to92_pieces,
     "to220": _to220_pieces,
@@ -1788,6 +1958,24 @@ def build_component(lookup: FootprintLookup, comp: Any, board: Board) -> list[vt
     return [_actor_for(piece) for piece in builder(body)]
 
 
+def _attach(mapper: Any, source: Any, *, glyph: bool = False) -> None:
+    """Hand a mapper either a VTK source or a finished polydata.
+
+    Most pieces are sources with a pipeline behind them, and a few are polydata built here
+    -- the D-shaped TO-92 profile, the punched tile -- which have no output port to
+    connect. One place knows the difference rather than every builder.
+    """
+    if hasattr(source, "GetOutputPort"):
+        if glyph:
+            mapper.SetSourceConnection(source.GetOutputPort())
+        else:
+            mapper.SetInputConnection(source.GetOutputPort())
+    elif glyph:
+        mapper.SetSourceData(source)
+    else:
+        mapper.SetInputData(source)
+
+
 def _actor_for(piece: _Piece) -> vtk.vtkActor:
     actor = vtk.vtkActor()
     if piece.instances:
@@ -1798,13 +1986,13 @@ def _actor_for(piece: _Piece) -> vtk.vtkActor:
         data.SetPoints(points)
         glyph = vtk.vtkGlyph3DMapper()
         glyph.SetInputData(data)
-        glyph.SetSourceConnection(piece.source.GetOutputPort())
+        _attach(glyph, piece.source, glyph=True)
         glyph.SetOrient(False)
         glyph.SetScaling(False)
         actor.SetMapper(glyph)
     else:
         mapper = vtk.vtkPolyDataMapper()
-        mapper.SetInputConnection(piece.source.GetOutputPort())
+        _attach(mapper, piece.source)
         actor.SetMapper(mapper)
         actor.SetScale(*piece.scale)
         actor.SetOrientation(*piece.orientation)

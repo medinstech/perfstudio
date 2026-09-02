@@ -44,13 +44,37 @@ closed without a bump.
     not to do that since the feature was written.
   - An edge-connector finger keeps a solid tile: it is a contact with no bore, and
     drilling through it is what made a finger look like a long pad.
-- **The parts look like the parts.** A resistor's body was a flat-ended tube; it has the
-  moulded shoulder at each end now, with the barrel shortened by what the domes add back
-  so the part still measures the length its footprint says it does. An electrolytic gained
-  the aluminium top and the vent scored into it — which is what you are looking at from
-  the angle this view opens at, and what a failing capacitor shows first. A DIP's pins are
-  flat blades rather than round wire, and it has the semicircular notch at the pin-1 end
-  as well as the dot, because the dot is what disappears under a label.
+- **The parts look like the parts.** Every model was looked at on its own, close up, which
+  is how most of these were found: at the whole-board zoom a wrong shape reads as a small
+  coloured blob and nothing more.
+  - A **resistor** was a flat-ended tube; it has the moulded shoulder at each end now,
+    with the barrel shortened by what the domes add back so the part still measures the
+    length its footprint says it does.
+  - A **film capacitor** was a plain orange brick. The dipped case is a slab with
+    half-round ends, so it is one now.
+  - A **disc ceramic** was a coin with a sharp rim; the dipped case is a lens, thicker in
+    the middle, and that is the same one solid.
+  - A **TO-92** was a squashed cylinder — which is an ellipse, so it has two flats and
+    marks nothing. It is the D-shaped case now, with the flat facing its row of pins, and
+    getting a transistor round the wrong way is the classic way to spend an evening.
+  - A **TO-220**'s tab was a slab the width of the package sitting on top of it. The tab
+    is sheet metal the plastic is moulded around: thin, flush with the back face, and with
+    the bolt hole through it — the side a heatsink goes on.
+  - An **HC-49 crystal** was a flat-topped tube. It has the pressed cap and the welded lip
+    at its base, which is also what says which way up it goes.
+  - A **DIP**'s pins are flat blades rather than round wire, it has the semicircular notch
+    at the pin-1 end as well as the dot, and the dot is a dimple rather than a headlamp:
+    at a tenth of the package in the accent colour it read as a component of its own.
+  - An **electrolytic** gained the crimped rim and the vent scored into its top. It had
+    been given a WHITE top — and two of them on a board then read as screw heads, which is
+    exactly what the first person to see it called them.
+- **A part is now the height its footprint says it is, and that is measured.** VTK applies
+  an actor's scale BEFORE its orientation, and the turn that stands a cylinder up maps the
+  source's own z onto world y — so a scale written to flatten the width of an upright can
+  flattened its LENGTH instead. The crystal came out a quarter short with its cap floating
+  in the air above it, and the render looked like a part, just not that part.
+  `test_every_part_stands_exactly_as_tall_as_its_footprint_says` measures every archetype
+  against the number the height-limit rule works from.
 - **No mesh library, and that is still the decision.** The only comprehensive set of
   through-hole models is KiCad's, under CC-BY-SA-4.0: a share-alike licence in a
   repository that is Apache-2.0, for assets that would then have to be shipped, versioned

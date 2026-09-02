@@ -6090,3 +6090,48 @@ def test_taking_a_rectangle_out_of_another_leaves_the_rest_of_it() -> None:
     assert len(pieces) == 4, "a hole in the middle leaves a frame of four"
     area = sum((x1 - x0) * (y1 - y0) for x0, y0, x1, y1 in pieces)
     assert area == pytest.approx(100.0 - 4.0)
+
+
+def test_every_part_stands_exactly_as_tall_as_its_footprint_says() -> None:
+    """VTK scales BEFORE it orients, and that turn maps a source's own z onto world y.
+
+    So a scale written to flatten an upright can flattens its LENGTH instead: the crystal
+    came out a quarter short with its domed cap floating in the air above it, and nothing
+    said so -- the render looked like a part, just not that part. Height is the one number
+    a reader of this view is checking against a case, so it is worth measuring rather than
+    squinting at.
+    """
+    from perfstudio.footprints import standard_footprints
+    from perfstudio.model import ComponentInstance
+    from perfstudio.ui import view3d
+
+    board = _load_dense().board
+    lookup = footprint_lookup()
+    one_per: dict[str, str] = {}
+    for footprint_id, footprint in sorted(standard_footprints().items()):
+        one_per.setdefault(footprint.body.archetype, footprint_id)
+
+    for archetype, footprint_id in sorted(one_per.items()):
+        comp = ComponentInstance(
+            id="c1", ref="X1", value="", footprint_id=footprint_id, anchor=HoleCoord(6, 6)
+        )
+        body = view3d._world_body(lookup, comp, board)
+        assert body is not None
+        pieces = view3d._BUILDERS.get(archetype, view3d._box_pieces)(body)
+
+        top = max(_piece_top(piece) for piece in pieces)
+
+        assert top == pytest.approx(body.height + view3d._LIFT, abs=0.3), archetype
+
+
+def _piece_top(piece) -> float:
+    """The highest point one piece reaches, instanced or not."""
+    from perfstudio.ui import view3d
+
+    actor = view3d._actor_for(piece)
+    actor.GetMapper().Update()
+    if piece.instances:
+        piece.source.Update() if hasattr(piece.source, "Update") else None
+        data = piece.source.GetOutput() if hasattr(piece.source, "GetOutput") else piece.source
+        return max(z for _x, _y, z in piece.instances) + data.GetBounds()[5]
+    return float(actor.GetBounds()[5])
