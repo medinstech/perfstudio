@@ -42,6 +42,18 @@ closed without a bump.
     evidence that the print cannot be SEEN, not that the board has none — which is now
     written at `board_from_preset` and in the test, because the same mistake is available
     to anyone reading the same photograph.
+- **A mounting bore takes the copper it is drilled through, including a finger.** A hole
+  put one position in from the corner — which is what Board Features offers by default —
+  reaches the edge-connector strip, and the finger it went through was still drawn intact
+  in both views: a 3.2 mm hole sitting on top of a contact the board no longer has. A bore
+  does not distinguish between the two shapes of copper it destroys, so
+  `geometry.surviving_finger_holes` answers that for both renderers the way
+  `consumed_holes` already answered it for a round pad.
+- **The printed legend is not printed into a hole.** Ink goes ON the substrate and a bore
+  takes the substrate away, so a letter under one is not faint, it is absent — which is
+  what a real board shows. `geometry.printed_label_is_clear` is asked by the 2D legend and
+  the 3D one, in the same units, because a legend that agreed with the board in one view
+  and not the other is the disagreement this pair keeps producing.
 - **The board in 3D has holes in it.** Which sounds like a statement of the obvious and
   was not true: the substrate was one solid cube and every hole on it was faked by laying
   a dark cylinder over the top. A dark disc on green reads as a mark printed on the board,

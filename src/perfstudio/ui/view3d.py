@@ -31,14 +31,15 @@ from perfstudio.geometry import (
     board_edge_margin_mm,
     board_size_mm,
     column_label,
-    edge_connector_holes,
     edge_finger_rect,
     hole_key,
     holes_without_grid_pad,
     legend_strip_mm,
     mounting_hole_centre_mm,
     pad_extent_mm,
+    printed_label_is_clear,
     printed_row_label,
+    surviving_finger_holes,
     transform_offset,
     undrilled_holes,
 )
@@ -50,6 +51,7 @@ from perfstudio.model import (
     HoleCoord,
     NetClass,
     PerfDocument,
+    Point2,
     contacts_every_path_hole,
 )
 from perfstudio.occupancy import stacking_layers
@@ -892,7 +894,9 @@ def build_edge_connectors(doc: PerfDocument) -> list[vtk.vtkActor]:
             if board.single_sided and face == "top":
                 continue  # No copper on the component side at all -- see Board.single_sided.
             append = vtk.vtkAppendPolyData()
-            for hole in edge_connector_holes(connector, board):
+            # Only the fingers a bore has not drilled through -- see
+            # geometry.surviving_finger_holes, which view2d asks the same question of.
+            for hole in surviving_finger_holes(doc, connector):
                 rect = edge_finger_rect(connector, hole, board)
                 plate = vtk.vtkCubeSource()
                 plate.SetXLength(rect.width)
@@ -979,6 +983,12 @@ def build_legend(doc: PerfDocument) -> list[vtk.vtkActor]:
             for x in row_xs
         ]
         for text, x, y, max_width, rotate in entries:
+            # Not printed where a bore was drilled -- the same question view2d asks, in
+            # the same units: board millimetres with y growing DOWN, so 3D's y is negated
+            # on the way in. A turned number's box is turned with it.
+            box = (height, max_width) if rotate else (max_width, height)
+            if not printed_label_is_clear(doc, Point2(x, -y), box[0], box[1]):
+                continue
             vector = vtk.vtkVectorText()
             vector.SetText(text)
             vector.Update()

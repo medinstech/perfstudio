@@ -438,6 +438,55 @@ def consumed_holes(doc: PerfDocument) -> frozenset[str]:
     return frozenset(consumed)
 
 
+def surviving_finger_holes(doc: PerfDocument, connector: EdgeConnector) -> list[HoleCoord]:
+    """The fingers of one connector that still have copper on them.
+
+    A mounting bore takes the copper wherever it is drilled, and a finger is copper. It
+    was being drilled straight through and drawn intact anyway, so a 3.2 mm hole sat on
+    top of a contact that the board no longer has -- in both views, because both asked
+    ``edge_connector_holes`` for the fingers and nothing about the bores.
+
+    One answer for both renderers, and the same one ``consumed_holes`` gives for a round
+    pad: a bore does not distinguish between the two shapes of copper it destroys.
+    """
+    gone = consumed_holes(doc)
+    return [
+        hole
+        for hole in edge_connector_holes(connector, doc.board)
+        if hole_key(hole) not in gone
+    ]
+
+
+#: How close printed ink may come to a drilled edge. Board houses keep the legend off the
+#: hole itself; a letter half eaten by a bore is worse than no letter.
+LEGEND_BORE_CLEARANCE_MM: Mm = 0.25
+
+
+def printed_label_is_clear(
+    doc: PerfDocument, centre: Point2, width: Mm, height: Mm
+) -> bool:
+    """Whether a printed label at this spot survives the holes drilled through it.
+
+    Ink goes ON the substrate, and a mounting bore takes the substrate away -- so a label
+    under one is not faint, it is absent, and a real board simply leaves that letter off.
+    Both renderers ask this, because a legend that agreed with the board in 2D and not in
+    3D is the sort of disagreement this pair keeps producing.
+
+    ``centre`` is in board millimetres with y growing DOWN, like every other position in
+    this module; ``width`` and ``height`` are the label's own box, already turned if the
+    label is.
+    """
+    for mount in doc.mounting_holes:
+        bore = mounting_hole_centre_mm(mount, doc.board)
+        # Nearest point of the label's box to the bore's centre.
+        near_x = min(max(bore.x, centre.x - width / 2), centre.x + width / 2)
+        near_y = min(max(bore.y, centre.y - height / 2), centre.y + height / 2)
+        reach = mount.diameter / 2 + LEGEND_BORE_CLEARANCE_MM
+        if math.hypot(near_x - bore.x, near_y - bore.y) < reach:
+            return False
+    return True
+
+
 def mounting_head_covers(hole_mount: MountingHole, point: Point2, board: Board) -> bool:
     """Whether a screw head or washer would sit over this point on the component side."""
     centre = mounting_hole_centre_mm(hole_mount, board)

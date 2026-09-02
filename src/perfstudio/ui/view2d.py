@@ -67,7 +67,6 @@ from perfstudio.geometry import (
     board_outline_mm,
     column_label,
     consumed_holes,
-    edge_connector_holes,
     edge_finger_rect,
     format_hole,
     hole_key,
@@ -79,8 +78,10 @@ from perfstudio.geometry import (
     mounting_hole_centre_mm,
     pad_extent_mm,
     path_length_mm,
+    printed_label_is_clear,
     printed_row_label,
     row_label,
+    surviving_finger_holes,
     transform_offset,
     transform_pin_offset,
     undrilled_holes,
@@ -104,6 +105,7 @@ from perfstudio.model import (
     NetClass,
     NetNode,
     PerfDocument,
+    Point2,
     TrackCut,
     contacts_every_path_hole,
 )
@@ -676,25 +678,49 @@ class BoardLegendItem(QGraphicsItem):
             # like every other x here, never about the substrate -- see the module note.
             row_xs = [span_w - x for x in row_xs]
 
+        # A LABEL IS NOT PRINTED WHERE A BORE HAS BEEN DRILLED. Ink goes on the substrate
+        # and a mounting hole takes the substrate away, so the letter is not faint there,
+        # it is absent -- which is what a real board shows and what the corner of this one
+        # was not. `printed_label_is_clear` is asked in board millimetres, y growing down,
+        # so the column run passes its unmirrored x.
+        wide = board.pitch * 0.9
         for col in range(board.cols):
             x = hole_to_screen(HoleCoord(col, 0), board, self.side).x()
             for y in column_ys:
+                if not printed_label_is_clear(
+                    self.document, Point2(col * board.pitch, y), wide, height
+                ):
+                    continue
                 draw_physical_label(
-                    painter, QPointF(x, y), column_label(col), height, max_width_mm=board.pitch * 0.9
+                    painter, QPointF(x, y), column_label(col), height, max_width_mm=wide
                 )
 
         for row in range(board.rows):
             text = printed_row_label(row, self.labels)
             for x in row_xs:
+                # Turned on its side, so its box is turned too.
+                if not printed_label_is_clear(
+                    self.document,
+                    Point2(x if self.side == "top" else _span_w_for(board) - x, row * board.pitch),
+                    height,
+                    wide,
+                ):
+                    continue
                 draw_physical_label(
                     painter,
                     QPointF(x, row * board.pitch),
                     text,
                     height,
-                    max_width_mm=board.pitch * 0.9,
+                    max_width_mm=wide,
                     rotation_deg=-90.0,
                 )
         painter.restore()
+
+
+def _span_w_for(board: Board) -> float:
+    """The hole span's width, for un-mirroring an x that was mirrored for the solder side."""
+    span_w, _span_h = hole_span_mm(board)
+    return span_w
 
 
 class MountingHoleItem(QGraphicsItem):
@@ -846,10 +872,15 @@ class EdgeConnectorItem(QGraphicsItem):
     rectangle.
     """
 
-    def __init__(self, connector: EdgeConnector, board: Board, side: BoardSide) -> None:
+    def __init__(
+        self, connector: EdgeConnector, document: PerfDocument, side: BoardSide
+    ) -> None:
         super().__init__()
         self.connector = connector
-        self.board = board
+        # The DOCUMENT, not just the board: whether a finger still exists depends on the
+        # mounting holes, which live on the document beside the connectors.
+        self.document = document
+        self.board = document.board
         self.side = side
         self.near_side = connector.face == "both" or connector.face == side
         self.setZValue(-88)
@@ -858,7 +889,10 @@ class EdgeConnectorItem(QGraphicsItem):
         return _outline_rect(self.board)
 
     def paint(self, painter: QPainter, option: Any, widget: Any = None) -> None:
-        for hole in edge_connector_holes(self.connector, self.board):
+        # The fingers a bore has NOT drilled through: a mounting hole takes the copper
+        # wherever it is drilled, and a finger is copper -- this used to draw one intact
+        # under a 3.2 mm hole.
+        for hole in surviving_finger_holes(self.document, self.connector):
             rect = edge_finger_rect(self.connector, hole, self.board)
             # The rect is in board mm; only x needs the solder-side reflection, and it
             # reflects about the hole span exactly as every other x in this file does.
@@ -2311,7 +2345,7 @@ class BoardScene(QGraphicsScene):
                 self.addItem(TrackCutItem(cut, board, self.side))
 
         for connector in self.document.edge_connectors:
-            self.addItem(EdgeConnectorItem(connector, board, self.side))
+            self.addItem(EdgeConnectorItem(connector, self.document, self.side))
         for mount in self.document.mounting_holes:
             self.addItem(MountingHoleItem(mount, board, self.side))
 

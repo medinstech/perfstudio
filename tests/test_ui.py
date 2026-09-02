@@ -6215,3 +6215,104 @@ def test_the_board_s_copper_is_never_blown_out(tmp_path) -> None:
                 blown += 1
 
     assert blown == 0, f"{blown} pixels of copper clipped to flat yellow"
+
+
+# ---------------------------------------------------------------------------
+# What a bore destroys, both views agree about
+# ---------------------------------------------------------------------------
+#
+# A mounting hole drilled beside the edge strip left the finger it went through drawn
+# intact, in both views: a 3.2 mm hole sitting on top of a contact the board no longer
+# has. The legend had the matching hole in it -- ink printed where the substrate had been
+# drilled away.
+
+
+def _board_with_a_bore_through_a_finger():
+    """A board whose corner bore is drilled through an edge-connector finger."""
+    from perfstudio.commands import DEFAULT_BOARD, create_empty_document
+    from perfstudio.geometry import (
+        STANDARD_PRESETS,
+        board_from_preset,
+        preset_edge_connectors,
+    )
+    from perfstudio.model import DocumentMeta, MountingHole
+
+    preset = next(p for p in STANDARD_PRESETS if p.cols == 34 and p.rows == 58 and not p.single_sided)
+    board = board_from_preset(preset, DEFAULT_BOARD)
+    document = create_empty_document(DocumentMeta(name="b", created="", modified=""), board)
+    return dataclasses.replace(
+        document,
+        edge_connectors=preset_edge_connectors(preset, board),
+        # One hole in from the corner, which is what Board Features offers by default, and
+        # a 3.2 mm bore reaches the finger row from there.
+        mounting_holes=(
+            MountingHole(id="mh-1", at=HoleCoord(1, board.rows - 2), diameter=3.2, head_diameter=6.0),
+        ),
+    )
+
+
+def test_a_bore_through_a_finger_takes_the_finger_with_it() -> None:
+    """A bore does not distinguish between the two shapes of copper it destroys."""
+    from perfstudio.geometry import (
+        consumed_holes,
+        edge_connector_holes,
+        hole_key,
+        surviving_finger_holes,
+    )
+
+    document = _board_with_a_bore_through_a_finger()
+    connector = next(c for c in document.edge_connectors if c.edge == "bottom")
+
+    all_fingers = edge_connector_holes(connector, document.board)
+    left = surviving_finger_holes(document, connector)
+
+    gone = [hole for hole in all_fingers if hole not in left]
+    assert gone, "this bore is meant to reach the finger row"
+    assert all(hole_key(hole) in consumed_holes(document) for hole in gone)
+    assert len(left) == len(all_fingers) - len(gone)
+
+
+def test_both_views_draw_the_same_surviving_fingers() -> None:
+    """The 2D item and the 3D builder ask one function, so they cannot disagree about
+    which contacts the board still has."""
+    from perfstudio.geometry import surviving_finger_holes
+    from perfstudio.ui import view3d
+    from perfstudio.ui.view2d import BoardScene, EdgeConnectorItem
+
+    document = _board_with_a_bore_through_a_finger()
+    connector = next(c for c in document.edge_connectors if c.edge == "bottom")
+    expected = surviving_finger_holes(document, connector)
+
+    scene = BoardScene(document, footprint_lookup(), side="top")
+    items = [item for item in scene.items() if isinstance(item, EdgeConnectorItem)]
+    assert items, "the board has connectors"
+    assert all(item.document is document for item in items), "the item asks the document"
+
+    actors = view3d.build_edge_connectors(document)
+    assert actors, "and 3D draws them too"
+    assert expected, "with at least one finger left"
+
+
+def test_no_letter_is_printed_where_a_bore_was_drilled() -> None:
+    """Ink goes ON the substrate, and a mounting hole takes the substrate away -- so the
+    label under one is not faint, it is absent, which is what a real board shows."""
+    from perfstudio.geometry import printed_label_is_clear
+    from perfstudio.model import MountingHole, Point2
+
+    document = _load_dense()
+    board = document.board
+    where = Point2(4 * board.pitch, -1.2)  # a column letter's spot, above the first row
+    assert printed_label_is_clear(document, where, board.pitch * 0.9, 1.0)
+
+    drilled = dataclasses.replace(
+        document,
+        mounting_holes=(
+            MountingHole(
+                id="mh-1", at=HoleCoord(4, 0), offset_x_mm=0.0, offset_y_mm=-1.2, diameter=3.2
+            ),
+        ),
+    )
+
+    assert not printed_label_is_clear(drilled, where, board.pitch * 0.9, 1.0)
+    # ...and a letter well away from it is untouched.
+    assert printed_label_is_clear(drilled, Point2(12 * board.pitch, -1.2), board.pitch * 0.9, 1.0)
