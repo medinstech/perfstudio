@@ -51,9 +51,17 @@ class BoardScheme:
     pad_rgb: tuple[float, float, float]
 
 
-#: Plated copper on a masked board: the yellow of gold over nickel, which is what the
-#: green, blue and black prototyping boards are finished with.
-_GOLD = ("#c8a951", "#8a7331", "#e4cd83", (0.80, 0.66, 0.32))
+#: HASL: hot-air levelled SOLDER over copper, which is what the cheap masked prototyping
+#: boards are finished with. Gold over nickel is what this said, and it is what the green,
+#: blue and black boards were drawn with until somebody held one up against the screen:
+#: on a photograph of the board itself the pads are neutral and light, at a blue/red ratio
+#: of about 1.0, where gold's is 0.4. It is tin, not gold.
+#:
+#: Deliberately WARMER and LIGHTER than the grey a solder run is drawn in (`#b9bec6`,
+#: view2d's conductor table). They are nearly the same metal on a real board, and telling
+#: them apart is the one thing this whole application is about -- so the pad keeps a warm
+#: cast and a dark ring, and the run stays cool and unringed.
+_TINNED = ("#d4d2cc", "#85837c", "#efeee9", (0.831, 0.824, 0.800))
 
 #: BARE copper, unmasked and unplated, which is what a phenolic board has: pale warm
 #: metal rather than yellow gold.
@@ -64,12 +72,12 @@ _GOLD = ("#c8a951", "#8a7331", "#e4cd83", (0.80, 0.66, 0.32))
 _BARE_COPPER = ("#e2a877", "#a86a3c", "#f6d0aa", (0.886, 0.659, 0.467))
 
 SCHEMES: tuple[BoardScheme, ...] = (
-    BoardScheme("green", "Green (FR-4)", "#2e6b3f", "#0d1a12", (0.16, 0.36, 0.21), "#e8f0ea", *_GOLD),
-    BoardScheme("blue", "Blue", "#1f4e8c", "#0b1a2e", (0.10, 0.26, 0.50), "#e6edf7", *_GOLD),
-    BoardScheme("black", "Black", "#232529", "#0a0b0d", (0.11, 0.12, 0.14), "#d8dbe0", *_GOLD),
-    BoardScheme("red", "Red", "#8c2a26", "#2e0b0a", (0.50, 0.13, 0.12), "#f6e6e5", *_GOLD),
-    BoardScheme("purple", "Purple", "#4a2a72", "#170d24", (0.26, 0.14, 0.42), "#ece4f6", *_GOLD),
-    BoardScheme("white", "White", "#d8d6ce", "#a09c90", (0.84, 0.83, 0.79), "#3a3a36", *_GOLD),
+    BoardScheme("green", "Green (FR-4)", "#2e6b3f", "#0d1a12", (0.16, 0.36, 0.21), "#e8f0ea", *_TINNED),
+    BoardScheme("blue", "Blue", "#1f4e8c", "#0b1a2e", (0.10, 0.26, 0.50), "#e6edf7", *_TINNED),
+    BoardScheme("black", "Black", "#232529", "#0a0b0d", (0.11, 0.12, 0.14), "#d8dbe0", *_TINNED),
+    BoardScheme("red", "Red", "#8c2a26", "#2e0b0a", (0.50, 0.13, 0.12), "#f6e6e5", *_TINNED),
+    BoardScheme("purple", "Purple", "#4a2a72", "#170d24", (0.26, 0.14, 0.42), "#ece4f6", *_TINNED),
+    BoardScheme("white", "White", "#d8d6ce", "#a09c90", (0.84, 0.83, 0.79), "#3a3a36", *_TINNED),
     # Paper-phenolic, and ORANGE -- measured off photographs of the boards, which sample
     # at #c67a3f, #c17c58 and #bb7441 across three of them. It was briefly changed to a
     # brown on the reasoning that "pertinax is the colour of cardboard"; the boards say

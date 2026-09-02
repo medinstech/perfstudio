@@ -2744,9 +2744,16 @@ def test_a_legend_on_a_finger_edge_is_printed_outside_the_fingers(monkeypatch) -
     """
     from perfstudio.commands import create_starter_document
     from perfstudio.geometry import board_edge_margin_mm, hole_span_mm, legend_strip_mm
-    from perfstudio.model import DocumentMeta
+    from perfstudio.model import BoardLabels, DocumentMeta
 
     doc = create_starter_document(DocumentMeta(name="t", created="", modified=""))
+    # The legend is asked for explicitly: the green board this opens on does not carry one
+    # (its border is bare, which is what the product photograph shows), and Board Setup's
+    # checkbox is how somebody whose board does carry one turns it on. What is under test
+    # is WHERE the ink goes once it is asked for.
+    doc = dataclasses.replace(
+        doc, board=dataclasses.replace(doc.board, labels=BoardLabels(row_digits=2))
+    )
     assert {c.edge for c in doc.edge_connectors} == {"top", "bottom"}, "wrong board for this test"
 
     margin_y = board_edge_margin_mm(doc.board, "vertical")
