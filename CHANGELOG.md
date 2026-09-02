@@ -22,6 +22,25 @@ closed without a bump.
 
 ### Changed
 
+- **The board is the board people actually buy, checked against a photograph of one.**
+  Somebody held a 5 × 7 cm double-sided board up against the screen and asked whether it
+  matched. The geometry did — 70 × 50 mm, the grid, the four corner screw holes in the
+  border, the finger strips down both short edges — and two things did not:
+  - **The pads are TINNED, not gold.** `_GOLD` claimed to be "what the green, blue and
+    black prototyping boards are finished with", and on the photograph they are plainly
+    not: the pads there are neutral and light, at a blue/red ratio of about 1.0 where
+    gold's is 0.4. It is HASL — hot-air levelled solder over copper. `_TINNED` replaces it
+    for every masked scheme, kept warmer and lighter than the grey a solder run is drawn
+    in, because those two are nearly the same metal on a real board and telling them apart
+    is what this application is for. The 2D render signatures were re-blessed after
+    reading the diff: ink coverage identical to three decimals, every cell moved about ten
+    levels — a colour change and not a geometry one, which is exactly what it should be.
+  - **The green board's border is bare.** The presets printed an A..Z / 01..NN legend on
+    both families, on the reasoning that printing is the cheapest marking a board can
+    carry — which is true and is not the same as saying every board has it. The orange
+    pertinax board keeps its legend; the green one has none, so the editor's own ruler
+    addresses it instead, which is the fallback that already existed. Board Setup's legend
+    checkbox is how anyone whose board does carry one turns it back on.
 - **The board in 3D has holes in it.** Which sounds like a statement of the obvious and
   was not true: the substrate was one solid cube and every hole on it was faked by laying
   a dark cylinder over the top. A dark disc on green reads as a mark printed on the board,
