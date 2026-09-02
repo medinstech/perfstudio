@@ -756,10 +756,16 @@ def _finger_run_clear_of_bores(
             clear.append(index)
     if not clear:
         return 0, 0
-    # One contiguous run: the obstructions are corner holes, so what is left is the
-    # middle. Taking first..last rather than the individual indices keeps the model's
-    # "a connector is a run of fingers" invariant.
-    return clear[0], clear[-1] - clear[0] + 1
+    # THE LONGEST CONTIGUOUS RUN, not first..last. That shortcut assumed the only
+    # obstructions are corner holes and therefore that what is left is the middle -- true
+    # while every screw sat outside the grid, and false as soon as one steps inward on a
+    # board whose border is too thin to hold it. The obstructed finger is then in the
+    # middle of the run, and first..last quietly puts it back.
+    runs: list[list[int]] = [[clear[0]]]
+    for index in clear[1:]:
+        (runs[-1].append(index) if index == runs[-1][-1] + 1 else runs.append([index]))
+    longest = max(runs, key=len)
+    return longest[0], len(longest)
 
 
 def _bore_touches_rect(mount: MountingHole, rect: RectMm, board: Board) -> bool:
@@ -802,50 +808,68 @@ def preset_edge_connectors(preset: BoardPreset, board: Board) -> tuple[EdgeConne
     )
 
 
-def corner_hole_offset_mm(board: Board, diameter: Mm) -> Mm:
-    """How far diagonally out of the grid a corner mounting hole should sit.
+#: How much board must be left between a screw hole and the edge nearest it.
+#:
+#: Under this the bore is a notch rather than a hole: the web tears out the first time the
+#: screw is done up. It is a real limit and not a taste -- putting the hole on the corner
+#: position leaves 0.31 mm on the 20 x 30 board, whose printed border is 0.14 mm wide,
+#: and 0.88 mm on the 7 x 9.
+CORNER_HOLE_WEB_MM: Mm = 1.0
 
-    Far enough that the bore misses the corner pad, near enough that it stays on the
-    substrate. Zero when those two cannot both hold, which is the flush-cut case: the
-    hole then has to go on the grid and eat the pads around it, and DRC says so.
+
+def corner_hole_inset(margin: Mm, pitch: Mm, radius: Mm) -> int:
+    """How many grid positions in from the edge a corner screw has to start.
+
+    Zero on any board whose border can take the bore, which is most of them; one on the
+    tight ones, where the screw sits on the second position in and the board still has
+    something to hold it.
     """
-    extent_x, extent_y = pad_extent_mm(board)
-    clears_pad = (max(extent_x, extent_y) / 2 + diameter / 2) / math.sqrt(2)
-    stays_on_board = (
-        min(board_edge_margin_mm(board, "horizontal"), board_edge_margin_mm(board, "vertical"))
-        - diameter / 2
-        - 0.2
-    )
-    return round(stays_on_board, 3) if stays_on_board >= clears_pad else 0.0
+    steps = 0
+    while margin + steps * pitch - radius < CORNER_HOLE_WEB_MM:
+        steps += 1
+    return steps
 
 
 def preset_mounting_holes(preset: BoardPreset, board: Board) -> tuple[MountingHole, ...]:
-    """A screw hole in each corner, in the BORDER, where these boards have them.
+    """A screw hole AT each corner position, which is where these boards have one.
 
-    Returns nothing when the border cannot take the bore -- on a flush-cut board there is
-    nowhere for it to go, and a hole hanging off the edge is worse than no hole.
+    IT IS THE CORNER POSITION, not a bore squeezed diagonally past it. The hole used to be
+    pushed as far into the border as it would go, and the same offset was used on both
+    axes -- so on a 5 x 7, whose two borders are 3.41 and 5.79 mm, the screw ended up
+    0.20 mm from one edge of the board and floating a clear 2.6 mm from the other, with the
+    corner pad jammed against it. Both numbers are off the render, and both are wrong in
+    the same way: nothing was centred in anything.
+
+    The corner pad goes with the hole, and that is not a loss. The board is manufactured
+    with a screw hole at that position INSTEAD of a pad, which is exactly what
+    ``consumed_holes`` reports -- so DRC, both renderers and the build guide learn it
+    through the one route they already use, with no special case for corners.
+
+    On a board whose border is too thin to hold a screw the hole steps one position inward
+    instead -- see ``CORNER_HOLE_WEB_MM``, which is what the outermost position leaves on
+    the two largest boards.
     """
     if preset.single_sided:
         return ()
-    offset = corner_hole_offset_mm(board, CORNER_HOLE_MM)
-    if offset <= 0:
-        return ()
+    radius = CORNER_HOLE_MM / 2
+    inset_x = corner_hole_inset(board_edge_margin_mm(board, "horizontal"), board.pitch, radius)
+    inset_y = corner_hole_inset(board_edge_margin_mm(board, "vertical"), board.pitch, radius)
+    near_x, far_x = inset_x, board.cols - 1 - inset_x
+    near_y, far_y = inset_y, board.rows - 1 - inset_y
     corners = (
-        (HoleCoord(0, 0), -1, -1),
-        (HoleCoord(board.cols - 1, 0), 1, -1),
-        (HoleCoord(0, board.rows - 1), -1, 1),
-        (HoleCoord(board.cols - 1, board.rows - 1), 1, 1),
+        HoleCoord(near_x, near_y),
+        HoleCoord(far_x, near_y),
+        HoleCoord(near_x, far_y),
+        HoleCoord(far_x, far_y),
     )
     return tuple(
         MountingHole(
             id=f"mh-{index + 1}",
             at=at,
-            offset_x_mm=sign_x * offset,
-            offset_y_mm=sign_y * offset,
             diameter=CORNER_HOLE_MM,
             head_diameter=CORNER_HOLE_MM * 2,
         )
-        for index, (at, sign_x, sign_y) in enumerate(corners)
+        for index, at in enumerate(corners)
     )
 
 

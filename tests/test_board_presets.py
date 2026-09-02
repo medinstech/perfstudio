@@ -39,6 +39,7 @@ from perfstudio.commands import (
 )
 from perfstudio.footprints import footprint_lookup
 from perfstudio.geometry import (
+    CORNER_HOLE_WEB_MM,
     FINGER_BORE_CLEARANCE_MM,
     STANDARD_PRESETS,
     board_edge_margin_mm,
@@ -378,13 +379,51 @@ def test_the_finger_strips_go_across_the_short_edges() -> None:
         assert preset_strip_edges(board) == expected, preset.name
 
 
-def test_the_corner_holes_of_every_green_preset_destroy_no_pads() -> None:
+def test_a_corner_hole_takes_its_own_position_and_nothing_else() -> None:
+    """The screw hole IS the corner position: the board is made with a hole there instead
+    of a pad, and one pad per corner is the whole cost of it.
+
+    It used to be pushed as far diagonally into the border as it would go, to keep that
+    pad -- which on a 5 x 7 left the bore 0.20 mm from the board's edge and jammed against
+    the pad it was avoiding, because one offset was used for two borders that are 3.41 and
+    5.79 mm wide. Four pads is the price of four screws that are actually in the corners.
+    """
     for preset in STANDARD_PRESETS:
         if preset.single_sided:
             continue
         board = board_from_preset(preset, DEFAULT_BOARD)
-        doc = _doc(board, mounting_holes=preset_mounting_holes(preset, board))
-        assert consumed_holes(doc) == frozenset(), f"{preset.name} loses pads to its own screws"
+        holes = preset_mounting_holes(preset, board)
+        doc = _doc(board, mounting_holes=holes)
+
+        assert len(holes) == 4, f"{preset.name} has a screw hole in each corner"
+        consumed = consumed_holes(doc)
+        assert len(consumed) == 4, f"{preset.name} loses one pad per screw and no more"
+        assert consumed == {hole_key(hole.at) for hole in holes}
+
+
+def test_a_corner_hole_stands_clear_of_both_edges_of_the_board() -> None:
+    """The failure this replaces was visible and unmeasured: a bore 0.2 mm from the edge
+    reads as a hole about to break out of the board, and its keepout ring hung off it."""
+    for preset in STANDARD_PRESETS:
+        if preset.single_sided:
+            continue
+        board = board_from_preset(preset, DEFAULT_BOARD)
+        for hole in preset_mounting_holes(preset, board):
+            centre = mounting_hole_centre_mm(hole, board)
+            radius = hole.diameter / 2
+            for axis, position, span in (
+                ("x", centre.x, (board.cols - 1) * board.pitch),
+                ("y", centre.y, (board.rows - 1) * board.pitch),
+            ):
+                margin = board_edge_margin_mm(board, "horizontal" if axis == "x" else "vertical")
+                to_near = position + margin - radius
+                to_far = span + margin - position - radius
+                assert to_near >= CORNER_HOLE_WEB_MM - 1e-9, (
+                    f"{preset.name}: {to_near:.2f} mm of board to the {axis} edge"
+                )
+                assert to_far >= CORNER_HOLE_WEB_MM - 1e-9, (
+                    f"{preset.name}: {to_far:.2f} mm of board to the far {axis} edge"
+                )
 
 
 def test_applying_a_preset_is_one_undo_step() -> None:
@@ -533,12 +572,21 @@ def test_no_preset_drills_a_screw_hole_through_its_own_finger_strip() -> None:
 
 
 def test_a_trimmed_strip_still_runs_most_of_the_board() -> None:
-    """Trimming is meant to clear the screws, not to leave a token strip."""
+    """Trimming is meant to clear the screws, not to leave a token strip.
+
+    What it costs is one position per end, plus one more per end on a board whose border
+    is too thin to hold a screw at the corner: there the hole steps inward, so the finger
+    it stands beside goes as well as the one at the end.
+    """
     for preset in STANDARD_PRESETS:
         board = board_from_preset(preset, DEFAULT_BOARD)
         connectors = preset_edge_connectors(preset, board)
-        if not connectors or not preset_mounting_holes(preset, board):
+        mounts = preset_mounting_holes(preset, board)
+        if not connectors or not mounts:
             continue
+        inset = min(hole.at.col for hole in mounts)
         for connector in connectors:
             span = board.cols if connector.edge in ("top", "bottom") else board.rows
-            assert connector.count >= span - 2, f"{preset.name} lost too many fingers"
+            assert connector.count >= span - 2 * (1 + inset), (
+                f"{preset.name} lost too many fingers"
+            )

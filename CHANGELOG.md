@@ -42,6 +42,25 @@ closed without a bump.
     evidence that the print cannot be SEEN, not that the board has none — which is now
     written at `board_from_preset` and in the test, because the same mistake is available
     to anyone reading the same photograph.
+- **The corner screw hole is AT the corner position, centred, and the pad it replaces is
+  gone.** It used to be pushed as far diagonally into the printed border as it would fit,
+  to spare that pad — and one offset was used for both axes, so on a 5 x 7, whose two
+  borders are 3.41 and 5.79 mm, the bore ended up 0.20 mm from one edge of the board and
+  floating 2.6 mm from the other, with the corner pad jammed against it. Nothing was
+  centred in anything, and it is the corner somebody looking at the board looks at first.
+  - The board is manufactured with a screw hole at that position INSTEAD of a pad, so the
+    pad is consumed — through `consumed_holes`, which DRC, both renderers and the guide
+    already read, with no special case for corners.
+  - **A board whose border is too thin to hold a screw steps the hole one position inward**
+    rather than drilling a notch out of its own edge: `CORNER_HOLE_WEB_MM` is 1 mm of board
+    and the corner position leaves 0.31 mm of it on the 20 x 30 and 0.88 mm on the 7 x 9.
+    Both are now measured by a test rather than left to the eye. It also means every
+    double-sided preset gets its four screw holes; the six largest boards used to get none
+    at all, because the old arithmetic gave up and returned zero.
+  - The finger strip already trimmed itself clear of the screws, but by taking the run
+    from the first clear finger to the last — which assumed the obstruction is always at an
+    END. An inset screw obstructs one in the middle, and first-to-last quietly put it back;
+    it takes the longest contiguous clear run now.
 - **A mounting bore takes the copper it is drilled through, including a finger.** A hole
   put one position in from the corner — which is what Board Features offers by default —
   reaches the edge-connector strip, and the finger it went through was still drawn intact
