@@ -145,6 +145,11 @@ def _parse_components(components_list: list[SExpr] | None, warnings: list[str]) 
 
         value = _field_value(comp, "value")
         footprint = _field_value(comp, "footprint")
+        if footprint is None:
+            # Said, because it is what forces the host to GUESS a footprint from the
+            # reference and pin count -- the one step the import dialog asks the user to
+            # check, and it had nothing to point them at.
+            warnings.append(f'Component "{ref}" has no footprint; one will be guessed from its reference')
         libsource = _find_child(comp, "libsource")
         lib_part = _field_value(libsource, "part") if libsource is not None else None
 
@@ -182,6 +187,7 @@ def _parse_nets(nets_list: list[SExpr] | None, warnings: list[str]) -> list[Net]
 
     unconnected_count = 0
     collected: list[_SortableNet] = []
+    seen_ids: set[str] = set()
 
     for net_form in _find_children(nets_list, "net"):
         code = _field_value(net_form, "code")
@@ -212,6 +218,19 @@ def _parse_nets(nets_list: list[SExpr] | None, warnings: list[str]) -> list[Net]
             warnings.append(f'Net "{name}" has no "code" field; using a positional id')
             net_id = f"net-{len(collected)}"
             code_key = math.nan
+        if net_id in seen_ids:
+            # Two nets with one code is a broken export, but it is the user's export and
+            # the only alternative was refusing the whole import over one collision --
+            # which the command downstream did, with nothing the user could do about it.
+            original = net_id
+            suffix = 2
+            while f"{original}-{suffix}" in seen_ids:
+                suffix += 1
+            net_id = f"{original}-{suffix}"
+            warnings.append(
+                f'Net "{name}" shares its code with another net; imported as "{net_id}"'
+            )
+        seen_ids.add(net_id)
 
         collected.append(
             _SortableNet(
@@ -251,6 +270,22 @@ def parse_kicad_netlist(source: str) -> KicadNetlistImport:
             root = f
             break
     if root is None:
+        # Name what the file IS when it is recognisable: handing the importer the
+        # schematic instead of the netlist exported from it is the first-time mistake,
+        # and "no export form" does not say which file to use instead.
+        head = next(
+            (f[0] for f in forms if isinstance(f, list) and f and isinstance(f[0], str)), None
+        )
+        if head == "kicad_sch":
+            raise ValueError(
+                "This is a KiCad schematic, not a netlist. In KiCad, use File ▸ Export ▸ "
+                "Netlist… and import the .net file it writes."
+            )
+        if head == "kicad_pcb":
+            raise ValueError(
+                "This is a KiCad board, not a netlist. Export a netlist from the schematic "
+                "(File ▸ Export ▸ Netlist…) and import that."
+            )
         raise ValueError('Not a KiCad netlist: no top-level "export" form found')
 
     warnings: list[str] = []

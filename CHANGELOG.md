@@ -20,8 +20,251 @@ closed without a bump.
 
 ## [Unreleased]
 
+A polish release: nothing new to learn, and a long list of things that were almost right.
+Four audits — the window, the three views, the engine's own prose and the loader's
+tolerance for bad files — each came back with what they found, and what follows is what
+survived being checked.
+
+### Added
+
+- **The three panels that had no way back.** Parts, Nets and DRC / LVS can be closed from
+  their title bars, and the only route back was a right-click on the menu bar, which nobody
+  finds. View ▸ Show Parts (`Ctrl+1`), Show Nets (`Ctrl+2`) and Show DRC / LVS (`Ctrl+6`)
+  join the three toggles the other panels already had.
+- **Right-clicking a conductor.** The menu over a trace was the bare-board menu — Paste,
+  Connect, Fit — with no way to delete the trace under the pointer. It now selects the
+  conductor and offers Copy, Duplicate and Delete, the way a right-click on a part already
+  selects the part.
+- **`Ctrl+0`, `Ctrl++` and `Ctrl+-` follow the keyboard focus.** Over the schematic panel
+  they fit and zoom the sheet, which had a Fit button and no key; over the board they do
+  what they always did. The sheet's zoom also gained the board's limits — a few trackpad
+  flicks used to leave a blank field or one pin, with nothing but the button to recover.
+- **Undo and Redo say what they will do.** The Edit menu read "Undo" and "Redo" and the
+  answer was one hover away; it now reads "Undo Move R4 to C7", and Redo — which never
+  named anything, because the bus had no way to ask — reads the same. `CommandBus` gained
+  `redo_history()` for it.
+- **Load warnings are shown, not counted.** Opening a file that was read differently from
+  how it was written — a diagonal solder-trace step, an unknown property, a duplicated
+  reference — put "(2 warning(s))" in the status bar and nothing else anywhere. They are
+  listed in a dialog now. And a duplicated reference IS a warning now: every net node
+  names a part by reference, so two R1s is a netlist that cannot say which one it wired.
+- **Two DRC rules for the file only a hand can write.** `conductor-off-board` (a conductor
+  with a hole outside the grid, the twin of `component-off-board`) and `unknown-footprint`
+  (a part whose footprint neither the library nor the id grammar can produce). No command
+  can create either state, so both only ever fire on a document edited by hand or written
+  by another tool — which is exactly the file that must still open and be told what is
+  wrong with it. Both are Python-only (`PYTHON_ONLY_RULES`); the second turned out to fire
+  on **eight of the fifteen golden fixtures**, all on one id, `c-disc-1`, which exists in
+  neither engine. The fixtures are dumps of the original and are left as they are; the
+  rule is excluded from the differential comparison and pinned by its own test.
+- **The interface is Turkish where it was still English.** The status bar's DRC, LVS and
+  ratsnest fields, the Nets panel's "done", the DRC panel's summaries, the schematic
+  panel's summary, the three file dialogs, the progress dialog's five labels, the
+  confirmations' bodies, the "select a part first" line and its five verbs, the Board Setup
+  material list, and the board's own prose while measuring, picking pins and joining them.
+  `tests/test_i18n.py` now also checks the View menu for accelerator clashes, which found
+  one in each language.
+
+### Changed
+
+- **A group moved together is one undo step.** Five parts dragged or nudged at once used
+  to be five `component.move` commands, so five `Ctrl+Z` presses to put them back — and a
+  refusal part-way through left the group torn apart. The scene dispatches one
+  `component.moveMany`, which is all-or-nothing: a locked part in the selection refuses the
+  whole move and says which part.
+- **Every destructive question puts Cancel under Enter.** Delete parts, delete conductors,
+  delete a net and reload from disk all used `QMessageBox.question` with no buttons named,
+  which puts Yes under Enter — so a confirmation answered by reflex was a deletion. They
+  share one box now, `MainWindow._confirm`, whose button carries the verb ("Delete") and
+  whose default is Cancel. Tests that used to stub `QMessageBox.question` stub `_confirm`.
+- **Deleting a mixed selection deletes all of it.** A rubber band that took a part and the
+  two traces on it used to delete the part and keep the traces without a word; the
+  question now says the conductors go too, and they do.
+- **The loader refuses what `board.set` refuses.** A `.perf` with `"pitch": 0`, no columns,
+  or a drill wider than its pad used to load without a word, and then every repaint divided
+  by it — in the pure render path, a segfault. Two components sharing an id (a part no edit
+  could ever reach, and one the placer refused the whole board over) and a `formatVersion`
+  below 1 (no such version has existed) are refused too, with the same codes and paths the
+  other load errors carry. `Missing required field "cols"` now says `"board.cols"`, the
+  path every neighbouring message already quoted.
+- **`CommandBus.dispatch` never raises, as its contract says.** A payload of the wrong
+  shape — a dict where a dataclass was expected, a tuple where a `HoleCoord` was — used to
+  surface as an `AttributeError` out of the command; it is `{ok: false, code:
+  "invalid-payload"}` now, which is what an agent on the far side of the MCP server needs.
+  The undo stack is bounded at a thousand entries, where it had no bound at all.
+- **Save is enabled only when there is something to save.** `Ctrl+S` on an unmodified
+  board rewrote the file — a new modified stamp, a new mtime — for nothing. An untitled
+  board can always be saved somewhere, so Save stays live there.
+- **The Downloaded strip has a Close button.** Its only button was Hide, which skips that
+  version for good — so closing the strip after a successful download told the application
+  never to mention the release the user had just fetched. Hide stays on the announcement,
+  where it means what it says.
+- **`board.set` names every stranded part, and refuses to strand a track cut.** Shrinking a
+  board with three parts outside the new size used to name the first, so the refusal
+  repeated once per part, each discovered only after the previous one had been moved. A
+  cut off the board was kept silently — and if the board was grown again, it broke a strip
+  nobody remembered cutting. A component also needs a non-empty reference now; the wiring
+  cannot name one without.
+- **MCP results mean one thing by `ok`.** `run_lvs` returned `ok: false` when the board
+  did not match the schematic, while everywhere else `ok: false` means the call was
+  refused; it returns `ok: true` with `matches_schematic` now, and `run_drc` carries
+  `ok: true` too. `autoroute` on stripboard returned `cuts: 0` for an empty plan and
+  `cuts: [...]` for a committed one; it is always a list, with `cut_count` and
+  `link_count` beside it. `export_pdf` with no `directory` wrote two PDFs into the
+  server's working directory, against the instructions' own promise that nothing writes to
+  disk unless a path is named — it refuses with `no-directory`. Paths accept `~`, and an
+  empty path is refused rather than blamed on permissions. The server's instructions now
+  list all six connection kinds (not four), give the design-first working order
+  `docs/MCP.md` gives, say what `plain` is as a board type, and send an agent to `reroute`
+  after `optimize_placement` rather than to `autoroute`, which only adds.
+- **The KiCad importer says what it was handed.** A `.kicad_sch` given to it — the
+  schematic instead of the netlist exported from it, which is the first-time mistake — got
+  "no export form found"; it now says it is a schematic and where the netlist comes from.
+  Two nets sharing a `code` (a broken export, but the user's export) used to refuse the
+  whole import as a duplicate id; they are imported with a suffix and a warning. A
+  component with no footprint is warned about, since it is what forces the host to guess
+  one.
+
 ### Fixed
 
+- **Measuring, then flipping the board, broke every tool.** The measurement marker is an
+  item like the others and a rebuild destroys it, but the mode kept a wrapper for it — so
+  the next click, or the next arming of any tool (all of which disarm measuring first),
+  raised from `removeItem` and left every board mode unreachable until the window was
+  reopened. `test_measuring_survives_a_flip` is the reproduction.
+- **Three more things a rebuild lost.** A half-drawn trace kept its path and lost its
+  picture, so after a flip or an undo the tool was armed with nothing on the board and
+  Enter committed an invisible chain. The placement ghost came back at A1 after every
+  placement — at exactly the moment the next part was being lined up. And a conductor
+  selected to be deleted was deselected by whatever unrelated command came first, while
+  parts had always been re-selected by id.
+- **Picking a part mid-trace armed both.** Clicking the Parts panel while a trace was being
+  drawn left the ghost following the pointer while every click still extended the trace,
+  so the part could never be placed. The board modes are mutually exclusive and placement
+  now disarms drawing, as drawing already disarmed placement.
+- **The solder side and the keyboard disagreed.** The arrow keys moved a part one column in
+  the document, which on the mirrored solder side is a step to the LEFT under `Right`;
+  Rotate Clockwise turned the other way there for the same reason; and the placement ghost
+  painted a DIP's pins running one way while the placement put them the other. A drag was
+  right all along, because it round-trips through `screen_to_hole`. All three now correct
+  for the side, and `test_arrow_keys_follow_the_screen_on_the_solder_side` holds it.
+- **Flipping the board flips the view and the camera with it.** The scene is mirrored
+  about the hole span's midpoint, so a flip while zoomed in on the left edge showed the
+  right edge; the viewport centre is mirrored too now. And the 3D panel, whose own
+  docstring said the camera turns over "when the board is flipped", stayed on the component
+  side — it turns over.
+- **The last build step was unreachable on the assembly slider.** With N steps the slider's
+  maximum was N, and the maximum means "the finished board", so step N had no position of
+  its own: picking it in the Build Guide panel showed the finished board with nothing picked
+  out. The range is N+1.
+- **Delete was greyed out for a conductor on its own.** Which is the one selection
+  conductors were made selectable for. The status bar also said nothing about a
+  conductor-only selection while Copy and Duplicate were live for it.
+- **Save could not fail.** `Ctrl+S` into a read-only folder or onto a full disk was an
+  unhandled traceback with the board still unsaved behind it, and the close guard would
+  have treated it as saved. It is a dialog, the close guard is told, and a failed Save As
+  does not adopt the path it failed to write.
+- **Exports that reported success for files that were never written.** The 1:1 PDF export
+  trusted `QPdfWriter`, which reports an unwritable target as a warning on stderr and
+  returns; the 3D snapshot trusted `vtkPNGWriter`, which does the same — and the snapshot
+  had none of the "is there GL here" guard the guide export has, so on a machine without
+  offscreen GL it ended the process with every unsaved edit in it. Both check the file on
+  disk; the PDF export offers to open its output like the other two exports.
+- **A freshly opened board inherited the previous one's "parts moved" marks.** Net ids are
+  document-local — every board has a `net-1` — and the record of which nets were routed for
+  a position a part had since left was never cleared on Open, so `Ctrl+R` on a new file
+  asked about re-routing nets nobody had touched. Open, New and Recover all forget it now,
+  with the schematic selection, the described custom parts and the placement seed.
+- **Board Features ▸ Remove with nothing chosen deleted the first row.** Chosen for the
+  user. The button follows the selection now.
+- **The Cut Track tooltip stuck on "only stripboard".** A board switched to stripboard
+  under an open window kept the explanation of why the tool was unavailable on a tool that
+  had started working. Reset 3D Camera and Exploded View, which do nothing until the 3D
+  panel has been opened, are greyed out until then rather than silently inert.
+- **Escape wiped the status bar when there was nothing to leave.** The routing summary is
+  posted with no timeout so it can be read, and a reflex Escape cleared it. It clears only
+  when a mode was actually left.
+- **"Saved …" and "Exported …" never went away.** Both were posted with no timeout, so the
+  path of the last save sat in the status bar for the rest of the session. Eight seconds,
+  like every comparable message.
+- **Menu tooltips were switched on for four menus of twelve.** The explanations written for
+  Reload, Board Setup, Board Features, the exports, Measure and the 3D items, and the full
+  path behind each recent file, never appeared anywhere. Every menu shows them.
+- **The recent-files menu went stale in place.** It was rebuilt on save, open and clear
+  only, so a file moved or deleted while the window was up stayed listed and failed when
+  picked. It is rebuilt as it opens.
+- **The recovery offer and the first-run update question stacked.** Both are scheduled a
+  moment after the window appears, and the second opened its modal on top of the first's.
+  The update question waits while another dialog is up.
+- **A recovery record that would not parse was offered forever.** And stood in front of
+  every other record behind it. It is dropped after the failure to open it is reported.
+- **The "cannot write the recovery file" warning was wiped within seconds.** It was a status
+  message, and the next command's description replaced it — so autosave was dead for the
+  rest of the session with nothing on screen saying so. It is a permanent field now, shown
+  while the condition lasts and cleared when a write succeeds again.
+- **A file change under a running planner swapped the board out from under the plan.**
+  The planner pumps the event loop so the window can repaint and offer Cancel, which also
+  let the file watcher reload the document mid-plan — and the plan was then committed into
+  a different board. The watcher waits for the planner, and so does the close button, whose
+  caller would otherwise have dispatched into a window that had already cleared its
+  recovery record.
+- **A refused net dialog threw away what was typed.** A duplicate name was refused into
+  the status bar after the dialog had closed; it is a dialog now, and the form comes back
+  filled in.
+- **The placement cursor was the only mode cursor.** Drawing, connecting, cutting and
+  measuring all left the ordinary arrow over a board where a click no longer selected
+  anything; every mode shows the crosshair.
+- **Leaving the board cleared nothing.** The status bar kept naming the hole the pointer
+  left the board over, and Paste from the menu still landed there. Panning with the middle
+  button and zooming from the keyboard also left the ghost and the address on the hole
+  that had scrolled away; both re-read what is under a pointer that has not moved.
+- **Zoom stopped one notch short of its own limit.** The last wheel step before a bound did
+  nothing rather than landing on the bound, and a `fitInView` that landed outside the range
+  — two pads framed from a DRC finding in a large viewport — left the wheel dead in both
+  directions. Steps are clamped; fits are pulled back inside.
+- **Opening a file from the command line did not fit it.** The dialog route fitted the
+  board; `perfstudio big-board.perf` arrived at a fixed six pixels per millimetre, which is
+  a corner of anything bigger than a 7 × 9 cm board.
+- **A truncated `.net` was a traceback.** `SExprSyntaxError` was not a `ValueError`, which is
+  what both importers catch, so the commonest real breakage escaped the window and the MCP
+  server alike. It is a `ValueError` now.
+- **Double-clicking a pin while wiring the sheet opened a dialog** over the half-made
+  connection. The sheet follows the board's rule: a mode owns the first click of any pair.
+- **A download that could not be written was an exception in the event loop.** A disk
+  that fills part-way through 300 MB now cancels the transfer, reports why, and removes the
+  `.part` file, like every other failure in the updater.
+- **The Schematic panel's Remove was enabled for a symbol nothing defines** — one that
+  exists only because a net names it — with an explanation of why it could not work as its
+  only outcome. The empty panel also said "0 part(s), 0 net(s)" and nothing else; it now
+  says what the two buttons under it are for.
+- **Tooltips learned the two things people hover for.** A conductor's tooltip names its
+  net, and a part's names its hole and rotation.
+- **The guide said several things that were not so.** "Cut it to 32 × 22 holes (W × H mm)"
+  computed the size from the pitch alone and dropped the printed border, so on a board from
+  a preset it was 4 to 9 mm too small. The DIP step said to leave the IC "until phase 8",
+  where there is no such step; it now says the socket goes in now and the IC after the
+  closing checks. "Put U1 into their sockets" agrees in number and allows for no socket.
+  Bare wire was told to be stripped 0 mm. "Flux is not optional on a run this long" was
+  appended to two-pad joints. A trapped jumper was named `cond-7`, which nobody at a
+  bench can look up; it is named by its ends. The polarity note's dash swallowed the hole
+  address. The header spelled the board `32×22 FR4` twelve lines above `32 × 22` and
+  `FR-4`. One separator for a part's span (`→`), one spelling for a wire's colour across
+  the CSV, the HTML and the JSON (`colour`), one wording for its type. The goldens were
+  re-blessed after reading every changed line.
+- **DRC, LVS and the router name things by address.** Four DRC rules identified a run only
+  by its conductor id; they carry its ends now, and the material is spelled `FR-2` rather
+  than the enum's `FR2`. `mOhm` is `mΩ`, as the guide already had it. An LVS short could
+  print an internal physical-net id where an address was promised. Router explanations
+  are capitalised consistently. The autoroute summary the headless CLI prints used a
+  non-ASCII separator four hundred lines below the comment forbidding one; `--headless`
+  also pluralises one way throughout, uses the window's own reader (so a directory is one
+  line and not a traceback), and says so when it cannot create its output folder.
+- **The documentation caught up with the code.** Both READMEs claimed `v0.4.0` and
+  forty-four MCP tools (it is `v0.9.0` and fifty-one), recommended the `python -m`
+  invocation `docs/MCP.md` warns against, and — in Turkish — gave English menu paths.
+  `CONTRIBUTING.md` said ruff was not a gate and counted ~1260 tests; it is, and there are
+  ~2070. `examples/README.md` said the FR-2 guide "halves the dwell"; it cuts it from
+  three seconds to two.
 - **The AppImage build fetches its own runtime.** v0.9.0's release job died on
   `Failed to download runtime: server returned status code 302` twenty minutes after
   the same job had passed on a dry run: an AppImage is a squashfs image behind a small

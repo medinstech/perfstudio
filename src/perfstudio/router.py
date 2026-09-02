@@ -1138,7 +1138,7 @@ def _lead_bend_candidate(
         conductors=(conductor,),
         cost=ctx.opts.costs.lead_bend_fixed + length_mm * ctx.opts.costs.lead_bend_per_mm,
         explanation=(
-            f"lead bend: fold {pin_number}'s own leg {length_mm:.1f} mm from "
+            f"Lead bend: fold {pin_number}'s own leg {length_mm:.1f} mm from "
             f"{format_hole(from_)} to {format_hole(to)} — no wire to cut, and it is "
             "already soldered at one end."
         ),
@@ -1212,8 +1212,11 @@ def _straight_wire_candidate(
     else:
         note = "component-side jumper — visible, and it takes up board space"
 
+    # Capitalised like every other candidate's explanation: these lines are read side by
+    # side in the router's report, and "Solder trace: ..." above "bare wire: ..." reads as
+    # two different kinds of sentence rather than two entries in one list.
     explanation = (
-        f"{kind.replace('-', ' ', 1)}: {length_mm:.1f} mm from "
+        f"{kind.replace('-', ' ', 1).capitalize()}: {length_mm:.1f} mm from "
         f"{format_hole(from_)} to {format_hole(to)} — {note}."
     )
 

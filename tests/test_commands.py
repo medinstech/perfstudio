@@ -1664,3 +1664,90 @@ def test_a_whole_circuit_drawn_before_the_board_survives_a_save_and_a_load():
     assert '"parts"' in text
     # ...and a board with nothing in the design does not gain the key.
     assert '"parts"' not in serialize_document(create_empty_document(META))
+
+
+
+# ---------------------------------------------------------------------------
+# The bus never raises, and board.set names everything it refuses over
+# ---------------------------------------------------------------------------
+
+
+def test_a_payload_of_the_wrong_shape_is_refused_rather_than_raised():
+    """"Never raises; callers branch on ok" has to hold for an agent handing the bus a
+    dict where a dataclass was expected -- a traceback lands in somebody else's process."""
+    bus = new_bus()
+    result = bus.dispatch("component.place", {"ref": "R1", "footprint_id": "r-axial-5"})
+    assert result.ok is False
+    assert result.code == "invalid-payload"
+    assert "component.place" in result.message
+    assert bus.journal() == ()
+
+
+def test_a_shrink_names_every_stranded_part_at_once():
+    """Naming the first meant one refusal per part, each discovered only after the
+    previous one had been moved."""
+    bus = new_bus()
+    for ref, col in (("R1", 30), ("R2", 40), ("R3", 50)):
+        bus.dispatch(
+            "component.place",
+            PlaceComponentPayload(ref=ref, value="10k", footprint_id="r-axial-5", anchor=HoleCoord(col, 5)),
+        )
+    result = bus.dispatch(
+        "board.set", SetBoardPayload(board=dataclasses.replace(DEFAULT_BOARD, cols=20, rows=20))
+    )
+    assert result.ok is False
+    assert result.code == "would-strand-component"
+    assert all(ref in result.message for ref in ("R1", "R2", "R3")), result.message
+
+
+def test_a_shrink_refuses_to_strand_a_track_cut():
+    """A cut off the board survives the shrink unseen and, if the board is grown again,
+    breaks a strip nobody remembers cutting."""
+    bus = new_bus()
+    bus.dispatch(
+        "board.set",
+        SetBoardPayload(board=dataclasses.replace(DEFAULT_BOARD, type="stripboard", strip_axis="horizontal")),
+    )
+    assert bus.dispatch("cut.add", AddCutPayload(at=HoleCoord(15, 15))).ok
+    result = bus.dispatch(
+        "board.set",
+        SetBoardPayload(
+            board=dataclasses.replace(
+                DEFAULT_BOARD, type="stripboard", strip_axis="horizontal", cols=5, rows=5
+            )
+        ),
+    )
+    assert result.ok is False
+    assert result.code == "would-strand-cut"
+    assert "P16" in result.message
+
+
+def test_a_component_needs_a_reference():
+    """Every net node names a part by reference; a part with none is one the wiring can
+    never reach."""
+    bus = new_bus()
+    result = bus.dispatch(
+        "component.place",
+        PlaceComponentPayload(ref="", value="10k", footprint_id="r-axial-5", anchor=HoleCoord(2, 2)),
+    )
+    assert result.ok is False
+    assert result.code == "invalid-ref"
+
+
+def test_the_undo_stack_is_bounded():
+    bus = new_bus()
+    limit = CommandBus.UNDO_LIMIT
+    for index in range(limit + 5):
+        assert bus.dispatch(
+            "net.add", AddNetPayload(name=f"N{index}", net_class="signal")
+        ).ok
+    assert len(bus.journal()) == limit
+    # The OLDEST entries went, so the most recent edit is still the first to undo.
+    assert bus.history()[-1].endswith(f"N{limit + 4}")
+
+
+def test_cutting_a_pad_per_hole_board_says_what_the_board_is():
+    bus = new_bus()
+    result = bus.dispatch("cut.add", AddCutPayload(at=HoleCoord(3, 3)))
+    assert result.ok is False
+    assert "pad-per-hole" in result.message

@@ -611,7 +611,7 @@ def test_wire_colours_follow_the_convention_and_are_stable() -> None:
             net("n-sig", "OUT", "signal", (("R1", "1"), ("R1", "2"))),
         ),
     )
-    colors = {cut.net_name: cut.color for cut in build_guide(doc, REGISTRY).cut_list}
+    colors = {cut.net_name: cut.colour for cut in build_guide(doc, REGISTRY).cut_list}
 
     assert colors["GND"] == "black"
     assert colors["VCC"] == "red"
@@ -830,7 +830,12 @@ def test_the_part_over_a_trapped_jumper_is_told_to_check_it_is_down() -> None:
     guide = build_guide(doc, REGISTRY)
     step = _part_step_for(guide, "U1")
 
-    assert any("j1" in note for note in step.notes)
+    # Named by where it RUNS, not by "j1": a conductor id is a document-internal handle
+    # and there is nothing at the bench to look one up in.
+    note = next(n for n in step.notes if "jumper" in n)
+    assert "from F12 to U12" in note
+    assert "j1" not in note
+    assert "phase 1" in note
 
 
 def test_an_electrolytic_next_to_a_to220_is_told_which_capacitor_to_reach_for() -> None:

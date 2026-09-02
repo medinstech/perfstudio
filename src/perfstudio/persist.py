@@ -741,7 +741,10 @@ def _require_field(obj: dict[str, object], key: str, parent_path: str) -> object
     ``missing-field``. Only an absent key is ``missing-field``.
     """
     if key not in obj:
-        raise ValidationError("missing-field", f'Missing required field "{key}".', _field_path(parent_path, key))
+        # The full path in the sentence, as every neighbouring message has: "cols" is
+        # missing from somewhere, and "board.cols" says where.
+        where = _field_path(parent_path, key)
+        raise ValidationError("missing-field", f'Missing required field "{where}".', where)
     return obj[key]
 
 
@@ -885,15 +888,46 @@ def _parse_board(raw: object, warnings: list[str]) -> Board:
             f"{pad_diameter} mm pad width. The pads will be treated as round until it is."
         )
 
+    cols = _expect_integer(_require_field(obj, "cols", path), _field_path(path, "cols"))
+    rows = _expect_integer(_require_field(obj, "rows", path), _field_path(path, "rows"))
+    pitch = _expect_number(_require_field(obj, "pitch", path), _field_path(path, "pitch"))
+    drill_diameter = _expect_number(
+        _require_field(obj, "drillDiameter", path), _field_path(path, "drillDiameter")
+    )
+    # The same facts ``board.set`` refuses (commands._SetBoard), refused here for the
+    # same reason: a file with a zero pitch used to load without a word, and then every
+    # repaint divided by it. Refused rather than warned about, because nothing on such a
+    # board can be drawn, and a board a user cannot see is not one they can repair.
+    if cols < 1 or rows < 1:
+        raise ValidationError(
+            "invalid-board",
+            f"A board needs at least 1 column and 1 row; this one is {cols} × {rows}.",
+            path,
+        )
+    if pitch <= 0 or pad_diameter <= 0 or drill_diameter <= 0:
+        raise ValidationError(
+            "invalid-board",
+            f"Pitch and pad/drill diameters must be positive; got pitch {pitch}, pad "
+            f"{pad_diameter}, drill {drill_diameter}.",
+            path,
+        )
+    if drill_diameter >= pad_diameter:
+        raise ValidationError(
+            "invalid-board",
+            f"The {drill_diameter} mm drill is not smaller than the {pad_diameter} mm pad, "
+            f"which leaves no copper ring to solder to.",
+            path,
+        )
+
     return Board(
         type=_expect_enum(_require_field(obj, "type", path), _field_path(path, "type"), BOARD_TYPES),  # type: ignore[arg-type]
-        cols=_expect_integer(_require_field(obj, "cols", path), _field_path(path, "cols")),
-        rows=_expect_integer(_require_field(obj, "rows", path), _field_path(path, "rows")),
-        pitch=_expect_number(_require_field(obj, "pitch", path), _field_path(path, "pitch")),
+        cols=cols,
+        rows=rows,
+        pitch=pitch,
         thickness=_expect_number(_require_field(obj, "thickness", path), _field_path(path, "thickness")),
         material=_expect_enum(_require_field(obj, "material", path), _field_path(path, "material"), BOARD_MATERIALS),  # type: ignore[arg-type]
         pad_diameter=pad_diameter,
-        drill_diameter=_expect_number(_require_field(obj, "drillDiameter", path), _field_path(path, "drillDiameter")),
+        drill_diameter=drill_diameter,
         strip_axis=strip_axis,  # type: ignore[arg-type]
         pad_shape=pad_shape,  # type: ignore[arg-type]
         pad_length=pad_length,
@@ -1173,6 +1207,14 @@ def _parse_document(raw_input: object) -> tuple[PerfDocument, list[str]]:
     root = _expect_object(raw_input, "")
 
     format_version = _expect_integer(_require_field(root, "formatVersion", ""), "formatVersion")
+    if format_version < 1:
+        # No such version has ever existed, so this is a mangled field rather than an
+        # old file -- and an old file is the only thing a migration knows what to do with.
+        raise ValidationError(
+            "format-invalid",
+            f"formatVersion is {format_version}; the .perf format started at 1.",
+            "formatVersion",
+        )
     if format_version > CURRENT_FORMAT_VERSION:
         raise ValidationError(
             "format-too-new",
@@ -1192,6 +1234,28 @@ def _parse_document(raw_input: object) -> tuple[PerfDocument, list[str]]:
     components = tuple(
         _parse_component(item, _index_path("components", i), warnings) for i, item in enumerate(components_raw)
     )
+    # Each component is parsed on its own, so nothing above can see two of them. Two
+    # sharing an id is refused: every command looks a component up by id and would find
+    # the first, so the second is a part no edit can ever reach -- and the placer, which
+    # moves the whole board as one command, refused the batch outright. A shared
+    # REFERENCE is a warning, in the spirit of validate_orthogonal_chain: the board still
+    # opens, and the wiring's ambiguity is said out loud.
+    seen_ids: set[str] = set()
+    seen_refs: set[str] = set()
+    for index, component in enumerate(components):
+        if component.id in seen_ids:
+            raise ValidationError(
+                "duplicate-id",
+                f'Component id "{component.id}" appears more than once; ids must be unique.',
+                _index_path("components", index),
+            )
+        seen_ids.add(component.id)
+        if component.ref in seen_refs:
+            warnings.append(
+                f'Reference "{component.ref}" is used by more than one component. Every net '
+                f"node names a part by reference, so the wiring cannot tell them apart."
+            )
+        seen_refs.add(component.ref)
 
     conductors_raw = _expect_array(_require_field(migrated, "conductors", ""), "conductors")
     conductors = tuple(
@@ -1220,6 +1284,22 @@ def _parse_document(raw_input: object) -> tuple[PerfDocument, list[str]]:
     parts = tuple(
         _parse_part(item, _index_path("parts", i), warnings) for i, item in enumerate(parts_raw)
     )
+    # The design's half of the same two rules: a part's id is unique across both lists
+    # (placing moves it from one to the other), and a reference is unique across both.
+    for index, part in enumerate(parts):
+        if part.id in seen_ids:
+            raise ValidationError(
+                "duplicate-id",
+                f'Part id "{part.id}" appears more than once; ids must be unique.',
+                _index_path("parts", index),
+            )
+        seen_ids.add(part.id)
+        if part.ref in seen_refs:
+            warnings.append(
+                f'Reference "{part.ref}" is used by more than one part or component, so '
+                f"the wiring cannot tell them apart."
+            )
+        seen_refs.add(part.ref)
 
     nets_raw = _expect_array(_require_field(migrated, "nets", ""), "nets")
     nets = tuple(_parse_net(item, _index_path("nets", i), warnings) for i, item in enumerate(nets_raw))
@@ -1280,7 +1360,9 @@ def deserialize_document(json_text: str) -> DeserializeOk | DeserializeErr:
     """
     try:
         raw = json.loads(json_text, parse_constant=_reject_json_constant)
-    except ValueError as err:
+    except (ValueError, RecursionError) as err:
+        # RecursionError too: json.loads raises it on absurdly deep nesting, and "never
+        # raises" has to include a file built to be absurd.
         return DeserializeErr(code="invalid-json", message=f"Could not parse file as JSON: {err}")
 
     try:

@@ -309,7 +309,9 @@ class WireCut:
     cut_mm: Mm
     strip_mm: Mm
     awg: int
-    color: str
+    #: Spelled the way the CSV header, the HTML table and the JSON key all spell it.
+    #: One field, one spelling: the JSON key is this field's name.
+    colour: str
     insulated: bool
 
 
@@ -635,15 +637,25 @@ def _part_notes_from_drc(
     somebody is following with an iron in their hand.
     """
     ref_by_id = {component.id: component.ref for component in doc.components}
+    # A conductor id ("cond-7") is not something anybody at the bench can look up. Every
+    # other line of the guide names copper by where it RUNS, so this one does too.
+    path_by_id = {conductor.id: conductor.path for conductor in doc.conductors}
     notes: dict[str, list[str]] = {}
 
     for violation in violations:
         if violation.rule == "jumper-under-body" and violation.component_ids:
-            jumpers = ", ".join(violation.conductor_ids)
+            wheres = [
+                _conductor_where(path_by_id.get(conductor_id))
+                for conductor_id in violation.conductor_ids
+            ]
+            many = len(wheres) > 1
             notes.setdefault(violation.component_ids[0], []).append(
-                f"Jumper {jumpers} runs underneath this part, so it has to be soldered "
-                f"first — it is in phase 1 for that reason. Check it is down and lying "
-                f"flat before this goes in."
+                f"The top jumper{'s' if many else ''} {' and '.join(wheres)} "
+                f"{'run' if many else 'runs'} underneath this part, so "
+                f"{'they have' if many else 'it has'} to be soldered first — "
+                f"{'they are' if many else 'it is'} in phase 1 for that reason. Check "
+                f"{'they are' if many else 'it is'} down and lying flat before this "
+                f"goes in."
             )
         elif violation.rule == "heat-proximity" and len(violation.component_ids) == 2:
             source_ref = ref_by_id.get(violation.component_ids[0], "the part next to it")
@@ -658,6 +670,13 @@ def _part_notes_from_drc(
     return {component_id: tuple(lines) for component_id, lines in notes.items()}
 
 
+def _conductor_where(path: tuple[HoleCoord, ...] | None) -> str:
+    """A conductor named by its ends, for a message a person reads holding the board."""
+    if not path:
+        return "on this board"
+    return f"from {format_hole(path[0])} to {format_hole(path[-1])}"
+
+
 def _part_step(
     component: ComponentInstance,
     footprint: Footprint,
@@ -670,9 +689,13 @@ def _part_step(
 
     notes: list[str] = []
     if footprint.body.archetype == "dip":
+        # The old wording told the reader to "leave it until phase 8", which is where the
+        # IC goes in but is not where this step is: PHASE_BY_ARCHETYPE puts a DIP in phase
+        # 2, the SOCKET phase. Say which of the two things happens now and which does not.
         notes.append(
-            "Fit a socket here if you have one. If you are soldering the IC directly, "
-            "leave it until phase 8 -- it is the last thing that should meet an iron."
+            "Fit a socket here if you have one — this phase is the sockets. The IC "
+            "itself does not go in until the closing checks in phase 8, socket or no "
+            "socket: it is the last thing on the board that should meet an iron."
         )
     if component.mirrored:
         notes.append(
@@ -737,7 +760,7 @@ def _span_of(pin_holes: tuple[tuple[str, HoleCoord], ...]) -> str:
     pin_one = dict(pin_holes).get("1")
     where = f" with pin 1 at {format_hole(pin_one)}" if pin_one is not None else ""
     return (
-        f"{format_hole(corner_a)}–{format_hole(corner_b)}, "
+        f"{format_hole(corner_a)} → {format_hole(corner_b)}, "
         f"{len(pin_holes)} pins{where}"
     )
 
@@ -764,7 +787,9 @@ def _bend_template(pin_holes: tuple[tuple[str, HoleCoord], ...], board: Board) -
 #: cannot cover all three, and guessing wrong here is what makes a finished board dead.
 _PIN_NAME_MEANING: dict[str, str] = {
     "+": "Positive (long) lead",
-    "-": "Negative lead — the side with the printed stripe",
+    # Parenthesised, not dashed: _polarity_note appends " in <hole>" to each of these,
+    # and a trailing dashed clause swallowed the address ("...printed stripe in Y3").
+    "-": "Negative lead (the side with the printed stripe)",
     "A": "Anode (long lead)",
     "K": "Cathode (short lead, flat on the rim)",
 }
@@ -909,10 +934,12 @@ def _conductor_step(
                 "building the run out of solder alone: it drops the resistance by roughly "
                 "an order of magnitude and is far easier to make repeatable."
             )
-        notes.append(
-            "Tin each pad lightly first, then join them. Flux is not optional on a run "
-            "this long."
-        )
+        # Tinning applies to every run; the flux sentence says "on a run this long" and
+        # was appended to two-pad joints as well. Same threshold as the spine suggestion
+        # above, so one run is either long or it is not.
+        notes.append("Tin each pad lightly first, then join them.")
+        if pads >= 3:
+            notes.append("Flux is not optional on a run this long.")
     elif conductor.kind in ("bare-wire", "insulated-wire", "top-jumper"):
         insulated = conductor.kind != "bare-wire"
         cut = _wire_cut(
@@ -969,7 +996,7 @@ def _wire_cut(
     path: tuple[HoleCoord, ...],
     board: Board,
     current_a: float | None,
-    color: str,
+    colour: str,
     insulated: bool,
     options: GuideOptions,
 ) -> WireCut:
@@ -995,7 +1022,7 @@ def _wire_cut(
         cut_mm=path_mm + ends,
         strip_mm=strip_mm,
         awg=awg,
-        color=color,
+        colour=colour,
         insulated=insulated,
     )
 
@@ -1313,7 +1340,12 @@ def _closing_checks(
                 kind="polarity",
                 title="Fit the ICs, pin 1 as shown",
                 instruction=(
-                    f"Only now put {', '.join(sorted(dips))} into their sockets, notch to the "
+                    # Plural agreement on the actual count, and "sockets" is not a fact:
+                    # nothing in the document records whether one was fitted, so the
+                    # sentence has to work for a board where none was.
+                    f"Only now put {', '.join(sorted(dips))} into "
+                    + ("its socket" if len(dips) == 1 else "their sockets")
+                    + ", or straight into the board if you did not fit one, notch to the "
                     "end the sheet marks. Straighten the legs on a flat surface first."
                 ),
                 expected="Every notch and dot pointing the same way as the sheet.",
@@ -1382,7 +1414,7 @@ def _tools(doc: PerfDocument, cuts: list[WireCut], spines: list[SpineCut]) -> tu
     ]
     if cuts:
         gauges = sorted({cut.awg for cut in cuts})
-        colors = sorted({cut.color for cut in cuts})
+        colors = sorted({cut.colour for cut in cuts})
         total = sum(cut.cut_mm for cut in cuts)
         tools.append(
             f"Hookup wire, AWG {', '.join(str(g) for g in gauges)} in {', '.join(colors)} "

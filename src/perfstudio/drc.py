@@ -67,6 +67,7 @@ from .model import (
     HEAT_CLEARANCE_MM,
     HEAT_SOURCE_ARCHETYPES,
     Board,
+    BoardMaterial,
     BoardSide,
     ComponentId,
     ComponentInstance,
@@ -211,6 +212,25 @@ DEFAULT_DRC_OPTIONS: DrcOptions = DrcOptions(
 #: names holes via format_hole, which degrades gracefully (rather than raising)
 #: on the negative/off-board coordinates several of these rules exist to report.
 _safe_hole = format_hole
+
+#: How a substrate is SPELLED in prose. ``Board.material`` is an enum value ("FR2"), and
+#: printing it raw put "FR2" in a DRC message four lines from the word "FR-4" in the same
+#: sentence. The build guide's own prose (guide.py's IRON_BY_MATERIAL notes) writes the
+#: hyphenated form, so that is the one every message uses; guide_export.py's header reads
+#: this table rather than keeping a second copy of it.
+MATERIAL_LABELS: dict[BoardMaterial, str] = {"FR4": "FR-4", "FR2": "FR-2", "FR1": "FR-1"}
+
+
+def _conductor_ends(path: Sequence[HoleCoord]) -> str:
+    """``"(C7 to H7)"`` -- how a conductor is named in a message.
+
+    Every other DRC message names what it is about by its ADDRESS. A bare conductor id
+    ("cond-7") is a document-internal handle that nothing at the bench can look up, so the
+    rules that had only the id now carry the ends as well.
+    """
+    if not path:
+        return "(no path)"
+    return f"({_safe_hole(path[0])} to {_safe_hole(path[-1])})"
 
 
 def _node_side_key(hole: HoleCoord, side: BoardSide) -> str:
@@ -490,6 +510,80 @@ def _check_components_off_board(doc: PerfDocument, lookup: FootprintLookup) -> l
 
 
 # ---------------------------------------------------------------------------
+# Rule 2b -- conductor partly/wholly off board (error) -- Python only
+# ---------------------------------------------------------------------------
+
+
+def _check_conductors_off_board(doc: PerfDocument) -> list[DrcViolation]:
+    """Copper that runs off the edge of the board, the conductor twin of rule 2.
+
+    A command refuses to lay one, so this only ever fires on a document edited by hand or
+    written by an older tool -- which is exactly the file that must still OPEN and be told
+    what is wrong with it, rather than being refused at the door (the same position
+    ``validate_orthogonal_chain`` takes). Reported like the component rule: what it is,
+    how much of it is outside, and one address to look at.
+    """
+    violations: list[DrcViolation] = []
+    for conductor in doc.conductors:
+        path = conductor.path
+        if not path:
+            continue
+        off_board = [h for h in path if not is_inside_board(h, doc.board)]
+        if not off_board:
+            continue
+
+        whole = len(off_board) == len(path)
+        violations.append(
+            DrcViolation(
+                rule="conductor-off-board",
+                severity="error",
+                message=(
+                    f"Conductor {conductor.id} {_conductor_ends(path)} is "
+                    f"{'entirely' if whole else 'partly'} off the board: {len(off_board)} "
+                    f"of its {len(path)} hole(s) fall outside the "
+                    f"{doc.board.cols}x{doc.board.rows} grid "
+                    f"(e.g. {_safe_hole(off_board[0])})."
+                ),
+                holes=tuple(off_board),
+                conductor_ids=(conductor.id,),
+            )
+        )
+    return violations
+
+
+# ---------------------------------------------------------------------------
+# Rule 2c -- footprint the library cannot resolve (error) -- Python only
+# ---------------------------------------------------------------------------
+
+
+def _check_unknown_footprints(doc: PerfDocument, lookup: FootprintLookup) -> list[DrcViolation]:
+    """A part whose footprint nothing can produce, said once and out loud.
+
+    Every rule that needs footprint data skips such a component silently, and so do
+    connectivity, occupancy, the router and the guide -- which is right for each of them
+    individually and adds up to a part that is on the board, in the file, and invisible
+    to every check. The id is quoted because it is what has to be corrected, and because
+    ``footprints.GENERATED_ID_GRAMMAR`` may well be able to build it with one character
+    changed.
+    """
+    return [
+        DrcViolation(
+            rule="unknown-footprint",
+            severity="error",
+            message=(
+                f"{component.ref} uses footprint \"{component.footprint_id}\", which is "
+                f"not in the library and cannot be generated, so it cannot be drawn or "
+                f"built."
+            ),
+            holes=(component.anchor,),
+            component_ids=(component.id,),
+        )
+        for component in doc.components
+        if lookup(component.footprint_id) is None
+    ]
+
+
+# ---------------------------------------------------------------------------
 # Rule 3 -- two component pins in the same hole (error)
 # ---------------------------------------------------------------------------
 
@@ -679,7 +773,10 @@ def _check_solder_trace_paths(doc: PerfDocument) -> list[DrcViolation]:
             DrcViolation(
                 rule="solder-trace-invalid-path",
                 severity="error",
-                message=f"Solder trace {conductor.id} has an invalid path: {result.reason}",
+                message=(
+                    f"Solder trace {conductor.id} {_conductor_ends(path)} has an invalid "
+                    f"path: {result.reason}"
+                ),
                 holes=holes if holes else tuple(path),
                 conductor_ids=(conductor.id,),
             )
@@ -1095,8 +1192,9 @@ def _check_pad_lifting_risk(doc: PerfDocument, options: DrcOptions) -> list[DrcV
                 rule="pad-lifting-risk",
                 severity="warning",
                 message=(
-                    f"Pure solder trace {conductor.id} spans {len(conductor.path)} pads on "
-                    f"{doc.board.material} (phenolic) board — beyond the "
+                    f"Pure solder trace {conductor.id} {_conductor_ends(conductor.path)} "
+                    f"spans {len(conductor.path)} pads on "
+                    f"{MATERIAL_LABELS[doc.board.material]} (phenolic) board — beyond the "
                     f"{options.pad_lifting_max_solder_trace_pads}-pad threshold. Phenolic pads lift "
                     f"under sustained soldering heat far more readily than FR-4; add a wire spine "
                     f"('solder-trace-wired') or split the run."
@@ -1126,7 +1224,8 @@ def _check_solder_trace_feasibility(doc: PerfDocument, options: DrcOptions) -> l
                 rule="solder-trace-too-long",
                 severity="warning",
                 message=(
-                    f"Pure solder trace {conductor.id} spans {len(conductor.path)} pads, beyond the "
+                    f"Pure solder trace {conductor.id} {_conductor_ends(conductor.path)} "
+                    f"spans {len(conductor.path)} pads, beyond the "
                     f"{options.solder_trace_feasibility_max_pads}-pad feasibility threshold. Long "
                     f"pure-solder runs are mechanically unreliable and hard to reflow evenly; consider "
                     f"a wire spine ('solder-trace-wired')."
@@ -1187,10 +1286,11 @@ def _check_current_capacity(doc: PerfDocument, options: DrcOptions) -> list[DrcV
                 severity="warning",
                 message=(
                     f"Net '{net.name}' declares {current_a} A but solder trace {conductor.id} "
+                    f"{_conductor_ends(conductor.path)} "
                     f"({conductor.buildup} buildup{spine_note}) has an estimated cross-section of "
                     f"{cross_section_mm2:.3f} mm² (~{capacity_a:.2f} A capacity at "
                     f"{options.max_current_density_a_per_mm2} A/mm²) — inadequate. Estimated resistance "
-                    f"~{total_r * 1000:.2f} mOhm over {length_mm:.1f} mm, giving a ~{drop_v * 1000:.1f} "
+                    f"~{total_r * 1000:.2f} mΩ over {length_mm:.1f} mm, giving a ~{drop_v * 1000:.1f} "
                     f"mV drop at rated current.{recommendation}"
                 ),
                 holes=tuple(conductor.path),
@@ -1597,6 +1697,8 @@ def run_drc(
     violations: list[DrcViolation] = [
         *_check_component_body_overlap(doc, lookup),
         *_check_components_off_board(doc, lookup),
+        *_check_conductors_off_board(doc),
+        *_check_unknown_footprints(doc, lookup),
         *_check_duplicate_pin_holes(doc, lookup),
         *_check_crossing_conductors(doc, conductor_net_index),
         *_check_conductor_geometry_crossings(doc, conductor_net_index),

@@ -51,6 +51,7 @@ from perfstudio.version import describe as describe_version
 from . import view3d
 from .export_pdf import export_pdf, verify_scale
 from .export_schematic import svg_to_pdf, svg_to_png
+from .main import read_document_text
 from .view2d import RULER_MARGIN_MM, BoardScene
 
 
@@ -89,14 +90,28 @@ def headless(argv: list[str]) -> int:
     perf_path = Path(positional[0]) if positional else _find_repo_root() / "tools" / "diffcheck" / "golden" / "dense.perf"
 
     out_dir = Path.cwd() / "headless_out"
-    out_dir.mkdir(exist_ok=True)
+    try:
+        out_dir.mkdir(exist_ok=True)
+    except OSError as err:
+        # A file already called headless_out, or a read-only working directory. Said in
+        # one line, because a traceback from the line that makes an output folder tells
+        # somebody where Python gave up rather than what to fix.
+        print(f"CANNOT WRITE {out_dir}: {err.strerror or err}")
+        return 1
 
     print(describe_version())
     print(f"document     {perf_path}")
     if not perf_path.exists():
         print(f"LOAD FAILED  no such file: {perf_path}")
         return 1
-    text = perf_path.read_text(encoding="utf-8")
+    # main.read_document_text, not perf_path.read_text: a directory passes exists() and
+    # then raises PermissionError on Windows, which sends the reader after a permissions
+    # problem they do not have. One reader, so the CLI and the Open dialog say the same
+    # thing about the same bad path.
+    text, problem = read_document_text(perf_path)
+    if text is None:
+        print(f"LOAD FAILED  {problem}")
+        return 1
     result = persist.deserialize_document(text)
     if not result.ok:
         print(f"LOAD FAILED  [{result.code}] {result.message} (path={result.path})")
@@ -147,7 +162,7 @@ def headless(argv: list[str]) -> int:
 
     check = verify_scale(print_top, board)
     print(
-        f"\n1:1 check    {check.span_holes} holes at {check.dpi:.0f} dpi: "
+        f"\n1:1 check    {check.span_holes} hole(s) at {check.dpi:.0f} dpi: "
         f"expected {check.expected_px:.3f} px, measured {check.measured_px:.3f} px, "
         f"error {check.error_mm * 1000:.2f} um  -> {'PASS' if check.ok else 'FAIL'}"
     )
@@ -185,17 +200,22 @@ def headless(argv: list[str]) -> int:
     t0 = time.perf_counter()
     violations = run_drc(doc, lookup)
     t_drc = (time.perf_counter() - t0) * 1000
+    # Every "N things" phrase in this report takes "(s)", which is the convention the
+    # engine's own describe() functions use and the one most lines here already followed.
+    # Four conventions in one console report ("1 errors", "1 open", "connection(s)",
+    # conditional-s) read as four programs. The label:value columns above ("parts 16")
+    # are labels, not phrases, and stay as they are.
     errors = sum(1 for v in violations if v.severity == "error")
     warns = sum(1 for v in violations if v.severity == "warning")
-    print(f"\nDRC          {t_drc:6.1f} ms   {errors} errors, {warns} warnings ({len(violations)} total)")
+    print(f"\nDRC          {t_drc:6.1f} ms   {errors} error(s), {warns} warning(s) ({len(violations)} total)")
 
     t0 = time.perf_counter()
     lvs_result = run_lvs(doc, lookup)
     t_lvs = (time.perf_counter() - t0) * 1000
     s = lvs_result.summary
     print(
-        f"LVS          {t_lvs:6.1f} ms   {s.matched_nets}/{s.schematic_nets} nets matched, "
-        f"{s.opens} open, {s.shorts} short, {s.physical_nets} physical nets"
+        f"LVS          {t_lvs:6.1f} ms   {s.matched_nets}/{s.schematic_nets} net(s) matched, "
+        f"{s.opens} open(s), {s.shorts} short(s), {s.physical_nets} physical net(s)"
     )
 
     # --- Ratsnest and a dry-run autoroute ---
@@ -219,7 +239,7 @@ def headless(argv: list[str]) -> int:
         after = run_lvs(plan.document, lookup).summary
         print(
             f"             would leave LVS at {after.matched_nets}/{after.schematic_nets} matched, "
-            f"{after.opens} open, {after.shorts} short"
+            f"{after.opens} open(s), {after.shorts} short(s)"
         )
 
         # Every style, measured. This is the number CI should watch alongside the placer's:
@@ -295,7 +315,7 @@ def headless(argv: list[str]) -> int:
         stats = view3d.render_offscreen(doc, lookup, str(out_dir / "out_3d.png"))
         t_3d = (time.perf_counter() - t0) * 1000
         print(f"\n3D offscreen {t_3d:6.1f} ms   -> out_3d.png")
-        print(f"actors       {stats['actors']} total for {stats['pads']} pads (instanced)")
+        print(f"actors       {stats['actors']} total for {stats['pads']} pad(s) (instanced)")
         view3d.render_offscreen(doc, lookup, str(out_dir / "out_3d_solder.png"), flipped=True)
         print("             out_3d_solder.png (flipped to the solder side)")
     except Exception as exc:

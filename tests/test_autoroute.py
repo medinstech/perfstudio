@@ -436,6 +436,27 @@ def test_describe_names_the_failures() -> None:
     assert "1 connection(s) routed across 1/1 nets" in text
 
 
+def test_every_line_this_module_prints_survives_a_windows_code_page() -> None:
+    """These three go to the headless CLI, and a console on cp1252 raises
+    UnicodeEncodeError on a character it cannot map rather than dropping it -- which turns
+    a report into a crash. ``describe_best`` says so at its own format string; the other
+    two used U+00B7 as a separator anyway.
+    """
+    components = (component("R1", "fp1", hole(2, 2)), component("R2", "fp1", hole(5, 2)))
+    nets = (net("n1", "SIG", "signal", (("R1", "1"), ("R2", "1"))),)
+    doc = make_doc(components=components, nets=nets)
+
+    lines = [
+        describe(plan_autoroute(doc, LOOKUP)),
+        describe_best(plan_best_autoroute(doc, LOOKUP)),
+        describe_reroute(plan_reroute(doc, LOOKUP)),
+    ]
+    for line in lines:
+        assert line
+        line.encode("cp1252")  # raises if anything in it cannot be printed there
+        assert line.isascii(), line
+
+
 def test_unrouted_links_helper_flattens_every_failure() -> None:
     doc = make_doc()
 

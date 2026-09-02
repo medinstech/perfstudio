@@ -299,3 +299,49 @@ def test_ne555_matches_golden_perf_net_structure() -> None:
         imported_pins = {(node.component_ref, node.pin) for node in net.nodes}
         golden_pins = {(node.component_ref, node.pin) for node in golden_net.nodes}
         assert imported_pins == golden_pins, net.name
+
+
+
+# ---------------------------------------------------------------------------
+# What the importer says about a file it cannot use, or only half can
+# ---------------------------------------------------------------------------
+
+
+def test_a_truncated_netlist_is_a_value_error_the_importers_catch() -> None:
+    """Both the window and the MCP server catch ValueError around the import; a syntax
+    error that was not one escaped both as a traceback."""
+    with pytest.raises(ValueError):
+        parse_kicad_netlist('(export (version "E")')
+
+
+def test_a_schematic_handed_to_the_importer_is_named_as_such() -> None:
+    """Feeding the importer the schematic instead of the netlist exported from it is the
+    first-time mistake, and "no export form" did not say which file to use instead."""
+    with pytest.raises(ValueError, match="schematic"):
+        parse_kicad_netlist('(kicad_sch (version 20231120) (generator "eeschema"))')
+
+
+def test_two_nets_with_one_code_are_disambiguated_with_a_warning() -> None:
+    """Refusing the whole import over one collision left the user no way forward."""
+    result = parse_kicad_netlist(
+        """
+        (export (version "E")
+          (components (comp (ref "R1") (value "1k") (footprint "R_Axial")))
+          (nets
+            (net (code "1") (name "A") (node (ref "R1") (pin "1")) (node (ref "R1") (pin "2")))
+            (net (code "1") (name "B") (node (ref "R1") (pin "1")) (node (ref "R1") (pin "2")))))
+        """
+    )
+    ids = [net.id for net in result.nets]
+    assert len(ids) == len(set(ids)) == 2
+    assert any("shares its code" in w for w in result.warnings), result.warnings
+
+
+def test_a_component_without_a_footprint_is_warned_about() -> None:
+    """A missing footprint is what forces the host to guess one, which is the step the
+    import dialog asks the user to check -- so it needs something to point at."""
+    result = parse_kicad_netlist(
+        '(export (version "E") (components (comp (ref "R1") (value "1k"))) (nets))'
+    )
+    assert result.components[0].footprint is None
+    assert any("R1" in w and "footprint" in w for w in result.warnings), result.warnings

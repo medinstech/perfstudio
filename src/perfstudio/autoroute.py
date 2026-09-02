@@ -551,7 +551,10 @@ def describe_reroute(plan: ReroutePlan) -> str:
         parts.append(f"{plan.summary.links_unrouted} could NOT be routed")
     net_count = len(plan.conductors)
     parts.append(f"{net_count} conductor(s) now")
-    return " · ".join(parts)
+    # ", ", not " · ": these lines go to the headless CLI, and a console on a Windows
+    # code page raises UnicodeEncodeError on a character it cannot map rather than
+    # dropping it -- which turns a report into a crash. Same rule as describe_best above.
+    return ", ".join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -1079,7 +1082,10 @@ def describe(plan: AutoroutePlan) -> str:
         parts.append(f"{s.risk_holes} pad(s) to measure for isolation")
     if s.passes > 1:
         parts.append(f"{s.passes} ordering passes")
-    return " · ".join(parts)
+    # ", ", not " · ": these lines go to the headless CLI, and a console on a Windows
+    # code page raises UnicodeEncodeError on a character it cannot map rather than
+    # dropping it -- which turns a report into a crash. Same rule as describe_best above.
+    return ", ".join(parts)
 
 
 def unrouted_links(plan: AutoroutePlan) -> tuple[UnroutedLink, ...]:

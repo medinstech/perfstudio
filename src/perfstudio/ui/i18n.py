@@ -137,14 +137,20 @@ TURKISH: Mapping[str, str] = {
     "Zoom &In": "&Yakınlaştır",
     "Zoom &Out": "&Uzaklaştır",
     "Show &Ratsnest": "&Bağlantı Ağını Göster",
-    "Show Hole &Addresses": "&Delik Adreslerini Göster",
+    "Show Hole &Addresses": "Delik &Adreslerini Göster",
     "&Hatch Copper on the Far Side": "Karşı Yüzdeki Bakırı &Taralı Göster",
     "Measure &Distance": "&Mesafe Ölç",
     "&Go to Part…": "Parçaya &Git…",
     "Go to Part": "Parçaya Git",
     "Filter parts…  (R37, 10k, TO-220, C7)": "Parçaları süz…  (R37, 10k, TO-220, C7)",
     "Show &3D View": "&3D Görünümü Göster",
-    "Reset 3D &Camera": "3D &Kamerayı Sıfırla",
+    # Ca&mera, not &Camera: "Board &Colour" has C in the same menu.
+    "Reset 3D Ca&mera": "3D &Kamerayı Sıfırla",
+    # &Listesini / &Netleri / L&VS: L, N and V are the free letters in the Turkish View
+    # menu, where S, Y, U, B, D, T, M, G, K, R, P and Ş are all already spoken for.
+    "Show &Parts": "Parça &Listesini Göster",
+    "Show &Nets": "&Netleri Göster",
+    "Show DRC / L&VS": "DRC / L&VS'yi Göster",
     "Board &Colour": "Kart &Rengi",
     "Follow the &material": "&Malzemeye göre",
     "Green (FR-4)": "Yeşil (FR-4)",
@@ -218,7 +224,7 @@ TURKISH: Mapping[str, str] = {
     "On the board": "Kart üzerinde",
     "Undo": "Geri al:",
     "Nothing to undo": "Geri alınacak bir şey yok",
-    "Redo the command you just took back": "Az önce geri aldığın komutu yinele",
+    "Redo": "Yinele:",
     "Nothing to redo": "Yinelenecek bir şey yok",
     "Placing": "Yerleştiriliyor:",
     "click a hole, Esc cancels": "bir deliğe tıkla, Esc iptal eder",
@@ -505,7 +511,8 @@ TURKISH: Mapping[str, str] = {
     ),
     # -- the build guide, in the window ----------------------------------------
     "Build Guide": "Montaj Rehberi",
-    "Show &Build Guide": "&Montaj Rehberini Göster",
+    # M&ontaj, not &Montaj: "&Mesafe Ölç" is in the same menu.
+    "Show &Build Guide": "M&ontaj Rehberini Göster",
     "The soldering order, in the window: shortest part first, jumpers before "
     "whatever stands on them, ICs last. Picking a step shows it on the board.": (
         "Lehimleme sırası, pencerenin içinde: önce en alçak parça, üzerinde bir şey duran "
@@ -801,6 +808,163 @@ TURKISH: Mapping[str, str] = {
     "Some connections could not be routed": "Bazı bağlantılar route edilemedi",
     "Imported with warnings": "Uyarılarla içe aktarıldı",
     "Place the missing parts?": "Eksik parçalar yerleştirilsin mi?",
+    # -- the status bar and the panels' summaries ---------------------------------
+    # These were the last English left on a Turkish screen: the menus were translated
+    # and the numbers under them were not.
+    "DRC {errors} err / {warnings} warn": "DRC {errors} hata / {warnings} uyarı",
+    "LVS {matched}/{total} · {opens} open · {shorts} short": (
+        "LVS {matched}/{total} · {opens} açık · {shorts} kısa"
+    ),
+    "{count} to route · {length:.0f} mm": "{count} route edilecek · {length:.0f} mm",
+    "no netlist": "netlist yok",
+    "done": "bitti",
+    "Not on the board: {pins}": "Kartta değil: {pins}",
+    "not on the board": "kartta değil",
+    "{count} violation(s)": "{count} ihlal",
+    "{matched}/{total} matched, {opens} open, {shorts} short, {physical} physical nets": (
+        "{matched}/{total} eşleşti, {opens} açık, {shorts} kısa, {physical} fiziksel net"
+    ),
+    "{parts} part(s), {nets} net(s)": "{parts} parça, {nets} net",
+    "{count} not on the board yet": "{count} tanesi henüz kartta değil",
+    "power and ground drawn as {count} rail symbol(s)": (
+        "güç ve toprak {count} ray simgesi olarak çizildi"
+    ),
+    "…and {count} more": "…ve {count} tane daha",
+    "Nothing in the design yet. Add Part… describes one, or "
+    "File ▸ Import KiCad Netlist… brings a whole circuit in.": (
+        "Tasarımda henüz bir şey yok. Parça Ekle… bir tane tanımlar; "
+        "Dosya ▸ KiCad Netlist İçe Aktar… bütün bir devreyi getirir."
+    ),
+    "3D view unavailable:": "3D görünüm kullanılamıyor:",
+    "conductor(s) selected": "iletken seçili",
+    "locked": "kilitli",
+    "parts": "parça",
+    "selected": "seçili",
+    # -- the selection verbs, spliced into one sentence -----------------------------
+    "Select a part on the board first, then {what}.": "Önce kartta bir parça seç, sonra {what}.",
+    "rotate it": "döndür",
+    "mirror it": "aynala",
+    "delete it": "sil",
+    "lock or unlock it": "kilitle ya da kilidini aç",
+    "edit its properties": "özelliklerini düzenle",
+    "{count} refused: {reasons}": "{count} reddedildi: {reasons}",
+    "Rotated {count} part(s)": "{count} parça döndürüldü",
+    "Mirrored {count} part(s)": "{count} parça aynalandı",
+    "Locked {count} part(s)": "{count} parça kilitlendi",
+    "Unlocked {count} part(s)": "{count} parçanın kilidi açıldı",
+    "Deleted {count} part(s)": "{count} parça silindi",
+    "Disconnected {count} pin(s)": "{count} pin ayrıldı",
+    # -- confirmations, with the verb on the button ------------------------------------
+    "Delete {count} conductor(s)?": "{count} iletken silinsin mi?",
+    "Delete {refs}?": "{refs} silinsin mi?",
+    "The {count} selected conductor(s) go with them.": (
+        "Seçili {count} iletken de onlarla birlikte silinir."
+    ),
+    "Other wires and traces are left in place -- DRC and LVS will point at "
+    "anything left dangling.": (
+        "Diğer teller ve yollar yerinde kalır -- boşta kalan ne varsa DRC ve LVS gösterir."
+    ),
+    "Delete net {name}?": "{name} neti silinsin mi?",
+    "{count} conductor(s) already laid for it stay on the board, and stop "
+    "being anything re-route or the stale sweep will touch.": (
+        "Onun için döşenmiş {count} iletken kartta kalır ve artık ne yeniden route'un "
+        "ne de bayat temizliğinin dokunacağı bir şey olur."
+    ),
+    "{name} has changes that are not saved.": "{name} üzerinde kaydedilmemiş değişiklikler var.",
+    "Saving keeps them; discarding loses them for good.": (
+        "Kaydetmek korur; vazgeçmek temelli kaybettirir."
+    ),
+    "Discard the unsaved changes in this window and load {name} as it is "
+    "on disk?": "Bu penceredeki kaydedilmemiş değişiklikler atılıp {name} diskteki haliyle yüklensin mi?",
+    "This cannot be undone: reloading replaces the document, and the undo "
+    "history with it.": (
+        "Bu geri alınamaz: yeniden yüklemek belgeyi ve onunla birlikte geri alma geçmişini "
+        "değiştirir."
+    ),
+    "Reload": "Yeniden Yükle",
+    "Reloaded {name}": "{name} yeniden yüklendi",
+    # -- files -------------------------------------------------------------------------
+    "Open a board": "Kart aç",
+    "Save As": "Farklı Kaydet",
+    "PerfStudio documents (*.perf)": "PerfStudio belgeleri (*.perf)",
+    "Import KiCad netlist": "KiCad netlist içe aktar",
+    "KiCad netlists (*.net);;All files (*)": "KiCad netlist dosyaları (*.net);;Tüm dosyalar (*)",
+    "Loaded {name}": "{name} yüklendi",
+    "({count} warning(s))": "({count} uyarı)",
+    "Opened with warnings": "Uyarılarla açıldı",
+    "{name} loaded, but not all of it was understood:": "{name} yüklendi, ama tamamı anlaşılamadı:",
+    "New {cols}×{rows} {material} board": "Yeni {cols}×{rows} {material} kart",
+    "Save failed": "Kaydedilemedi",
+    "Could not write {path}: {reason}": "{path} yazılamadı: {reason}",
+    "Saved {path}": "Kaydedildi: {path}",
+    "Exported {path}": "Dışa aktarıldı: {path}",
+    "Exported {first} and {second}": "{first} ve {second} dışa aktarıldı",
+    "Could not write the PDF: {reason}": "PDF yazılamadı: {reason}",
+    "Could not write {path}. Is the folder writable?": "{path} yazılamadı. Klasör yazılabilir mi?",
+    "PDF written": "PDF yazıldı",
+    "This machine cannot render 3D off screen, so no PNG was written.": (
+        "Bu makine 3D'yi ekran dışında çizemiyor, o yüzden PNG yazılmadı."
+    ),
+    # -- the progress dialog --------------------------------------------------------------
+    "Trying arrangements, and routing each one to compare them…": (
+        "Yerleşimler deneniyor, karşılaştırmak için her biri route ediliyor…"
+    ),
+    "Ripping up and routing again…": "Sökülüp yeniden route ediliyor…",
+    "Routing every style…": "Her tarz route ediliyor…",
+    "Routing…": "Route ediliyor…",
+    "Planning cuts and links…": "Kesikler ve bağlantılar planlanıyor…",
+    "Stopping, and keeping the best found so far…": (
+        "Durduruluyor; şimdiye kadar bulunan en iyisi tutuluyor…"
+    ),
+    # -- the board materials, as Board Setup lists them --------------------------------
+    "FR-4 — glass epoxy, the green kind. Tolerates heat well.": (
+        "FR-4 — cam epoksi, yeşil olan. Isıya iyi dayanır."
+    ),
+    "FR-2 — phenolic paper (\"pertinaks\"), the brown kind. Pads lift easily.": (
+        "FR-2 — fenolik kâğıt (\"pertinaks\"), kahverengi olan. Padler kolay kalkar."
+    ),
+    "FR-1 — phenolic paper, as FR-2.": "FR-1 — fenolik kâğıt, FR-2 gibi.",
+    # -- the file watcher, the planner and the nets ------------------------------------
+    "Still planning — cancel it or wait for it before closing.": (
+        "Planlama sürüyor — kapatmadan önce iptal et ya da bitmesini bekle."
+    ),
+    "{name} changed on disk but could not be read: {problem}": (
+        "{name} diskte değişti ama okunamadı: {problem}"
+    ),
+    "{name} changed on disk, and this window has unsaved edits. "
+    "File ▸ Reload from Disk to take the file's version.": (
+        "{name} diskte değişti ve bu pencerede kaydedilmemiş düzenlemeler var. "
+        "Dosyanın sürümünü almak için Dosya ▸ Diskten Yeniden Yükle."
+    ),
+    "Reloaded {name}: it changed on disk, and the undo history went with it": (
+        "{name} yeniden yüklendi: diskte değişmişti, geri alma geçmişi de onunla gitti"
+    ),
+    "Cannot create this net": "Bu net oluşturulamıyor",
+    "Cannot change this net": "Bu net değiştirilemiyor",
+    # -- the board's own prose: measuring, picking pins, joining them -----------------
+    "{hole} — the same hole.": "{hole} — aynı delik.",
+    "holes": "delik",
+    "{mm:.2f} mm apart": "{mm:.2f} mm arayla",
+    "{steps} step(s) by trace": "yolla {steps} adım",
+    "Click the first hole.": "İlk deliğe tıkla.",
+    "From {hole} — click the second hole.": "{hole} deliğinden — ikinci deliğe tıkla.",
+    "No component pin at {hole}.": "{hole} deliğinde parça pini yok.",
+    "{pin} is already on the list.": "{pin} zaten listede.",
+    "{pin} is already on {net}.": "{pin} zaten {net} üzerinde.",
+    "{pin} belongs to {net}. Disconnect it there first -- a pin can only "
+    "be on one net.": (
+        "{pin} {net} netine ait. Önce oradan ayır -- bir pin yalnızca bir nette olabilir."
+    ),
+    "{pin} is already the pin you started from.": "{pin} zaten başladığın pin.",
+    "{a} and {b} are both already on {net}.": "{a} ve {b} zaten {net} üzerinde.",
+    "{a} is on {net_a} and {b} is on {net_b}. Joining two nets is a change to "
+    "the circuit — disconnect one of the pins first.": (
+        "{a} {net_a} üzerinde, {b} ise {net_b} üzerinde. İki neti birleştirmek devreyi "
+        "değiştirmektir — önce pinlerden birini ayır."
+    ),
+    # -- the sheet -----------------------------------------------------------------------
+    "not in the design": "tasarımda yok",
+    "not placed yet": "henüz yerleştirilmedi",
 }
 
 CATALOGUES: Mapping[str, Mapping[str, str]] = {"tr": TURKISH}

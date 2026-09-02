@@ -141,6 +141,19 @@ def _refused(code: str, message: str) -> dict[str, Any]:
     return {"ok": False, "code": code, "message": message}
 
 
+def _path_arg(path: str, tool: str) -> Path:
+    """A filesystem path from an agent, expanded the way a shell would expand it.
+
+    Two things a bare ``Path(path)`` gets wrong. ``~/board.perf`` is a literal directory
+    called "~", so the file lands somewhere nobody can find; and ``""`` is ``Path(".")``,
+    so the failure arrives as "Cannot open .: Permission denied" -- a message about the
+    current directory, which is not what was asked for.
+    """
+    if not path.strip():
+        raise SessionError(f"{tool} needs a path; none was given.")
+    return Path(path).expanduser()
+
+
 def _hole(ref: str) -> HoleCoord:
     """Parse a hole address, or say clearly what was wrong with it."""
     try:
@@ -502,7 +515,7 @@ class BoardSession:
     # -- documents ---------------------------------------------------------
 
     def open_document(self, path: str) -> dict[str, Any]:
-        target = Path(path)
+        target = _path_arg(path, "open_document")
         try:
             text = target.read_text(encoding="utf-8")
         except OSError as err:
@@ -520,7 +533,7 @@ class BoardSession:
         )
 
     def save_document(self, path: str | None = None) -> dict[str, Any]:
-        target = Path(path) if path else self.path
+        target = _path_arg(path, "save_document") if path else self.path
         if target is None:
             raise SessionError(
                 "This board has never been saved, so save_document needs a path."
@@ -539,7 +552,7 @@ class BoardSession:
     def import_netlist(self, path: str) -> dict[str, Any]:
         from perfstudio.parsers.kicad import parse_kicad_netlist
 
-        target = Path(path)
+        target = _path_arg(path, "import_netlist")
         try:
             text = target.read_text(encoding="utf-8")
         except OSError as err:
@@ -1117,11 +1130,16 @@ class BoardSession:
             for problem in plan.problems
         ]
         if plan.is_empty:
+            # Empty LISTS, not zeroes: an agent that reads ``cuts`` gets the same shape
+            # whether or not there was anything to do, and does not have to handle a plan
+            # whose fields change type when it happens to be empty.
             return _ok(
                 committed=False,
                 summary=describe_strip_plan(plan),
-                cuts=0,
-                links=0,
+                cuts=[],
+                links=[],
+                cut_count=0,
+                link_count=0,
                 problems=problems,
             )
 
@@ -1131,6 +1149,8 @@ class BoardSession:
         result.update(
             committed=True,
             summary=describe_strip_plan(plan),
+            cut_count=len(plan.cuts),
+            link_count=len(plan.links),
             cuts=[format_hole(cut.at) for cut in plan.cuts],
             links=[
                 {
@@ -1242,6 +1262,9 @@ class BoardSession:
     def run_drc(self) -> dict[str, Any]:
         violations = run_drc(self.document, self.lookup)
         return {
+            # "ok" means the CALL ran, the same as everywhere else in this API. A check
+            # that found something is still a check that ran; what it found is "errors".
+            "ok": True,
             "errors": sum(1 for v in violations if v.severity == "error"),
             "warnings": sum(1 for v in violations if v.severity == "warning"),
             "violations": [
@@ -1258,7 +1281,11 @@ class BoardSession:
     def run_lvs(self) -> dict[str, Any]:
         result = run_lvs(self.document, self.lookup)
         return {
-            "ok": result.ok,
+            # "ok" is this API's word for "the call was not refused", and it read here as
+            # "the board matches" -- so a board with an open came back looking like a tool
+            # that had failed. The verdict has its own name.
+            "ok": True,
+            "matches_schematic": result.ok,
             "matched_nets": result.summary.matched_nets,
             "schematic_nets": result.summary.schematic_nets,
             "opens": result.summary.opens,
@@ -1323,7 +1350,7 @@ class BoardSession:
             images = {}
         report["step_images"] = len(images)
 
-        out = Path(directory)
+        out = _path_arg(directory, "generate_guide")
         try:
             out.mkdir(parents=True, exist_ok=True)
             written = []
@@ -1345,7 +1372,17 @@ class BoardSession:
         Needs Qt, which the engine does not, so it is imported here and its absence is
         reported as a refusal rather than taking the server down at import time.
         """
-        out = Path(directory) if directory else Path.cwd()
+        if not directory or not directory.strip():
+            # The server's own INSTRUCTIONS promise that nothing writes to disk unless a
+            # path is named, and this wrote two PDFs into whatever the process happened to
+            # be started in. Refused rather than defaulted: there is no directory an agent
+            # asking for a PDF can be assumed to have meant.
+            return _refused(
+                "no-directory",
+                "export_pdf writes two files, so it needs a directory to write them to. "
+                "Nothing is written without one.",
+            )
+        out = _path_arg(directory, "export_pdf")
         try:
             from perfstudio.ui.export_pdf import export_pdf as write_pdf
             from perfstudio.ui.export_pdf import verify_scale

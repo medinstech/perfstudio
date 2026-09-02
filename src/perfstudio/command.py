@@ -246,10 +246,20 @@ class CommandBus:
         before = self._document
         try:
             after = definition.apply(before, payload, self._ctx)
+            description = definition.describe(payload, before)
         except CommandError as err:
             return DispatchResult(ok=False, code=err.code, message=err.message)
-
-        description = definition.describe(payload, before)
+        except (AttributeError, TypeError, KeyError) as err:
+            # A payload of the wrong shape -- a dict where a dataclass was expected, a
+            # tuple where a HoleCoord was -- surfaces inside the command as one of these.
+            # The contract here is "never raises; callers branch on ok", and an agent
+            # driving the bus through the MCP server needs the refusal, not a traceback
+            # in somebody else's process.
+            return DispatchResult(
+                ok=False,
+                code="invalid-payload",
+                message=f"Invalid payload for {type_}: {type(err).__name__}: {err}",
+            )
         entry = HistoryEntry(
             record=CommandRecord(type=type_, payload=payload),
             before=before,
@@ -259,10 +269,18 @@ class CommandBus:
 
         self._document = after
         self._undo_stack.append(entry)
+        # Bounded. Every entry keeps two documents alive, and a long session of imports
+        # and full re-routes would otherwise keep every one of them forever.
+        if len(self._undo_stack) > self.UNDO_LIMIT:
+            del self._undo_stack[0]
         self._redo_stack.clear()
         self._emit(entry)
 
         return DispatchResult(ok=True, document=after, description=description)
+
+    #: How many steps back Ctrl+Z reaches. Generous, because the journal is read off the
+    #: same stack and a replay wants all of a session -- but not unbounded.
+    UNDO_LIMIT = 1000
 
     def can_undo(self) -> bool:
         return len(self._undo_stack) > 0
@@ -295,6 +313,14 @@ class CommandBus:
     def history(self) -> tuple[str, ...]:
         """Undo-stack labels, newest last. Used by the UI and by guide generation."""
         return tuple(e.description for e in self._undo_stack)
+
+    def redo_history(self) -> tuple[str, ...]:
+        """Redo-stack labels; the LAST is what the next ``redo`` will apply.
+
+        The counterpart of ``history``, so a menu can say "Redo Place R4" rather than
+        "Redo" -- the undo side has always been able to say what it would do.
+        """
+        return tuple(e.description for e in self._redo_stack)
 
     def subscribe(self, listener: BusListener) -> Callable[[], None]:
         self._listeners.append(listener)

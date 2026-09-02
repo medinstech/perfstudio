@@ -59,6 +59,7 @@ from perfstudio.schematic import (
 )
 
 from . import theme
+from .i18n import t
 from .scenetext import draw_label
 
 # ---------------------------------------------------------------------------
@@ -436,14 +437,41 @@ class SchematicView(QGraphicsView):
 
     # -- gestures ------------------------------------------------------------
 
+    #: The zoom range, in scene units per pixel. The sheet is drawn in millimetres like
+    #: the board, so the board's own limits are the right ones here too: without any, a
+    #: few trackpad flicks zoomed to a blank field or into one pin with nothing but the
+    #: Fit button to recover.
+    MIN_SCALE = 0.5
+    MAX_SCALE = 60.0
+
+    def current_scale(self) -> float:
+        return float(self.transform().m11())
+
+    def _clamped_factor(self, factor: float) -> float:
+        current = self.current_scale()
+        target = min(self.MAX_SCALE, max(self.MIN_SCALE, current * factor))
+        return target / current if current else 1.0
+
     def wheelEvent(self, event: QWheelEvent) -> None:
         steps = event.angleDelta().y() / 120.0
         if not steps:
             return
-        factor = 1.18**steps
-        self.scale(factor, factor)
+        factor = self._clamped_factor(1.18**steps)
+        if factor != 1.0:
+            self.scale(factor, factor)
         self._fitted = True
         event.accept()
+
+    def zoom_by(self, factor: float) -> None:
+        """Zoom about the centre, for a keyboard shortcut."""
+        factor = self._clamped_factor(factor)
+        if factor == 1.0:
+            return
+        anchor = self.transformationAnchor()
+        self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
+        self.scale(factor, factor)
+        self.setTransformationAnchor(anchor)
+        self._fitted = True
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton and self.wiring:
@@ -473,6 +501,12 @@ class SchematicView(QGraphicsView):
         super().mousePressEvent(event)
 
     def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
+        if self.wiring:
+            # The board's rule: a mode owns the first click of any pair. Two quick clicks
+            # on a pin used to take the pin AND open its part's properties over the
+            # half-made connection.
+            event.accept()
+            return
         symbol = self.symbol_at(self.mapToScene(event.position().toPoint()))
         if symbol is not None:
             self.partActivated.emit(symbol.ref)
@@ -506,9 +540,9 @@ class SchematicView(QGraphicsView):
             if symbol.footprint_id:
                 parts.append(symbol.footprint_id)
             if symbol.undefined:
-                parts.append("not in the design")
+                parts.append(t("not in the design"))
             elif symbol.unplaced:
-                parts.append("not placed yet")
+                parts.append(t("not placed yet"))
             return " · ".join(parts)
         net = self.net_at(scene_pos)
         return net[1] if net is not None else ""

@@ -29,6 +29,7 @@ from PySide6.QtCore import QEvent, QPoint, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import (
     QBrush,
     QColor,
+    QCursor,
     QPainter,
     QPainterPath,
     QPainterPathStroker,
@@ -48,9 +49,11 @@ from perfstudio.commands import (
     AddConductorPayload,
     AddCutPayload,
     AddNetPayload,
+    ComponentPlacement,
     ConnectPinsPayload,
     DeleteCutPayload,
     MoveComponentPayload,
+    MoveComponentsPayload,
     NewConductor,
     NewSolderTraceConductor,
     NewWireConductor,
@@ -118,6 +121,7 @@ from .bodies import (
     style_for,
     surface_for,
 )
+from .i18n import t
 from .scenetext import draw_label, draw_physical_label
 
 # The window's own palette, for the overlays that sit ON the board but belong to the
@@ -922,18 +926,19 @@ def describe_span(a: HoleCoord, b: HoleCoord, board: Board) -> str:
     Same hole twice is not an error and not a measurement; it says so instead.
     """
     if a == b:
-        return f"{format_hole(a)} — the same hole."
+        return t("{hole} — the same hole.").format(hole=format_hole(a))
     d_col, d_row = abs(b.col - a.col), abs(b.row - a.row)
     mm = path_length_mm((a, b), board)
     steps = manhattan(a, b)
     span = (
-        f"{d_col + 1} × {d_row + 1} holes"
+        f"{d_col + 1} × {d_row + 1} {t('holes')}"
         if d_col and d_row
-        else f"{max(d_col, d_row) + 1} holes"
+        else f"{max(d_col, d_row) + 1} {t('holes')}"
     )
     return (
-        f"{format_hole(a)} → {format_hole(b)}   {span}   {mm:.2f} mm apart   "
-        f"{steps} step(s) by trace"
+        f"{format_hole(a)} → {format_hole(b)}   {span}   "
+        f"{t('{mm:.2f} mm apart').format(mm=mm)}   "
+        f"{t('{steps} step(s) by trace').format(steps=steps)}"
     )
 
 
@@ -982,14 +987,17 @@ def join_pins(
 
     if net_a is not None and net_b is not None:
         if net_a.id == net_b.id:
-            return None, (
-                f"{first[0]}.{first[1]} and {second[0]}.{second[1]} are both already on "
-                f"{net_a.name}."
+            return None, t("{a} and {b} are both already on {net}.").format(
+                a=f"{first[0]}.{first[1]}", b=f"{second[0]}.{second[1]}", net=net_a.name
             )
-        return None, (
-            f"{first[0]}.{first[1]} is on {net_a.name} and {second[0]}.{second[1]} is "
-            f"on {net_b.name}. Joining two nets is a change to the circuit — "
-            f"disconnect one of the pins first."
+        return None, t(
+            "{a} is on {net_a} and {b} is on {net_b}. Joining two nets is a change to "
+            "the circuit — disconnect one of the pins first."
+        ).format(
+            a=f"{first[0]}.{first[1]}",
+            net_a=net_a.name,
+            b=f"{second[0]}.{second[1]}",
+            net_b=net_b.name,
         )
 
     if net_a is not None:
@@ -1054,6 +1062,13 @@ class PlacementGhostItem(QGraphicsItem):
         placement = placement_for(self.fp, self.board.pitch)
         style = style_for(self.fp)
         rect = _body_rect(placement)
+
+        # The anchor is mirrored by hole_to_screen on the solder side, and the pins have
+        # to be mirrored with it -- the same reflection _local_offset applies to a placed
+        # part. Without it the ghost showed a DIP's pins running one way while the
+        # placement put them the other, which is the one thing a ghost exists to prevent.
+        if self.side == "bottom":
+            painter.scale(-1, 1)
 
         painter.setBrush(QBrush(QColor(style.fill)))
         painter.setPen(QPen(ERROR_OUTLINE if self.blocked else SELECTED, 0.3))
@@ -1260,6 +1275,7 @@ class ConductorItem(QGraphicsItem):
         signal_index: int = 0,
         hatch_far_side: bool = True,
         stack: int = 0,
+        net_name: str | None = None,
     ) -> None:
         super().__init__()
         self.conductor = conductor
@@ -1280,8 +1296,11 @@ class ConductorItem(QGraphicsItem):
         # does; three stacked wires still sit below the parts.
         self.setZValue((-50 if conductor.side == "bottom" else 40) + 0.1 * stack)
         first, last = conductor.path[0], conductor.path[-1]
+        # The net is the thing a reader hovering a trace is asking about -- "what IS this"
+        # -- and it was the one field the tooltip left out.
+        net_note = f"\n{net_name}" if net_name else ""
         self.setToolTip(
-            f"{conductor.kind.replace('-', ' ')}  {format_hole(first)} → {format_hole(last)}"
+            f"{conductor.kind.replace('-', ' ')}  {format_hole(first)} → {format_hole(last)}{net_note}"
         )
 
     def _points(self) -> list[QPointF]:
@@ -1839,8 +1858,11 @@ class ComponentItem(QGraphicsItem):
         )
         self.setFlags(flags)
         self.setZValue(10)
-        lock_note = "  [locked]" if comp.locked else ""
-        self.setToolTip(f"{comp.ref}  {comp.value}\n{fp.name}{lock_note}")
+        lock_note = f"  [{t('locked')}]" if comp.locked else ""
+        where = format_hole(comp.anchor)
+        if comp.rotation:
+            where += f"  {comp.rotation}°"
+        self.setToolTip(f"{comp.ref}  {comp.value}\n{fp.name}{lock_note}\n{where}")
         self._sync_position()
 
     def _sync_position(self) -> None:
@@ -2098,6 +2120,10 @@ class BoardScene(QGraphicsScene):
         #: Set when a mode consumed a right press, read and cleared by the view before it
         #: decides whether to offer a context menu. See take_consumed_right_click.
         self._right_click_taken = False
+        #: The hole the pointer was last over, or None once it has left the view. Kept so
+        #: a rebuilt ghost can land where the pointer is rather than at A1, and so a pan
+        #: or a keyboard zoom can re-read what is under a pointer that has not moved.
+        self._last_hole: HoleCoord | None = None
         self._ghost: PlacementGhostItem | None = None
         #: Whether the last placement landed somewhere already occupied. Read by the host to
         #: say so, since the bus allows it and only DRC objects.
@@ -2171,6 +2197,9 @@ class BoardScene(QGraphicsScene):
         previously_selected = {
             comp_id for comp_id, item in self.component_items.items() if item.isSelected()
         }
+        # Conductors too: a trace selected to be deleted must still be selected after the
+        # unrelated command that rebuilt the scene, or Delete acts on nothing.
+        previously_selected_conductors = set(self.selected_conductor_ids())
         # The dict is emptied BEFORE clear(), not after. clear() destroys the underlying C++
         # items and Qt emits selectionChanged while doing so, which reaches
         # _on_selection_changed -- and if that handler can still see the old dict, it touches
@@ -2195,6 +2224,11 @@ class BoardScene(QGraphicsScene):
         # picks vanished off the board reads as the clicks having been lost.
         self._net_pin_item = None
         self._connect_item = None
+        # The measurement marker is an item like the rest, so clear() has just destroyed
+        # it. Forgetting to forget it here left a wrapper whose C++ object was gone, and
+        # the next Escape -- or the next arming of ANY tool, all of which disarm
+        # measuring first -- raised from removeItem and left every tool unreachable.
+        self._measure_item = None
         board = self.document.board
         outline = _outline_rect(board)
         # Room outside the substrate is reserved for the ruler, so it is only needed when
@@ -2266,6 +2300,7 @@ class BoardScene(QGraphicsScene):
             self.addItem(HoleRulerItem(board, self.side))
 
         net_class_by_id = {net.id: net.net_class for net in self.document.nets}
+        net_name_by_id = {net.id: net.name for net in self.document.nets}
         signal_index = {
             net.id: index
             for index, net in enumerate(n for n in self.document.nets if n.net_class == "signal")
@@ -2274,17 +2309,19 @@ class BoardScene(QGraphicsScene):
         # passing over it in 3D. See occupancy.stacking_layers.
         conductor_layers = stacking_layers(self.document)
         for conductor in self.document.conductors:
-            self.addItem(
-                ConductorItem(
-                    conductor,
-                    board,
-                    self.side,
-                    net_class=net_class_by_id.get(conductor.net_id or ""),
-                    signal_index=signal_index.get(conductor.net_id or "", 0),
-                    hatch_far_side=self.hatch_far_side,
-                    stack=conductor_layers.get(conductor.id, conductor.layer_z),
-                )
+            conductor_item = ConductorItem(
+                conductor,
+                board,
+                self.side,
+                net_class=net_class_by_id.get(conductor.net_id or ""),
+                signal_index=signal_index.get(conductor.net_id or "", 0),
+                hatch_far_side=self.hatch_far_side,
+                stack=conductor_layers.get(conductor.id, conductor.layer_z),
+                net_name=net_name_by_id.get(conductor.net_id or ""),
             )
+            self.addItem(conductor_item)
+            if conductor.id in previously_selected_conductors:
+                conductor_item.setSelected(True)
 
         for comp in self.document.components:
             fp = self.lookup(comp.footprint_id)
@@ -2306,6 +2343,21 @@ class BoardScene(QGraphicsScene):
         if self._armed_footprint is not None:
             self._ghost = PlacementGhostItem(self._armed_footprint, board, self.side)
             self.addItem(self._ghost)
+            # Back under the pointer, not at A1: a fresh ghost starts at the origin, and
+            # placing a part is exactly the moment the next one is being lined up.
+            if self._last_hole is not None:
+                self._ghost.set_anchor(self._last_hole, self._placement_blocked(self._last_hole))
+        # The half-drawn conductor survives a rebuild in the same way the picked pins do:
+        # the path is state, the preview is only its picture, and a flip or an undo in the
+        # middle of a trace must not leave the tool armed with nothing on the board.
+        if self._draw_kind is not None:
+            self._draw_preview = DrawPreviewItem(self._draw_kind, board, self.side)
+            self.addItem(self._draw_preview)
+            self._refresh_draw_preview(self._last_hole)
+        if self._measure_from is not None:
+            self._measure_item = PickedPinsItem(board, self.side)
+            self._measure_item.set_holes([self._measure_from])
+            self.addItem(self._measure_item)
         if self._net_pin_target is not None:
             self._net_pin_item = PickedPinsItem(board, self.side)
             self._net_pin_item.set_holes(self._net_pin_holes)
@@ -2619,22 +2671,26 @@ class BoardScene(QGraphicsScene):
 
         found = self._pin_at(at)
         if found is None:
-            self.netPinRejected.emit(f"No component pin at {format_hole(at)}.")
+            self.netPinRejected.emit(t("No component pin at {hole}.").format(hole=format_hole(at)))
             return
 
         ref, pin = found
         if (ref, pin) in self._net_pin_picks:
-            self.netPinRejected.emit(f"{ref}.{pin} is already on the list.")
+            self.netPinRejected.emit(t("{pin} is already on the list.").format(pin=f"{ref}.{pin}"))
             return
 
         holder = self._net_holding(ref, pin)
         if holder is not None and holder.id == target:
-            self.netPinRejected.emit(f"{ref}.{pin} is already on {holder.name}.")
+            self.netPinRejected.emit(
+                t("{pin} is already on {net}.").format(pin=f"{ref}.{pin}", net=holder.name)
+            )
             return
         if holder is not None:
             self.netPinRejected.emit(
-                f"{ref}.{pin} belongs to {holder.name}. Disconnect it there first -- "
-                f"a pin can only be on one net."
+                t(
+                    "{pin} belongs to {net}. Disconnect it there first -- a pin can only "
+                    "be on one net."
+                ).format(pin=f"{ref}.{pin}", net=holder.name)
             )
             return
 
@@ -2729,7 +2785,7 @@ class BoardScene(QGraphicsScene):
         self._clear_measure()
         self._measure_armed = on
         self.measureArmed.emit(on)
-        self.measured.emit("Click the first hole." if on else "")
+        self.measured.emit(t("Click the first hole.") if on else "")
 
     @property
     def measure_armed(self) -> bool:
@@ -2769,7 +2825,7 @@ class BoardScene(QGraphicsScene):
                 self._measure_item = PickedPinsItem(self.document.board, self.side)
                 self.addItem(self._measure_item)
             self._measure_item.set_holes([at])
-            self.measured.emit(f"From {format_hole(at)} — click the second hole.")
+            self.measured.emit(t("From {hole} — click the second hole.").format(hole=format_hole(at)))
             return
 
         if self._measure_item is not None:
@@ -2863,7 +2919,7 @@ class BoardScene(QGraphicsScene):
 
         found = self._pin_at(at)
         if found is None:
-            self.netPinRejected.emit(f"No component pin at {format_hole(at)}.")
+            self.netPinRejected.emit(t("No component pin at {hole}.").format(hole=format_hole(at)))
             return None
 
         first = self._connect_first
@@ -2877,7 +2933,7 @@ class BoardScene(QGraphicsScene):
             return None
 
         if found == first:
-            self.netPinRejected.emit(f"{found[0]}.{found[1]} is already the pin you started from.")
+            self.netPinRejected.emit(t("{pin} is already the pin you started from.").format(pin=f"{found[0]}.{found[1]}"))
             return None
 
         result = self._join_pins(first, found)
@@ -2944,12 +3000,19 @@ class BoardScene(QGraphicsScene):
         self._armed_id = footprint_id if self._armed_footprint is not None else None
         self._clear_ghost()
         if self._armed_footprint is not None:
+            # The board modes are mutually exclusive, and drawing is one of them: a part
+            # picked from the library mid-trace used to leave both armed, with the ghost
+            # following the pointer while every click still extended the trace.
+            if self._draw_kind is not None:
+                self.arm_drawing(None)
             self._disarm_net_pins()
             self._disarm_connect()
             self._disarm_measure()
             self._disarm_cutting()
             self._ghost = PlacementGhostItem(self._armed_footprint, self.document.board, self.side)
             self.addItem(self._ghost)
+            if self._last_hole is not None:
+                self._ghost.set_anchor(self._last_hole, self._placement_blocked(self._last_hole))
         self.placementArmed.emit(self._armed_id or "")
 
     @property
@@ -3015,7 +3078,19 @@ class BoardScene(QGraphicsScene):
         return False
 
     def mouseMoveEvent(self, event: Any) -> None:
-        at = screen_to_hole(event.scenePos(), self.document.board, self.side)
+        self.hover_at(event.scenePos())
+        super().mouseMoveEvent(event)
+
+    def hover_at(self, pos: QPointF) -> None:
+        """Everything that follows the pointer, given where it is in scene coordinates.
+
+        Split from ``mouseMoveEvent`` because the pointer is not the only thing that
+        moves: a middle-button pan or a keyboard zoom changes what is under a pointer that
+        has not moved at all, and the view calls this afterwards so the ghost and the
+        status bar's address do not describe the hole that scrolled away.
+        """
+        at = screen_to_hole(pos, self.document.board, self.side)
+        self._last_hole = at
         if self._ghost is not None:
             self._ghost.set_anchor(at, self._placement_blocked(at))
         if self._draw_preview is not None:
@@ -3026,7 +3101,16 @@ class BoardScene(QGraphicsScene):
         if self._measure_from is not None and is_inside_board(at, self.document.board):
             self.measured.emit(describe_span(self._measure_from, at, self.document.board))
         self.hoveredHole.emit(at.col, at.row)
-        super().mouseMoveEvent(event)
+
+    def hover_left(self) -> None:
+        """The pointer has left the view: there is no hole under it any more.
+
+        Reported as an off-board address, which the status bar already shows as a dash
+        and which Paste already treats as "nowhere in particular" -- so a block is not
+        pasted at the hole the pointer happened to leave the board over.
+        """
+        self._last_hole = None
+        self.hoveredHole.emit(-1, -1)
 
     def take_consumed_right_click(self) -> bool:
         """Whether the last right press was a MODE's, and clear the record of it.
@@ -3209,7 +3293,14 @@ class BoardScene(QGraphicsScene):
             return
         fast = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
         step = self.NUDGE_STEP_FAST if fast else self.NUDGE_STEP
-        self.nudge_selection(delta[0] * step, delta[1] * step)
+        d_col, d_row = delta
+        # The keys are named for the screen, and the solder side is the board mirrored:
+        # hole_to_screen reflects x, so a column further along is a step to the LEFT
+        # there. A drag is unaffected because it round-trips through screen_to_hole; the
+        # arrows have to make the same correction by hand or Right moves the part left.
+        if self.side == "bottom":
+            d_col = -d_col
+        self.nudge_selection(d_col * step, d_row * step)
         event.accept()
 
     def nudge_selection(self, d_col: int, d_row: int) -> list[DispatchResult]:
@@ -3220,22 +3311,40 @@ class BoardScene(QGraphicsScene):
         # destroys every item -- so a loop that both reads items and dispatches is reading
         # destroyed objects from its second iteration onwards.
         targets = [
-            (item.comp.id, item.comp.anchor)
+            (item.comp.id, HoleCoord(col=item.comp.anchor.col + d_col, row=item.comp.anchor.row + d_row))
             for item in self.component_items.values()
             if item.isSelected()
         ]
-        results = [
-            self.bus.dispatch(
-                "component.move",
-                MoveComponentPayload(
-                    id=comp_id, anchor=HoleCoord(col=anchor.col + d_col, row=anchor.row + d_row)
-                ),
-            )
-            for comp_id, anchor in targets
-        ]
+        results = self._dispatch_moves(targets)
         if results:
             self.moveCommitted.emit(results)
         return results
+
+    def _dispatch_moves(self, moves: list[tuple[str, HoleCoord]]) -> list[DispatchResult]:
+        """One part is ``component.move``; several are ONE ``component.moveMany``.
+
+        A group dragged or nudged together is one decision, so it is one undo step: five
+        parts moved with one gesture used to take five Ctrl+Z presses to put back, and a
+        refusal part-way through left the group torn apart. The batch is all-or-nothing --
+        a locked part in the selection refuses the whole move and says which part, which
+        is the honest answer rather than moving everything around it.
+        """
+        if self.bus is None or not moves:
+            return []
+        if len(moves) == 1:
+            comp_id, anchor = moves[0]
+            return [self.bus.dispatch("component.move", MoveComponentPayload(id=comp_id, anchor=anchor))]
+        return [
+            self.bus.dispatch(
+                "component.moveMany",
+                MoveComponentsPayload(
+                    placements=tuple(
+                        ComponentPlacement(id=comp_id, anchor=anchor) for comp_id, anchor in moves
+                    ),
+                    label=f"Move {len(moves)} parts",
+                ),
+            )
+        ]
 
     def commit_pending_moves(self) -> list[DispatchResult]:
         """Dispatch ``component.move`` for every item whose snapped position differs
@@ -3254,10 +3363,7 @@ class BoardScene(QGraphicsScene):
             for comp_id, item in self.component_items.items()
             if item.pending_anchor != item.comp.anchor
         ]
-        results = [
-            self.bus.dispatch("component.move", MoveComponentPayload(id=comp_id, anchor=anchor))
-            for comp_id, anchor in pending
-        ]
+        results = self._dispatch_moves(pending)
         if results:
             self.moveCommitted.emit(results)
         return results
@@ -3431,25 +3537,62 @@ class BoardView(QGraphicsView):
     def current_scale(self) -> float:
         return float(self.transform().m11())
 
+    def _clamped_factor(self, factor: float) -> float:
+        """The part of a zoom step that stays inside [MIN_SCALE, MAX_SCALE].
+
+        Clamped rather than refused: the last notch before a limit used to do nothing at
+        all, so the zoom stopped one step short of its own bound and the wheel appeared
+        to have died. Landing ON the bound is what the bound means.
+        """
+        current = self.current_scale()
+        target = min(MAX_SCALE, max(MIN_SCALE, current * factor))
+        return target / current if current else 1.0
+
+    def _clamp_scale(self) -> None:
+        """Pull a scale ``fitInView`` chose back inside the zoom range.
+
+        A fit is not exempt from the limits: a wide board in a narrow central area, or two
+        pads framed from a DRC finding in a large viewport, can land outside them -- and
+        then EVERY wheel step is outside the range too, so the wheel is dead both ways.
+        """
+        factor = self._clamped_factor(1.0)
+        if factor != 1.0:
+            self.scale(factor, factor)
+
     def wheelEvent(self, event: Any) -> None:
-        factor = 1.15 if event.angleDelta().y() > 0 else 1 / 1.15
-        target = self.current_scale() * factor
-        if not (MIN_SCALE <= target <= MAX_SCALE):
-            return
-        self.scale(factor, factor)
+        factor = self._clamped_factor(1.15 if event.angleDelta().y() > 0 else 1 / 1.15)
+        if factor != 1.0:
+            self.scale(factor, factor)
 
     def zoom_by(self, factor: float) -> None:
         """Zoom about the viewport centre, for a toolbar button or a keyboard shortcut."""
-        target = self.current_scale() * factor
-        if not (MIN_SCALE <= target <= MAX_SCALE):
+        factor = self._clamped_factor(factor)
+        if factor == 1.0:
             return
         anchor = self.transformationAnchor()
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
         self.scale(factor, factor)
         self.setTransformationAnchor(anchor)
+        self._refresh_hover()
 
     def fit_board(self) -> None:
         self.fitInView(self.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
+        self._clamp_scale()
+
+    def _refresh_hover(self) -> None:
+        """Re-read what is under a pointer that has not moved.
+
+        After a pan or a keyboard zoom the scene under the pointer has changed without a
+        mouse-move event, so the placement ghost and the status bar's hole address would
+        go on describing the hole that scrolled away.
+        """
+        local = self.viewport().mapFromGlobal(QCursor.pos())
+        if self.viewport().rect().contains(local):
+            self.board_scene.hover_at(self.mapToScene(local))
+
+    def leaveEvent(self, event: Any) -> None:
+        self.board_scene.hover_left()
+        super().leaveEvent(event)
 
     # Middle-button pan. Rubber-band selection owns the left button, and reaching for a
     # scrollbar to cross a 60-column board is the kind of friction that makes an editor
@@ -3471,6 +3614,7 @@ class BoardView(QGraphicsView):
             v = self.verticalScrollBar()
             h.setValue(h.value() - int(delta.x()))
             v.setValue(v.value() - int(delta.y()))
+            self._refresh_hover()
             event.accept()
             return
         super().mouseMoveEvent(event)
@@ -3503,6 +3647,7 @@ class BoardView(QGraphicsView):
         if not holes:
             return
         self.fitInView(self._holes_rect(holes, board, side, 6.0), Qt.AspectRatioMode.KeepAspectRatio)
+        self._clamp_scale()
 
     def reveal_holes(self, holes: Sequence[HoleCoord], board: Board, side: BoardSide) -> None:
         """Bring the given holes into view WITHOUT changing zoom, unless they cannot fit.
@@ -3517,6 +3662,7 @@ class BoardView(QGraphicsView):
         viewport = self.mapToScene(self.viewport().rect()).boundingRect()
         if rect.width() > viewport.width() or rect.height() > viewport.height():
             self.fitInView(rect, Qt.AspectRatioMode.KeepAspectRatio)
+            self._clamp_scale()
             return
         if not viewport.contains(rect):
             self.centerOn(rect.center())

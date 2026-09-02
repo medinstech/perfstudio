@@ -820,6 +820,46 @@ def test_the_proximity_answer_is_worked_out_once_per_hole() -> None:
     assert len(asked) == calls_after_first, "the second call asked the net index again"
 
 
+def test_every_candidate_explanation_starts_with_a_capital() -> None:
+    """These lines are read side by side -- ``candidates`` returns all of them at once and
+    the 2D view lists them under one another. "Solder trace: ..." above "bare wire: ..."
+    reads as two different kinds of sentence rather than two entries in one list.
+
+    A route wide enough to produce every strategy at once, so the check is over what the
+    router actually says rather than over one lucky candidate.
+    """
+    d = doc((comp("c1", "A", h(2, 2)), comp("c2", "B", h(6, 2))))
+    result = route_connection(d, _lookup, RouteRequest(from_=h(2, 2), to=h(6, 2)))
+
+    assert result.best is not None
+    candidates = (result.best, *result.alternatives)
+    for candidate in candidates:
+        first = candidate.explanation[0]
+        assert first.isupper(), f"{candidate.strategy}: {candidate.explanation}"
+    # Every strategy the router can reach on this board, not just the winner: the
+    # alternatives are what the UI offers as "use a wire instead", so they are read
+    # alongside the one that won.
+    assert {"solder-trace", "bare-wire", "insulated-wire"} <= {
+        c.strategy for c in candidates
+    }
+
+    # And the fourth, which only appears with lead bends turned on and a pin to bend.
+    bent = route_connection(
+        d,
+        _lookup,
+        RouteRequest(from_=h(2, 2), to=h(3, 2), from_pin=("c1", "1")),
+        RouterOptions(allow_lead_bend=True),
+    )
+    assert bent.best is not None
+    bends = [
+        c
+        for c in (bent.best, *bent.alternatives)
+        if c.strategy == "lead-bend"
+    ]
+    assert bends
+    assert bends[0].explanation.startswith("Lead bend: ")
+
+
 def test_this_module_keys_its_own_sets_on_coordinates_not_strings() -> None:
     """15.8 million ``f"{col},{row}"`` calls on one board, more than the A* loop itself
     cost. ``geometry.hole_key`` stays the one encoding for everything that crosses a

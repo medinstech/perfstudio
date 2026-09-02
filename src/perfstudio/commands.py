@@ -918,6 +918,10 @@ def _prepare_component(
     sets accumulate across a block, which is what catches a caller placing two parts
     called R1 in one payload -- the document alone cannot see that.
     """
+    # A reference is how every net node names a part, so a part with none is a part the
+    # wiring can never reach -- and a non-string one breaks the serializer on the way out.
+    if not isinstance(p.ref, str) or not p.ref.strip():
+        raise CommandError("invalid-ref", "A component needs a non-empty reference.")
     assert_hole_on_board(p.anchor, doc.board, f"Anchor for {p.ref}")
     rotation: Rotation = p.rotation if p.rotation is not None else 0
     assert_rotation(rotation)
@@ -1602,16 +1606,18 @@ class _SetBoard:
             )
 
         # Shrinking the board could strand parts outside it. Refuse rather than
-        # silently dropping the user's work, and name the first offender so the
-        # message is useful.
-        stranded_component = next(
-            (c for c in doc.components if not is_inside_board(c.anchor, b)), None
-        )
-        if stranded_component is not None:
+        # silently dropping the user's work, and name EVERY offender: naming the first
+        # meant one refusal per part, each discovered only after the previous one had
+        # been moved.
+        stranded_components = [c for c in doc.components if not is_inside_board(c.anchor, b)]
+        if stranded_components:
+            listed = ", ".join(
+                f"{c.ref} at {format_hole(c.anchor)}" for c in stranded_components[:8]
+            )
+            more = f" and {len(stranded_components) - 8} more" if len(stranded_components) > 8 else ""
             raise CommandError(
                 "would-strand-component",
-                f"{stranded_component.ref} at {format_hole(stranded_component.anchor)} "
-                f"would fall outside a {b.cols}x{b.rows} board.",
+                f"{listed}{more} would fall outside a {b.cols}x{b.rows} board.",
             )
         for cond in doc.conductors:
             stranded = next((h for h in cond.path if not is_inside_board(h, b)), None)
@@ -1620,6 +1626,15 @@ class _SetBoard:
                     "would-strand-conductor",
                     f"Conductor {cond.id} passes through {format_hole(stranded)}, "
                     f"outside a {b.cols}x{b.rows} board.",
+                )
+        for cut in doc.cuts:
+            # A cut off the board is not harmless: it survives the shrink unseen and, if
+            # the board is grown again, breaks a strip nobody remembers cutting.
+            if not is_inside_board(cut.at, b):
+                raise CommandError(
+                    "would-strand-cut",
+                    f"The track cut at {format_hole(cut.at)} would fall outside a "
+                    f"{b.cols}x{b.rows} board.",
                 )
         for mount in doc.mounting_holes:
             if not is_inside_board(mount.at, b):
@@ -1908,7 +1923,10 @@ class _AddCut:
 
     def apply(self, doc: PerfDocument, p: AddCutPayload, ctx: CommandContext) -> PerfDocument:
         if doc.board.type != "stripboard":
-            raise CommandError("not-stripboard", "Track cuts only apply to stripboard.")
+            raise CommandError(
+                "not-stripboard",
+                f"This board is {doc.board.type}, which has no tracks to cut.",
+            )
         assert_hole_on_board(p.at, doc.board, "Cut")
         id_ = p.id if p.id is not None else ctx.next_id("cut")
         if any(c.id == id_ for c in doc.cuts):
@@ -1927,7 +1945,10 @@ class _ApplyStripboardPlan:
         self, doc: PerfDocument, p: ApplyStripboardPlanPayload, ctx: CommandContext
     ) -> PerfDocument:
         if doc.board.type != "stripboard":
-            raise CommandError("not-stripboard", "Track cuts only apply to stripboard.")
+            raise CommandError(
+                "not-stripboard",
+                f"This board is {doc.board.type}, which has no tracks to cut or link.",
+            )
         if not p.cuts and not p.conductors:
             raise CommandError(
                 "nothing-to-apply",

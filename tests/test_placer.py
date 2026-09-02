@@ -39,7 +39,7 @@ from perfstudio.autoroute import plan_autoroute
 from perfstudio.command import CommandBus, CommandContext
 from perfstudio.commands import create_document_id_generator, create_standard_registry
 from perfstudio.connectivity import FootprintLookup
-from perfstudio.drc import run_drc
+from perfstudio.drc import DrcViolation, run_drc
 from perfstudio.footprints import footprint_lookup
 from perfstudio.geometry import all_pin_holes, is_inside_board
 from perfstudio.model import (
@@ -404,15 +404,30 @@ def test_a_rectangle_clipping_the_corner_of_a_circle_is_nobodys_overlap() -> Non
     assert [v for v in run_drc(doc, registry) if v.rule == "component-body-overlap"] == []
 
 
+#: DRC errors a placer can create and clear, which is what "responsible for" means below.
+#: `unknown-footprint` is deliberately not among them: `dense` carries X11 on `c-disc-1`,
+#: which is not a footprint in either engine, and no arrangement of parts makes it one.
+PLACEMENT_ERRORS = frozenset(
+    {"component-body-overlap", "component-off-board", "duplicate-pin-hole"}
+)
+
+
 def test_it_clears_the_drc_errors_it_is_responsible_for() -> None:
     """The dense fixture starts with six overlapping pairs. A placer that cannot fix
     that is not doing the job the user pressed the button for."""
     registry = footprint_lookup()
     doc = golden_document("dense")
 
-    before = [v for v in run_drc(doc, registry) if v.severity == "error"]
+    def placement_errors(document: PerfDocument) -> list[DrcViolation]:
+        return [
+            v
+            for v in run_drc(document, registry)
+            if v.severity == "error" and v.rule in PLACEMENT_ERRORS
+        ]
+
+    before = placement_errors(doc)
     plan = plan_placement(doc, registry)
-    after = [v for v in run_drc(plan.document, registry) if v.severity == "error"]
+    after = placement_errors(plan.document)
 
     assert len(before) == 6
     assert after == []

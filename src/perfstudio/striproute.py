@@ -156,7 +156,13 @@ def plan_stripboard(
             problems=(
                 StripProblem(
                     code="not-stripboard",
-                    message="This board has no tracks. Autoroute plans it as a perfboard.",
+                    # States the fact rather than describing a replan that did not happen:
+                    # this returns an EMPTY plan, so "autoroute plans it as a perfboard"
+                    # read as a report on work nothing here did.
+                    message=(
+                        f"This board is {doc.board.type}, which has no tracks to cut or "
+                        f"link; use autoroute on it."
+                    ),
                 ),
             ),
             label="",

@@ -146,7 +146,12 @@ def _physical_net_label(id_: str | None, physical_net_by_id: dict[str, PhysicalN
         return "not connected to any other pin in this net"
     pn = physical_net_by_id.get(id_)
     lowest = pn.nodes[0] if pn is not None and pn.nodes else None
-    return f"physical net {id_}" if lowest is None else f"near {format_hole(lowest.hole)}"
+    # Never the id. "net:2:13:bottom" is a document-internal handle, and this label is
+    # promised as an ADDRESS -- the one language every user-facing message here speaks.
+    # A physical net with no node has nothing addressable to offer, so say that instead.
+    if lowest is None:
+        return "an unaddressable connection"
+    return f"near {format_hole(lowest.hole)}"
 
 
 # ---------------------------------------------------------------------------
@@ -249,7 +254,13 @@ def run_lvs(doc: PerfDocument, lookup: FootprintLookup) -> LvsResult:
         )
 
         lowest = pn.nodes[0] if pn.nodes else None
-        hole_ref = pn.id if lowest is None else format_hole(lowest.hole)
+        # Same rule as _physical_net_label: the internal id is not an address and printing
+        # it sent the reader looking for a hole called "net:2:13:bottom".
+        where = (
+            "an unaddressable physical connection"
+            if lowest is None
+            else f"the physical connection at {format_hole(lowest.hole)}"
+        )
         prefix = "CRITICAL SHORT (power tied to ground): " if is_power_ground_short else "SHORT: "
         quoted_net_names = " and ".join(f"'{n}'" for n in net_names)
 
@@ -257,7 +268,7 @@ def run_lvs(doc: PerfDocument, lookup: FootprintLookup) -> LvsResult:
             LvsIssue(
                 kind="short",
                 message=(
-                    f"{prefix}the physical connection at {hole_ref} ties together schematic nets "
+                    f"{prefix}{where} ties together schematic nets "
                     f"{quoted_net_names} -- pins "
                     f"{', '.join(_format_pin_ref(p) for p in all_pins)}. "
                     "This is almost certainly a solder bridge; separate the pads and re-measure "

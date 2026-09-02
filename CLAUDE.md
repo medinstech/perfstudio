@@ -85,6 +85,16 @@ level, and 20+ levels away from a board that lost its parts. Re-bless with
 coverage instead and was nearly useless (a perfboard is mostly board); that is written
 down in the file so nobody tries it again.
 
+**Every destructive question in the window goes through `MainWindow._confirm`**, whose
+button carries the verb and whose default is Cancel — `QMessageBox.question` with no
+buttons named puts Yes under Enter. A test that needs the answer stubs
+`type(window)._confirm`, never `QMessageBox.question`. Two more things a UI test must know:
+`window._planner_running` is True while `_run_planner` pumps the event loop, and both the
+file watcher and `closeEvent` stand down while it is; and the scene's modes survive a
+rebuild by re-creating their markers in `_build` — a mode that keeps a wrapper to an item
+`clear()` destroyed raises on the next disarm and takes every other mode with it, which is
+what `test_measuring_survives_a_flip` is about.
+
 UI tests run under `QT_QPA_PLATFORM=offscreen` (set in `tests/test_ui.py` before PySide6
 is imported). Qt's offscreen plugin ships no font database on Windows, so tests that
 assert on rendered *text* are skipped there — see the `skipif` guards in `test_ui.py`
@@ -105,6 +115,20 @@ CLI and a replayed journal all go through that one bus — which is what makes u
 work across a mixed human/agent session.
 
 Adding a mutation means adding a command, not writing to the document from the caller.
+
+**`persist.py` refuses at load what `board.set` refuses** — a board with no columns, a
+zero pitch, a drill wider than its pad — and two components (or parts) sharing an id.
+One fact, two consumers: a file with a zero pitch used to open without a word and then
+every repaint divided by it, and a duplicated id is a part no command can ever reach.
+A duplicated *reference* is a warning, like a diagonal solder-trace step: the board still
+opens, and the ambiguity in the wiring is said out loud. `CommandBus.dispatch` catches a
+payload of the wrong shape (`invalid-payload`) as well as `CommandError`, because "never
+raises; callers branch on `ok`" has to hold for an agent handing it a dict, and the undo
+stack is bounded (`UNDO_LIMIT`).
+
+**A group of parts moved together is ONE `component.moveMany`** (`view2d._dispatch_moves`),
+for drags and arrow-key nudges alike: one gesture, one undo step, all-or-nothing. A
+locked part in the selection refuses the whole move and names itself.
 
 **Commands enforce document integrity; DRC reports design quality.** Ids unique,
 references resolve, paths on the board, model invariants hold → hard error, mutation
@@ -144,7 +168,12 @@ improve on it. Each is named, excluded from the comparison rather than edited in
 the next regeneration silently disagree), and pinned by its own test:
 
 - `PYTHON_ONLY_RULES` — rules the original never had (`conductor-crossing`,
-  `jumper-under-body`), so there is nothing for a fixture to record.
+  `jumper-under-body`, `conductor-off-board`, `unknown-footprint`), so there is nothing
+  for a fixture to record. The last one fires on eight of the fifteen fixtures, every time
+  on the id `c-disc-1`, which exists in neither engine: the fixtures are dumps of the
+  original and are left exactly as they are, so the rule is excluded here and pinned by
+  its own test. `tests/test_placer.py` measures the placer against `PLACEMENT_ERRORS`
+  only, for the same reason — no arrangement of parts makes that footprint exist.
 - `SHARPER_THAN_TYPESCRIPT` — one finding the original reported and this engine does not:
   `random-02`'s X3 against X6, a rectangle clipping the corner of an electrolytic's 24-gon
   courtyard where the boxes meet and the shapes do not. 41 body-overlap findings across

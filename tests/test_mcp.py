@@ -289,12 +289,31 @@ def test_optimize_placement_applies_as_one_undo_step(loaded: BoardSession) -> No
 
 def test_drc_and_lvs_come_back_as_data_not_prose(loaded: BoardSession) -> None:
     drc = loaded.run_drc()
-    assert set(drc) == {"errors", "warnings", "violations"}
+    assert set(drc) == {"ok", "errors", "warnings", "violations"}
     assert all({"rule", "severity", "message", "holes"} <= set(v) for v in drc["violations"])
 
     lvs = loaded.run_lvs()
     assert lvs["schematic_nets"] == 7
     assert lvs["opens"] > 0  # Nothing routed yet, and it says so rather than pretending.
+
+
+def test_ok_means_the_call_ran_and_never_the_verdict(loaded: BoardSession) -> None:
+    """``ok: false`` is this API's word for "refused", matching CommandBus.dispatch. It
+    read on ``run_lvs`` as "the board matches the schematic", so an unrouted board came
+    back looking like a tool that had failed -- and an agent that branches on ``ok`` would
+    stop rather than read the opens it asked for. The verdict has its own name now.
+    """
+    lvs = loaded.run_lvs()
+    assert lvs["ok"] is True
+    assert lvs["matches_schematic"] is False  # nothing is routed yet
+    assert lvs["opens"] > 0
+
+    assert loaded.run_drc()["ok"] is True
+
+    loaded.autoroute()
+    routed = loaded.run_lvs()
+    assert routed["ok"] is True
+    assert routed["matches_schematic"] is True
 
 
 def test_generating_a_guide_writes_nothing_unless_asked(loaded: BoardSession) -> None:
@@ -357,6 +376,35 @@ def test_a_missing_file_is_reported_rather_than_raised_as_a_traceback() -> None:
     with pytest.raises(SessionError) as err:
         board.open_document("no/such/board.perf")
     assert "Cannot open" in str(err.value)
+
+
+def test_a_path_argument_is_expanded_the_way_a_shell_would_expand_it(
+    loaded: BoardSession, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``~/board.perf`` is a real thing to type and ``Path("~")`` is a directory called
+    "~", so the file landed somewhere nobody could find and re-opening it failed."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+
+    assert loaded.save_document("~/board.perf")["ok"]
+    assert (tmp_path / "board.perf").is_file()
+    assert not Path("~").exists()
+
+    reopened = BoardSession()
+    assert reopened.open_document("~/board.perf")["ok"]
+
+
+def test_an_empty_path_is_refused_rather_than_read_as_the_current_directory() -> None:
+    """``Path("")`` is ``Path(".")``, so an empty argument came back as "Cannot open .:
+    Permission denied" -- a message about a directory nobody named."""
+    board = BoardSession()
+    with pytest.raises(SessionError) as err:
+        board.open_document("")
+    assert "needs a path" in str(err.value)
+
+    with pytest.raises(SessionError) as err:
+        board.save_document("   ")
+    assert "needs a path" in str(err.value)
 
 
 def test_save_round_trips_through_the_real_format(loaded: BoardSession, tmp_path: Path) -> None:
@@ -610,7 +658,44 @@ def test_an_agent_routes_a_stripboard_by_cutting_and_linking(session) -> None:
 
     assert result["ok"], result
     assert result["cuts"], "two nets share row 2, so the board is shorting them"
+    assert result["cut_count"] == len(result["cuts"])
     assert session.run_lvs()["shorts"] == 0
+
+
+def test_a_stripboard_with_nothing_to_do_reports_the_same_shape_as_one_with_work(
+    session,
+) -> None:
+    """An empty plan used to answer ``cuts: 0, links: 0`` -- integers where a plan that
+    did something returns lists. An agent reading ``cuts`` should not have to handle a
+    field whose TYPE changes when there happened to be nothing to cut."""
+    session.set_board(board_type="stripboard", strip_axis="horizontal")
+    session.place_component("R1", "r-axial-4", "B2")
+    # One net, one pin: nothing to join, so the planner has no cut and no link to make.
+    session.create_net("IN", pins=["R1.1"])
+
+    result = session.autoroute()
+
+    assert result["ok"], result
+    assert result["committed"] is False
+    assert result["cuts"] == []
+    assert result["links"] == []
+    assert result["cut_count"] == 0
+    assert result["link_count"] == 0
+
+
+def test_export_pdf_without_a_directory_is_refused_rather_than_writing_two_files(
+    loaded: BoardSession, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The server's INSTRUCTIONS promise that nothing writes to disk unless a path is
+    named. This wrote board_component_side.pdf and board_solder_side.pdf into whatever
+    directory the process was started in, which for a stdio server is somebody's home."""
+    monkeypatch.chdir(tmp_path)
+
+    result = loaded.export_pdf()
+
+    assert result["ok"] is False
+    assert result["code"] == "no-directory"
+    assert list(tmp_path.iterdir()) == []
 
 
 # ---------------------------------------------------------------------------

@@ -610,21 +610,31 @@ def test_arrow_nudge_moves_through_the_command_bus() -> None:
     assert next(c for c in bus.document.components if c.id == comp_id).anchor == before
 
 
-def test_nudging_several_parts_does_not_read_items_the_first_dispatch_destroyed() -> None:
-    """The first dispatch rebuilds the scene, destroying every item. A loop that both reads
-    items and dispatches is reading destroyed C++ objects from its second iteration on -- so
-    the work list has to be snapshotted before anything is dispatched.
+def test_nudging_several_parts_is_one_command_and_one_undo_step() -> None:
+    """Several selected parts nudged together are ONE ``component.moveMany``.
+
+    Two things this guards. The historical one: the first dispatch rebuilds the scene and
+    destroys every item, so a loop that both read items and dispatched was reading
+    destroyed C++ objects from its second iteration on. The current one: a group moved by
+    one gesture is one decision, so it is one undo step -- five parts used to take five
+    Ctrl+Z presses to put back.
     """
     document = _load_dense()
     bus = _new_bus(document)
     scene = BoardScene(bus.document, footprint_lookup(), side="top", bus=bus)
     ids = list(scene.component_items)[:4]
+    before = {c.id: c.anchor for c in bus.document.components if c.id in ids}
     scene.select_components(ids)
 
-    results = scene.nudge_selection(0, 1)  # would raise RuntimeError before the fix
+    results = scene.nudge_selection(0, 1)
 
-    assert len(results) == len(ids)
-    assert all(r.ok for r in results), [r.message for r in results if not r.ok]
+    assert len(results) == 1 and results[0].ok, results
+    assert len(bus.journal()) == 1
+    for comp in bus.document.components:
+        if comp.id in ids:
+            assert (comp.anchor.col, comp.anchor.row) == (before[comp.id].col, before[comp.id].row + 1)
+    bus.undo()
+    assert {c.id: c.anchor for c in bus.document.components if c.id in ids} == before
 
 
 def test_nudging_with_no_selection_does_nothing() -> None:
@@ -3019,16 +3029,21 @@ class _StubNetDialog:
 
     values_to_return: tuple = ("GND", "ground", None, None)
     accepted = True
+    #: How many times exec() accepts before it rejects, or None for "always". A refused
+    #: net brings the form back, so a stub that always accepted would never let go.
+    accept_times: int | None = None
+    opened = 0
 
     def __init__(self, *args, **kwargs) -> None:
-        pass
+        type(self).opened += 1
 
     def exec(self) -> int:
         from PySide6.QtWidgets import QDialog
 
-        return (
-            QDialog.DialogCode.Accepted if self.accepted else QDialog.DialogCode.Rejected
-        )
+        accepted = self.accepted
+        if self.accept_times is not None:
+            accepted = accepted and type(self).opened <= self.accept_times
+        return QDialog.DialogCode.Accepted if accepted else QDialog.DialogCode.Rejected
 
     def values(self) -> tuple:
         return self.values_to_return
@@ -3058,12 +3073,17 @@ def test_a_refused_new_net_leaves_the_document_alone(monkeypatch) -> None:
     existing = window.bus.document.nets[0].name
     monkeypatch.setattr(main_module, "NetDialog", _StubNetDialog)
     _StubNetDialog.values_to_return = (existing, "signal", None, None)
+    _StubNetDialog.accept_times = 1
+    _StubNetDialog.opened = 0
+    from PySide6.QtWidgets import QMessageBox
+
+    monkeypatch.setattr(QMessageBox, "warning", staticmethod(lambda *a, **k: None))
     before = window.bus.document
 
     window.on_new_net()
 
     assert window.bus.document is before
-    assert "duplicate-net-name" in window.statusBar().currentMessage()
+    _StubNetDialog.accept_times = None
     _close(window)
 
 
@@ -3115,7 +3135,6 @@ def test_the_panel_keeps_a_net_open_across_the_command_that_empties_a_row() -> N
 
 
 def test_deleting_a_net_keeps_its_copper_and_releases_the_claim(monkeypatch) -> None:
-    from PySide6.QtWidgets import QMessageBox
 
     from perfstudio.commands import AddConductorPayload, NewSolderTraceConductor
 
@@ -3131,9 +3150,9 @@ def test_deleting_a_net_keeps_its_copper_and_releases_the_claim(monkeypatch) -> 
     )
     conductors_before = len(window.bus.document.conductors)
     window._select_net(net.id)
-    monkeypatch.setattr(
-        QMessageBox, "question", staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes)
-    )
+    # The confirmation puts Cancel under Enter and carries the verb on its button, so it
+    # is a box of the window's own rather than QMessageBox.question -- stubbed as such.
+    monkeypatch.setattr(type(window), "_confirm", lambda self, *a, **k: True)
 
     window.on_delete_net()
 
@@ -5333,4 +5352,543 @@ def test_discarding_the_offer_takes_the_record_and_nothing_else(
         assert window.bus.document is started_with
         assert board.read_text(encoding="utf-8") == "an older board"
     finally:
+        _close(window)
+
+
+# ---------------------------------------------------------------------------
+# Modes surviving a rebuild, and the two sides agreeing about the keyboard
+# ---------------------------------------------------------------------------
+#
+# Every command rebuilds the scene, and so does a flip and a colour change. A mode is
+# state the rebuild must carry across; its marker on the board is only a picture of it.
+# Each test here is a thing that was wrong: an item the rebuild destroyed and the mode
+# still held a wrapper for, or a picture the rebuild threw away and never redrew.
+
+
+def test_measuring_survives_a_flip() -> None:
+    """The measurement marker is destroyed by clear() like every other item. The mode
+    forgot to forget it, so the next click -- or the next arming of ANY tool, all of
+    which disarm measuring first -- raised from removeItem and left every tool dead."""
+    document = _load_dense()
+    bus = _new_bus(document)
+    scene = BoardScene(bus.document, footprint_lookup(), side="top", bus=bus)
+    scene.arm_measure(True)
+    scene.measure_click(HoleCoord(2, 2))
+
+    scene.set_side("bottom")  # a rebuild in the middle of a measurement
+
+    scene.measure_click(HoleCoord(5, 2))  # raised RuntimeError before the fix
+    scene.leave_mode()
+    assert not scene.in_a_mode
+
+
+def test_picking_a_part_disarms_the_drawing_tool() -> None:
+    """The board modes are mutually exclusive. Arming a footprint mid-trace used to leave
+    both armed: the ghost followed the pointer while every click still extended the trace."""
+    document = _load_dense()
+    bus = _new_bus(document)
+    scene = BoardScene(bus.document, footprint_lookup(), side="top", bus=bus)
+    scene.arm_drawing("solder-trace")
+    scene.draw_click(HoleCoord(1, 1))
+
+    scene.arm_placement("r-axial-3")
+
+    assert scene.armed_draw_kind is None
+    assert scene.armed_footprint_id == "r-axial-3"
+
+
+def test_a_half_drawn_conductor_survives_a_rebuild() -> None:
+    """The drawn path is state; the preview is its picture. A flip two clicks into a trace
+    used to drop the picture and keep the path, so Enter committed an invisible chain."""
+    from perfstudio.ui.view2d import DrawPreviewItem
+
+    document = _load_dense()
+    bus = _new_bus(document)
+    scene = BoardScene(bus.document, footprint_lookup(), side="top", bus=bus)
+    scene.arm_drawing("solder-trace")
+    scene.draw_click(HoleCoord(1, 1))
+    scene.draw_click(HoleCoord(2, 1))
+
+    scene.set_side("bottom")
+
+    previews = [item for item in scene.items() if isinstance(item, DrawPreviewItem)]
+    assert len(previews) == 1
+    assert previews[0].path == [HoleCoord(1, 1), HoleCoord(2, 1)]
+    assert scene.armed_draw_kind == "solder-trace"
+
+
+def test_the_ghost_comes_back_under_the_pointer_after_a_placement() -> None:
+    """A fresh ghost starts at the origin, and placing a part rebuilds the scene -- so the
+    ghost for the NEXT part appeared at A1 until the pointer was jogged, at exactly the
+    moment it was being lined up."""
+    from perfstudio.commands import create_starter_document
+    from perfstudio.model import DocumentMeta
+    from perfstudio.ui.main import MainWindow
+
+    # A window, because the rebuild after a command is the window's doing.
+    window = MainWindow(create_starter_document(DocumentMeta(name="t", created="", modified="")))
+    try:
+        scene = window.scene
+        board = scene.document.board
+        scene.arm_placement("r-axial-3")
+        scene.hover_at(hole_to_screen(HoleCoord(8, 8), board, "top"))
+        ghost_before = scene._ghost
+
+        result = scene.place_armed(HoleCoord(8, 8))
+
+        assert result is not None and result.ok, result
+        assert scene._ghost is not None and scene._ghost is not ghost_before
+        assert scene._ghost.anchor == HoleCoord(8, 8)
+    finally:
+        _close(window)
+
+
+def test_arrow_keys_follow_the_screen_on_the_solder_side() -> None:
+    """Right means "to the right of where it is on screen". The solder side is mirrored,
+    so on that side a step to the right is one column DOWN in the document -- which the
+    keys used to get backwards, while a drag got it right."""
+    from PySide6.QtGui import QKeyEvent
+
+    document = _load_dense()
+    bus = _new_bus(document)
+    scene = BoardScene(bus.document, footprint_lookup(), side="bottom", bus=bus)
+    comp_id = next(iter(scene.component_items))
+    before = next(c for c in bus.document.components if c.id == comp_id).anchor
+    scene.select_components([comp_id])
+
+    scene.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Right, Qt.KeyboardModifier.NoModifier))
+
+    after = next(c for c in bus.document.components if c.id == comp_id).anchor
+    assert after.col == before.col - 1
+    board = bus.document.board
+    assert hole_to_screen(after, board, "bottom").x() > hole_to_screen(before, board, "bottom").x()
+
+
+def test_conductor_selection_survives_a_rebuild() -> None:
+    """Parts have always been re-selected by id after the rebuild every command causes.
+    Conductors were not, so a trace selected to be deleted was deselected by whatever
+    unrelated edit came first."""
+    document = _load_dense()
+    bus = _new_bus(document)
+    scene = BoardScene(bus.document, footprint_lookup(), side="top", bus=bus)
+    conductor = next(item for item in scene.items() if isinstance(item, ConductorItem))
+    conductor.setSelected(True)
+    wanted = conductor.conductor_id
+
+    other = next(iter(scene.component_items))
+    scene.select_components([other])  # a part selection, then a command that rebuilds
+    conductor.setSelected(True)
+    scene.nudge_selection(1, 0)
+
+    assert scene.selected_conductor_ids() == (wanted,)
+
+
+def test_the_ghost_is_mirrored_on_the_solder_side() -> None:
+    """The anchor is mirrored by hole_to_screen on the solder side and the pins have to be
+    mirrored with it. They were painted at their raw offsets, so a DIP's ghost showed its
+    pins running one way while the placement put them the other."""
+    from perfstudio.ui.view2d import PlacementGhostItem
+
+    document = _load_dense()
+    board = document.board
+    footprint = footprint_lookup()("r-axial-3")
+    assert footprint is not None
+    far_pin = max(footprint.pins, key=lambda p: p.d_col)
+    assert far_pin.d_col > 0
+
+    def pin_dot_x(side: str) -> float:
+        ghost = PlacementGhostItem(footprint, board, side)  # type: ignore[arg-type]
+        size = 400
+        image = QImage(size, size, QImage.Format.Format_ARGB32)
+        image.fill(QColor("white"))
+        painter = QPainter(image)
+        painter.translate(size / 2, size / 2)
+        painter.scale(8, 8)
+        ghost.paint(painter, None)
+        painter.end()
+        # The far pin's dot: the darkest pixels on the row through the pins, away from
+        # the anchor at the centre.
+        y = size // 2
+        xs = [x for x in range(size) if QColor(image.pixel(x, y)).lightness() < 200 and abs(x - size / 2) > 20]
+        return sum(xs) / len(xs) - size / 2
+
+    assert pin_dot_x("top") > 0
+    assert pin_dot_x("bottom") < 0
+
+
+def test_zoom_lands_on_the_limit_rather_than_stopping_short_of_it() -> None:
+    """The last notch before a limit used to do nothing, so the zoom stopped one step
+    short of its own bound and the wheel appeared to have died."""
+    from perfstudio.ui.view2d import MAX_SCALE, MIN_SCALE, BoardView
+
+    document = _load_dense()
+    scene = BoardScene(document, footprint_lookup(), side="top")
+    view = BoardView(scene)
+    view.resetTransform()
+    view.scale(MAX_SCALE * 0.95, MAX_SCALE * 0.95)
+
+    view.zoom_by(1.25)
+    assert view.current_scale() == pytest.approx(MAX_SCALE)
+
+    view.resetTransform()
+    view.scale(MIN_SCALE * 1.05, MIN_SCALE * 1.05)
+    view.zoom_by(0.5)
+    assert view.current_scale() == pytest.approx(MIN_SCALE)
+
+
+def test_a_fit_stays_inside_the_zoom_range() -> None:
+    """A fit that lands outside the range leaves every wheel step outside it too, so the
+    wheel is dead in both directions. Two pads framed in a large viewport did that."""
+    from perfstudio.ui.view2d import MAX_SCALE, BoardView
+
+    document = _load_dense()
+    scene = BoardScene(document, footprint_lookup(), side="top")
+    view = BoardView(scene)
+    view.resize(1600, 1200)
+    view.show()
+
+    view.center_on_holes([HoleCoord(3, 3), HoleCoord(4, 3)], document.board, "top")
+
+    assert view.current_scale() <= MAX_SCALE
+    view.close()
+
+
+def test_leaving_the_view_clears_the_hovered_hole() -> None:
+    """The status bar kept naming the hole the pointer left the board over, and Paste
+    from the menu still landed there."""
+    from perfstudio.ui.main import MainWindow
+
+    window = MainWindow(_load_dense())
+    try:
+        board = window.bus.document.board
+        window.scene.hover_at(hole_to_screen(HoleCoord(4, 4), board, "top"))
+        assert window._hovered_hole == HoleCoord(4, 4)
+
+        window.view.leaveEvent(QEvent(QEvent.Type.Leave))
+
+        assert window._hovered_hole == HoleCoord(-1, -1)
+    finally:
+        _close(window)
+
+
+
+# ---------------------------------------------------------------------------
+# The window's own rough edges: what an action is enabled for, what a flip keeps,
+# what a question puts under Enter
+# ---------------------------------------------------------------------------
+
+
+def _first_conductor_item(window) -> ConductorItem:
+    return next(item for item in window.scene.items() if isinstance(item, ConductorItem))
+
+
+def test_delete_is_live_for_a_conductor_on_its_own(monkeypatch) -> None:
+    """A single bad route is the whole reason conductors are selectable, and the menu
+    item was greyed out for exactly that selection."""
+    window = _window_on(_load_dense())
+    try:
+        conductor = _first_conductor_item(window)
+        conductor.setSelected(True)
+        window._refresh_selection_state()
+
+        assert window.act_delete.isEnabled()
+        assert "1" in window.label_selection.text()
+
+        monkeypatch.setattr(type(window), "_confirm", lambda self, *a, **k: True)
+        wanted = conductor.conductor_id
+        window.on_delete_selection()
+        assert all(c.id != wanted for c in window.bus.document.conductors)
+    finally:
+        _close(window)
+
+
+def test_deleting_a_mixed_selection_takes_the_conductors_too(monkeypatch) -> None:
+    """A rubber band that took a part and the two traces on it used to delete the part
+    and keep the traces without a word."""
+    window = _window_on(_load_dense())
+    try:
+        conductor = _first_conductor_item(window)
+        conductor.setSelected(True)
+        comp_id = next(iter(window.scene.component_items))
+        window.scene.component_items[comp_id].setSelected(True)
+        monkeypatch.setattr(type(window), "_confirm", lambda self, *a, **k: True)
+        wanted = conductor.conductor_id
+
+        window.on_delete_selection()
+
+        assert all(c.id != comp_id for c in window.bus.document.components)
+        assert all(c.id != wanted for c in window.bus.document.conductors)
+    finally:
+        _close(window)
+
+
+def test_a_confirmation_puts_cancel_under_enter(monkeypatch) -> None:
+    """QMessageBox.question with no buttons named put Yes under Enter, so a delete
+    answered by reflex was a delete."""
+    from PySide6.QtWidgets import QMessageBox
+
+    window = _window_on(_load_dense())
+    seen: dict[str, str] = {}
+
+    def fake_exec(self):
+        seen["default"] = self.defaultButton().text()
+        seen["buttons"] = "|".join(b.text() for b in self.buttons())
+        return 0
+
+    monkeypatch.setattr(QMessageBox, "exec", fake_exec)
+    monkeypatch.setattr(QMessageBox, "clickedButton", lambda self: None)
+    try:
+        assert window._confirm("Delete parts", "Delete R1?", "Delete") is False
+        assert seen["default"] == "Cancel"
+        assert "Delete" in seen["buttons"]
+    finally:
+        _close(window)
+
+
+def test_flipping_keeps_the_view_on_the_same_part_of_the_board() -> None:
+    """The scene is mirrored about the hole span's midpoint, so a flip while zoomed in on
+    the left edge used to show the right edge."""
+    from perfstudio.geometry import hole_span_mm
+
+    window = _window_on(_load_dense())
+    try:
+        window.resize(1200, 800)
+        window.show()
+        QApplication.processEvents()
+        board = window.bus.document.board
+        span_w, _ = hole_span_mm(board)
+        view = window.view
+        view.resetTransform()
+        view.scale(20, 20)
+        view.centerOn(QPointF(5.0, 30.0))
+        QApplication.processEvents()
+        before = view.mapToScene(view.viewport().rect().center())
+
+        window.on_flip_board()
+        QApplication.processEvents()
+
+        after = view.mapToScene(view.viewport().rect().center())
+        assert abs(after.x() - (span_w - before.x())) < board.pitch
+        assert abs(after.y() - before.y()) < board.pitch
+    finally:
+        _close(window)
+
+
+def test_undo_and_redo_name_the_command_in_the_menu() -> None:
+    window = _window_on(_load_dense())
+    try:
+        first = window.bus.document.components[0]
+        window.bus.dispatch("component.move", MoveComponentPayload(id=first.id, anchor=HoleCoord(3, 3)))
+        assert first.ref in window.act_undo.text()
+        window.on_undo()
+        assert first.ref in window.act_redo.text()
+        assert first.ref not in window.act_undo.text()
+    finally:
+        _close(window)
+
+
+def test_save_is_enabled_only_when_there_is_something_to_save(tmp_path) -> None:
+    """Ctrl+S on an unmodified board rewrote the file -- a new modified stamp, a new
+    mtime -- for nothing."""
+    from perfstudio.ui.main import MainWindow
+
+    board = tmp_path / "b.perf"
+    board.write_text(persist.serialize_document(_load_dense()), encoding="utf-8")
+    window = MainWindow(_load_dense(), board)
+    try:
+        assert not window.act_save.isEnabled()
+        first = window.bus.document.components[0]
+        window.bus.dispatch("component.move", MoveComponentPayload(id=first.id, anchor=HoleCoord(3, 3)))
+        assert window.act_save.isEnabled()
+    finally:
+        _close(window)
+    untitled = _window_on(_load_dense())
+    try:
+        assert untitled.act_save.isEnabled(), "an untitled board can always be saved somewhere"
+    finally:
+        _close(untitled)
+
+
+def test_escape_leaves_the_status_bar_alone_when_there_is_nothing_to_leave() -> None:
+    """Escape pressed out of reflex used to wipe the routing summary, posted with no
+    timeout so it could be read."""
+    window = _window_on(_load_dense())
+    try:
+        window.statusBar().showMessage("4 connections routed", 0)
+        window.on_stop_tool()
+        assert window.statusBar().currentMessage() == "4 connections routed"
+
+        window.scene.arm_placement("r-axial-3")
+        window.on_stop_tool()
+        assert window.statusBar().currentMessage() == ""
+        assert not window.scene.in_a_mode
+    finally:
+        _close(window)
+
+
+def test_board_features_remove_needs_a_chosen_row() -> None:
+    """With nothing picked the button used to delete the first row, chosen for the user."""
+    from perfstudio.commands import AddMountingHolesPayload
+    from perfstudio.ui.main import BoardFeaturesDialog
+
+    window = _window_on(_load_dense())
+    try:
+        window.bus.dispatch("mounting-hole.addMany", AddMountingHolesPayload(ats=(HoleCoord(1, 1),)))
+        dialog = BoardFeaturesDialog(window.bus, window)
+        assert dialog.tree.topLevelItemCount() >= 1
+        assert not dialog.act_remove.isEnabled()
+        dialog.tree.setCurrentItem(dialog.tree.topLevelItem(0))
+        assert dialog.act_remove.isEnabled()
+    finally:
+        _close(window)
+
+
+def test_the_window_will_not_close_under_a_running_planner() -> None:
+    window = _window_on(_load_dense())
+    window.show()
+    QApplication.processEvents()
+    try:
+        window._planner_running = True
+        window.close()
+        assert window.isVisible()
+    finally:
+        window._planner_running = False
+        _close(window)
+
+
+def test_a_file_change_waits_for_a_running_planner(tmp_path) -> None:
+    """The planner captured the document it is planning against; swapping the bus under
+    it would commit that plan into a different board."""
+    from perfstudio.ui.main import MainWindow
+
+    board = tmp_path / "b.perf"
+    board.write_text(persist.serialize_document(_load_dense()), encoding="utf-8")
+    window = MainWindow(_load_dense(), board)
+    try:
+        window._planner_running = True
+        started_with = window.bus
+        board.write_text(persist.serialize_document(_load_dense()) + "\n", encoding="utf-8")
+        window._reload_if_changed()
+        assert window.bus is started_with
+        assert window._watch_timer.isActive()
+    finally:
+        window._planner_running = False
+        _close(window)
+
+
+def test_a_recovery_record_that_will_not_parse_is_dropped_rather_than_offered_forever(
+    tmp_path, monkeypatch
+) -> None:
+    from PySide6.QtWidgets import QMessageBox
+
+    from perfstudio.commands import create_starter_document
+    from perfstudio.model import DocumentMeta
+
+    board = tmp_path / "amp.perf"
+    board.write_text("an older board", encoding="utf-8")
+    window = _window_on(create_starter_document(DocumentMeta(name="untitled", created="", modified="")))
+    complaints: list[str] = []
+    monkeypatch.setattr(
+        QMessageBox, "critical", staticmethod(lambda parent, title, text, *a, **k: complaints.append(text))
+    )
+    try:
+        record_path = _leave_a_record(window, board, "this is not a board")
+        _answer_recovery(monkeypatch, "Open the Recovered Board")
+
+        window.offer_recovery()
+
+        assert complaints, "the failure to open it is still said"
+        assert not record_path.exists()
+    finally:
+        _close(window)
+
+
+def test_the_autosave_warning_outlives_the_next_status_message(monkeypatch) -> None:
+    """A status message is replaced by the next command's description within seconds;
+    a recovery file that cannot be written is a condition, and it stays on screen until
+    it can be."""
+    window = _window_on(_load_dense())
+    try:
+        first = window.bus.document.components[0]
+        window.bus.dispatch("component.move", MoveComponentPayload(id=first.id, anchor=HoleCoord(3, 3)))
+        monkeypatch.setattr(window._autosave, "write", lambda text, path: False)
+        window._on_autosave_tick()
+        assert window.label_warning.text()
+
+        window.statusBar().showMessage("Move R1 to C3")
+        assert window.label_warning.text()
+
+        monkeypatch.setattr(window._autosave, "write", lambda text, path: True)
+        window._on_autosave_tick()
+        assert window.label_warning.text() == ""
+    finally:
+        _close(window)
+
+
+def test_a_truncated_netlist_is_reported_in_a_dialog_not_a_traceback(tmp_path, monkeypatch) -> None:
+    from PySide6.QtWidgets import QMessageBox
+
+    said: list[str] = []
+    for kind in ("critical", "warning"):
+        monkeypatch.setattr(
+            QMessageBox, kind, staticmethod(lambda parent, title, text, *a, **k: said.append(text))
+        )
+    netlist = tmp_path / "broken.net"
+    netlist.write_text('(export (version "E")', encoding="utf-8")
+    window = _window_on(_load_dense())
+    try:
+        window.import_netlist_from(netlist)  # raised SExprSyntaxError before the fix
+        assert said, "the failure is reported"
+    finally:
+        _close(window)
+
+
+def test_right_clicking_a_conductor_offers_to_delete_it() -> None:
+    """The menu used to offer the bare-board list over a trace, with no way to delete the
+    trace from it."""
+    window = _window_on(_load_dense())
+    window.resize(1200, 800)
+    window.show()
+    QApplication.processEvents()
+    try:
+        window.view.fit_board()
+        conductor = _first_conductor_item(window)
+        board = window.bus.document.board
+        where = hole_to_screen(conductor.conductor.path[0], board, "top")
+        pos = window.view.mapFromScene(where)
+
+        menu = window.board_menu(pos)
+
+        assert conductor.isSelected()
+        assert window.act_delete in menu.actions()
+        assert window.act_properties not in menu.actions()
+    finally:
+        _close(window)
+
+
+def test_a_refused_new_net_is_said_in_a_dialog_and_the_form_comes_back(monkeypatch) -> None:
+    """A duplicate name refused into the status bar threw away everything typed."""
+    from PySide6.QtWidgets import QMessageBox
+
+    from perfstudio.ui import main as main_module
+
+    window = _window_on(_load_dense())
+    existing = window.bus.document.nets[0].name
+    monkeypatch.setattr(main_module, "NetDialog", _StubNetDialog)
+    _StubNetDialog.values_to_return = (existing, "signal", None, None)
+    _StubNetDialog.accept_times = 1
+    _StubNetDialog.opened = 0
+    warned: list[str] = []
+    monkeypatch.setattr(
+        QMessageBox, "warning", staticmethod(lambda parent, title, text, *a, **k: warned.append(text))
+    )
+    before = window.bus.document
+    try:
+        window.on_new_net()
+
+        assert window.bus.document is before
+        assert warned and "duplicate-net-name" in warned[0]
+        assert _StubNetDialog.opened == 2, "the form is offered again, filled in"
+    finally:
+        _StubNetDialog.accept_times = None
         _close(window)

@@ -121,6 +121,9 @@ throws the work away. `set_board` also carries the board TYPE, which is not a di
 setting: on stripboard whole rows of holes arrive already joined, so connectivity, DRC,
 the build guide and `autoroute` all answer differently — `autoroute` on one plans cuts
 and links rather than traces and wires, and reports the pairs it could not separate.
+There are three types, not two: `pad-per-hole` (every hole its own island, the default),
+`stripboard`, and `plain` — bare substrate with no copper at all, where every connection
+is point-to-point wire and there is no pad for a solder trace to reach.
 
 `check_heights` is the one from PLAN.md §9.2's list that neither render tool can stand
 in for: a part too tall for the case looks exactly like one that fits, from every angle
@@ -155,6 +158,16 @@ which is the only safe verb after `move_component` or `optimize_placement`.
 gets every other tool; the render tools report their absence instead of taking the server
 down at import. Only the 3D one needs GL — the schematic is drawn as an SVG by a pure
 engine module and rasterised by Qt, so it works where `render_3d_view` cannot.
+
+**Nothing writes to disk unless you name a path**, and the two tools that write files
+hold to it in different ways. `generate_guide` without a directory returns the summary
+and the warnings, which is usually the question being asked. `export_pdf` has no useful
+answer without files, so without a directory it is refused (`no-directory`) rather than
+writing two sheets into whatever directory the server was started in.
+
+**`ok` means the call ran.** Every tool here returns `ok: false` only for a refusal —
+so `run_lvs` reports its verdict as `matches_schematic` and `run_drc` as `errors` /
+`warnings`. A board with an open is a question answered, not a tool that failed.
 
 **A part that is not in the library can still be used.** `list_footprints` returns 61 and
 that is not every part anybody owns, so a footprint can be asked for by its MEASUREMENTS

@@ -31,7 +31,8 @@ from dataclasses import fields, is_dataclass
 from html import escape
 from typing import Any
 
-from .geometry import format_hole
+from .drc import MATERIAL_LABELS
+from .geometry import board_size_mm, format_hole
 from .guide import Checkpoint, ConductorStep, Guide, GuideStep, PartStep, step_focus
 from .model import HoleCoord
 from .version import __version__
@@ -133,7 +134,7 @@ def cut_list_to_csv(guide: Guide) -> str:
                 f"{cut.cut_mm:.1f}",
                 f"{cut.strip_mm:.1f}",
                 cut.awg,
-                cut.color,
+                cut.colour,
                 "",
             ]
         )
@@ -315,8 +316,13 @@ def guide_to_html(guide: Guide, step_images: Mapping[str, bytes] | None = None) 
         f"<style>{_STYLE}</style></head>",
         f'<body data-doc="{escape(guide.document_name)}"><main>',
         f"<h1>{escape(guide.document_name)}</h1>",
-        f'<p class="sub">Soldering guide · {guide.board.cols}×{guide.board.rows} '
-        f"{escape(guide.board.material)} perfboard at {guide.board.pitch:g} mm pitch · "
+        # Spelled the way the sheet below it spells them: "32 × 22" with spaces, and the
+        # material as the guide's own prose writes it (FR-4, not the enum's FR4). The
+        # header and the "Cut it to..." line twelve lines down described one board in two
+        # notations.
+        f'<p class="sub">Soldering guide · {guide.board.cols} × {guide.board.rows} '
+        f"{escape(MATERIAL_LABELS[guide.board.material])} perfboard at "
+        f"{guide.board.pitch:g} mm pitch · "
         f"{guide.total_steps} steps, {guide.checkpoint_count} checks · "
         f"PerfStudio {escape(__version__)}</p>",
     ]
@@ -390,6 +396,12 @@ def _html_cuts(guide: Guide) -> str:
     )
 
 
+def _board_mm(guide: Guide) -> str:
+    """The substrate's real size, as ``W × H mm``."""
+    width, height = board_size_mm(guide.board)
+    return f"{width:.1f} × {height:.1f} mm"
+
+
 def _html_preparation(guide: Guide) -> str:
     phase = guide.phases[0]
     rows = "".join(f"<li>{escape(tool)}</li>" for tool in guide.tools)
@@ -402,8 +414,11 @@ def _html_preparation(guide: Guide) -> str:
         f"<h3>Iron</h3><p>{guide.iron.temperature_c} °C, no more than "
         f"{guide.iron.max_dwell_s:g} s on any one pad. {escape(guide.iron.note)}</p>"
         f"<h3>The board</h3><p>Cut it to {guide.board.cols} × {guide.board.rows} holes "
-        f"({guide.board.cols * guide.board.pitch:.1f} × "
-        f"{guide.board.rows * guide.board.pitch:.1f} mm) and mark hole "
+        # geometry.board_size_mm, never cols*pitch: the substrate runs half a pitch past
+        # the outermost hole centres PLUS the printed border, and its docstring says
+        # nothing else may recompute it. Cutting to the recomputed number cuts a bordered
+        # board short by the border on both sides.
+        f"({_board_mm(guide)}) and mark hole "
         f'<span class="hole">A1</span> in the top-left corner on the COMPONENT side. '
         f"Every address below is counted from it, so if it is marked wrong, everything "
         f"else is.</p>{_html_cuts(guide)}{checks}</section>"
@@ -510,10 +525,16 @@ def _html_conductor_step(step: ConductorStep, dom_id: str, picture: str = "") ->
             + "</div>"
         )
     if step.cut is not None:
+        # Bare wire has nothing to strip, and "strip 0 mm at each end" is an instruction
+        # to do nothing -- so the clause is left out rather than printed as a zero.
+        strip = (
+            f", strip {step.cut.strip_mm:.0f} mm at each end"
+            if step.cut.strip_mm > 0
+            else ""
+        )
         bits.append(
             f'<div class="note">Cut {step.cut.cut_mm:.0f} mm of '
-            f"{escape(step.cut.color)} AWG {step.cut.awg}, strip {step.cut.strip_mm:.0f} mm "
-            "at each end.</div>"
+            f"{escape(step.cut.colour)} AWG {step.cut.awg}{strip}.</div>"
         )
     if step.spine is not None:
         bits.append(
@@ -573,18 +594,23 @@ def _html_tables(guide: Guide) -> str:
             "<tr><th>Type</th><th>Net</th><th>From</th><th>To</th><th>Cut</th>"
             "<th>AWG</th><th>Colour</th></tr>"
         )
+        # One spelling per thing, and it is the CSV's: the two tables are the same list
+        # and somebody comparing them should not have to work out that "bare" here and
+        # "bare wire" there are one row. The gauge belongs under AWG and the material
+        # under Colour -- a spine's "0.6 mm tinned copper" used to sit under Colour with
+        # an em dash under AWG, so the column headings said the opposite of the cells.
         for cut in guide.cut_list:
             parts.append(
-                f'<tr><td>{"insulated" if cut.insulated else "bare"}</td>'
+                f'<tr><td>{"insulated wire" if cut.insulated else "bare wire"}</td>'
                 f"<td>{escape(cut.net_name)}</td><td>{_hole(cut.from_hole)}</td>"
                 f"<td>{_hole(cut.to_hole)}</td><td>{cut.cut_mm:.0f} mm</td>"
-                f"<td>{cut.awg}</td><td>{escape(cut.color)}</td></tr>"
+                f"<td>{cut.awg}</td><td>{escape(cut.colour)}</td></tr>"
             )
         for spine in guide.spine_list:
             parts.append(
-                f"<tr><td>spine</td><td>{escape(spine.net_name)}</td><td colspan=2>"
-                f"{spine.pads} pads</td><td>{spine.length_mm:.0f} mm</td><td>—</td>"
-                f"<td>{spine.gauge_mm:g} mm {escape(spine.material)}</td></tr>"
+                f"<tr><td>trace spine</td><td>{escape(spine.net_name)}</td><td colspan=2>"
+                f"{spine.pads} pads</td><td>{spine.length_mm:.0f} mm</td>"
+                f"<td>{spine.gauge_mm:g} mm</td><td>{escape(spine.material)}</td></tr>"
             )
         parts.append("</table></div>")
 

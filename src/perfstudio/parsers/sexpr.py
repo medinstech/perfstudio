@@ -22,10 +22,14 @@ _QUOTE = '"'
 _WHITESPACE = frozenset(" \t\n\r\f\v")
 
 
-class SExprSyntaxError(Exception):
+class SExprSyntaxError(ValueError):
     """Raised when the input is not well-formed S-expression syntax. `offset` is the
     0-indexed character position in the original input where the problem was found, so
     callers can point a user at the exact spot.
+
+    A ``ValueError``, because that is what both importers catch: a truncated ``.net`` --
+    the commonest real breakage -- used to escape the GUI's and the MCP server's
+    ``except ValueError`` and reach the user as a traceback rather than a dialog.
     """
 
     def __init__(self, message: str, offset: int) -> None:

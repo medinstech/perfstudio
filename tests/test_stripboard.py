@@ -329,6 +329,18 @@ def test_a_pad_per_hole_board_refuses_a_cut_with_a_reason() -> None:
     assert result.code == "not-stripboard"
 
 
+def test_planning_a_board_with_no_tracks_states_the_fact_rather_than_a_replan() -> None:
+    """It returns an EMPTY plan, so "autoroute plans it as a perfboard" was a report on
+    work nothing here did -- and the caller is the one that has to go and do it."""
+    plan = plan_stripboard(_doc(PAD_PER_HOLE), LOOKUP)
+
+    assert plan.is_empty
+    assert [p.code for p in plan.problems] == ["not-stripboard"]
+    message = plan.problems[0].message
+    assert "pad-per-hole" in message  # the type it actually is, named
+    assert "autoroute" in message  # ...and what to reach for instead
+
+
 # ---------------------------------------------------------------------------
 # Routing one
 # ---------------------------------------------------------------------------

@@ -16,7 +16,7 @@ ve gerçekten uygulayabileceğiniz bir lehimleme rehberi alın.
 > montaj rehberi, birebir (1:1) PDF çıktısı ve bir MCP sunucusu. Eksik olan tek şey
 > dogfood testi — henüz kimse üretilen bir rehberi takip ederek gerçek bir kart
 > lehimlemedi ve [PLAN.md](./PLAN.md) §11'e göre bu olmadan M5 kapanmıyor. Gerisi
-> çalışıyor: **v0.4.0** üç masaüstü platformunun her biri için bir kurulum paketi
+> çalışıyor: **v0.9.0** üç masaüstü platformunun her biri için bir kurulum paketi
 > yayınlıyor, hiçbiri kod imzalı değil.
 
 ---
@@ -149,12 +149,12 @@ Arayüz **İngilizce ve Türkçe** konuşur (`--lang tr`, ya da sistem diline g�
 ### Sıfırdan bir kart
 
 Şema panelini açın (`Ctrl+5`) ve devreyi çizin: her parça için **Parça Ekle**, iki pini
-birleştirmek için **Bağla**, sonra **Kart Üzerine Yerleştir**. Oradan **Place → Auto-place
-Board** (`Ctrl+Shift+A`), route için **`Ctrl+R`**, ardından **File → Export Build Guide**
-(`Ctrl+B`). Bu akışın hiçbir yerinde KiCad yok.
+birleştirmek için **Bağla**, sonra **Kart Üzerine Yerleştir**. Oradan **Yerleştir →
+Otomatik Yerleştir** (`Ctrl+Shift+A`), route için **`Ctrl+R`**, ardından **Dosya → Montaj
+Rehberini Dışa Aktar** (`Ctrl+B`). Bu akışın hiçbir yerinde KiCad yok.
 
-Devre zaten varsa ilk üç adım yerine `examples/ne555-astable.net` üzerinde **File → Import
-KiCad Netlist** ile başlayın ve önerilen yerleşimi kabul edin. Yukarıdaki ekran görüntüleri
+Devre zaten varsa ilk üç adım yerine `examples/ne555-astable.net` üzerinde **Dosya → KiCad
+Netlist İçe Aktar** ile başlayın ve önerilen yerleşimi kabul edin. Yukarıdaki ekran görüntüleri
 tam olarak bu sıradan çıkıyor — bkz. [`tools/screenshots.py`](./tools/screenshots.py).
 
 ### Ya da hazır bir kart açın
@@ -182,10 +182,10 @@ MCP sunucusu birebir aynı komut veri yolunu sürer, dolayısıyla geri alma her
 
 ```sh
 pip install -e ".[mcp]"
-claude mcp add perfstudio -- python -m perfstudio.mcp
+claude mcp add perfstudio -- uvx --from "perfstudio[mcp]" perfstudio-mcp
 ```
 
-Kırk dört tool, ve her delik insanların perfboard'dan bahsederken kullandığı adresle
+Elli bir tool, ve her delik insanların perfboard'dan bahsederken kullandığı adresle
 (`A1`, `C7`, `AC12`) — hiçbir yerde ham koordinat yok. Tool listesi, diğer istemcilerin
 istediği JSON yapılandırması ve kurulumun geri kalanı için [docs/MCP.md](./docs/MCP.md).
 
@@ -223,7 +223,7 @@ src/perfstudio/ui/         Qt uygulaması: 2D editör, VTK 3D görünüm, 1:1 PD
                            ve headless.py: CI'ın çıktısını denetlediği ekransız koşu
 src/perfstudio/mcp/        MCP sunucusu (docs/MCP.md)
 examples/                  içe aktarılacak bir netlist
-tests/                     2009 test; motor mypy --strict temiz
+tests/                     ~2070 test; motor mypy --strict temiz
 packages/                  Python portunun karşısında kanıtlandığı referans olarak
                            saklanan orijinal TypeScript motoru
 ```

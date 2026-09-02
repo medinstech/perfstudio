@@ -70,7 +70,7 @@ dev = [
 # bound with -- so the server does not import at all there, and PyInstaller's
 # `collect_submodules("mcp")` dies on the same package with "typer is required", which
 # takes all three installers down with it. 1.29.0 still ships fastmcp and deprecates
-# nothing. Lifting this means porting 39 tools to the 2.x API, which is a change with its
+# nothing. Lifting this means porting 51 tools to the 2.x API, which is a change with its
 # own verification attached, not a version bump.
 mcp = ["mcp>=1.0,<2"]
 

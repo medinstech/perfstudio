@@ -35,6 +35,7 @@ from PySide6.QtCore import (
     QEventLoop,
     QFileSystemWatcher,
     QPoint,
+    QPointF,
     QSettings,
     QSize,
     Qt,
@@ -143,6 +144,7 @@ from perfstudio.geometry import (
     board_from_preset,
     edge_connector_holes,
     format_hole,
+    hole_span_mm,
     pad_edge_gap_mm,
     pad_extent_mm,
     preset_edge_connectors,
@@ -217,7 +219,14 @@ from .export_schematic import SchematicRenderError, svg_to_pdf, svg_to_png
 from .i18n import language as current_language
 from .i18n import set_language, t
 from .theme import ERROR, OK, STYLESHEET, TEXT_DIM, WARNING
-from .view2d import BoardScene, BoardView, hole_to_screen, join_pins, next_reference
+from .view2d import (
+    BoardScene,
+    BoardView,
+    ConductorItem,
+    hole_to_screen,
+    join_pins,
+    next_reference,
+)
 from .viewsch import SchematicView
 
 #: What the Preferred Connection menu can be set to: one of the router's styles, or "best"
@@ -375,8 +384,9 @@ class BoardSetupDialog(QDialog):
     The material is not a cosmetic choice and the dialog says so where the choice is
     made. FR-2 phenolic -- the cheap brown board most perfboard is actually sold as --
     lifts its pads under sustained heat, so DRC's pad-lifting rule only fires on it and
-    the build guide drops the iron 30 degrees and halves the dwell time. Choosing the
-    wrong one here means the tool's most useful safety advice never appears.
+    the build guide drops the iron 30 degrees and cuts the dwell from three seconds to
+    two. Choosing the wrong one here means the tool's most useful safety advice never
+    appears.
     """
 
     MATERIALS: tuple[tuple[BoardMaterial, str], ...] = (
@@ -469,7 +479,7 @@ class BoardSetupDialog(QDialog):
         self.rows.setValue(board.rows)
         self.material = QComboBox()
         for value, label in self.MATERIALS:
-            self.material.addItem(label, value)
+            self.material.addItem(t(label), value)
         index = self.material.findData(board.material)
         self.material.setCurrentIndex(max(0, index))
 
@@ -705,6 +715,7 @@ class BoardFeaturesDialog(QDialog):
 
         self.act_remove = QPushButton(t("Remove"))
         self.act_remove.clicked.connect(self._on_remove)
+        self.tree.itemSelectionChanged.connect(self._refresh_remove_button)
 
         self.mount_diameter = QDoubleSpinBox()
         self.mount_diameter.setRange(0.5, 12.0)
@@ -815,10 +826,15 @@ class BoardFeaturesDialog(QDialog):
             self.tree.addTopLevelItem(item)
         for column in range(3):
             self.tree.resizeColumnToContents(column)
-        self.act_remove.setEnabled(self.tree.topLevelItemCount() > 0)
+        self._refresh_remove_button()
         # Read back rather than left as typed, so the box shows what the document says
         # after an undo -- the dialog stays open while the board changes underneath it.
         self.height_limit.setValue(doc.height_limit_mm if doc.height_limit_mm else 0.0)
+
+    def _refresh_remove_button(self) -> None:
+        # Enabled by what is CHOSEN, not by what exists: with nothing picked the button
+        # used to delete the first row in the list, chosen for the user.
+        self.act_remove.setEnabled(self.tree.currentItem() is not None)
 
     def _say(self, result: DispatchResult) -> None:
         """Report a refusal in place. The bus refuses for reasons a user can act on --
@@ -831,7 +847,7 @@ class BoardFeaturesDialog(QDialog):
             self.note.setText(f"<span style='color:{WARNING}'>{result.message}</span>")
 
     def _on_remove(self) -> None:
-        item = self.tree.currentItem() or self.tree.topLevelItem(0)
+        item = self.tree.currentItem()
         if item is None:
             return
         command, id_ = item.data(0, Qt.ItemDataRole.UserRole)
@@ -1870,6 +1886,10 @@ class MainWindow(QMainWindow):
         #: failure this feature cannot have -- but saying so repeatedly would make the
         #: status bar useless for anything else.
         self._autosave_complained = False
+        #: True while _run_planner is on the stack. The planner pumps the event loop so
+        #: the window can repaint and offer Cancel, which also lets the file watcher and
+        #: the close button fire in the middle of it -- see both for what they do then.
+        self._planner_running = False
         # PLAN.md §9.3 -- the window notices when the file changes underneath it, so an
         # agent that only writes files is a participant rather than a source of stale
         # screens. See _reload_if_changed for what it does about it.
@@ -1935,6 +1955,7 @@ class MainWindow(QMainWindow):
         self.update_bar.notesRequested.connect(self._on_update_notes)
         self.update_bar.revealRequested.connect(self._on_update_reveal)
         self.update_bar.cancelRequested.connect(self._on_update_cancel)
+        self.update_bar.closeRequested.connect(self._on_update_closed)
         self.update_bar.dismissed.connect(self._on_update_dismissed)
         centre = QWidget(self)
         column = QVBoxLayout(centre)
@@ -2034,12 +2055,13 @@ class MainWindow(QMainWindow):
         self.dock_3d.visibilityChanged.connect(self._on_3d_visibility_changed)
 
     def _on_3d_visibility_changed(self, visible: bool) -> None:
-        if not visible:
-            return
-        if self.vtk_widget is None:
-            self._create_3d_widget()
-        elif self._3d_stale:
-            self._refresh_3d()
+        if visible:
+            if self.vtk_widget is None:
+                self._create_3d_widget()
+            elif self._3d_stale:
+                self._refresh_3d()
+        # The camera and exploded-view items follow the panel: live only while it is.
+        self._refresh_status()
 
     def _create_3d_widget(self) -> None:
         # Typed Any, not QWidget | None: the real runtime type is a
@@ -2069,9 +2091,10 @@ class MainWindow(QMainWindow):
             self._3d_layout.addWidget(self._build_assembly_bar())
             self._3d_stale = False
         except Exception as exc:  # pragma: no cover - environment dependent
-            print(f"[3D] Qt/VTK widget unavailable: {exc}", file=sys.stderr)
+            # In the panel, where the person who opened it is looking. A packaged build
+            # has no console for a print to land in.
             self._vtk_renderer = None
-            self._3d_placeholder.setText(f"3D view unavailable:\n{exc}")
+            self._3d_placeholder.setText(f"{t('3D view unavailable:')}\n{exc}")
 
     # -- assembly playback (PLAN.md D7) --------------------------------------
     #
@@ -2148,8 +2171,12 @@ class MainWindow(QMainWindow):
         """
         steps = self._assembly_steps()
         blocked = self.assembly_slider.blockSignals(True)
-        self.assembly_slider.setRange(0, max(1, len(steps)))
-        self.assembly_slider.setValue(max(1, len(steps)))
+        # One past the number of steps, because the maximum means "the finished board"
+        # (see assembly_step_for) and step k sits at value k+1: with a maximum equal to
+        # the step count the LAST step had no position of its own, and picking it in the
+        # Build Guide panel showed the finished board with nothing picked out.
+        self.assembly_slider.setRange(0, len(steps) + 1 if steps else 1)
+        self.assembly_slider.setValue(self.assembly_slider.maximum())
         self.assembly_slider.setEnabled(bool(steps))
         self.assembly_slider.blockSignals(blocked)
         self.act_play.setEnabled(bool(steps))
@@ -2266,8 +2293,16 @@ class MainWindow(QMainWindow):
         # Between Open and Save, where every editor puts it. A perfboard project is worked
         # on across evenings, and hunting the same file out of a directory tree every time
         # is friction the application was adding for no reason.
+        # Tooltips on EVERY menu. Four of the twelve had them switched on, so the
+        # explanations written for Reload, Board Setup, the exports and the 3D items --
+        # and the full path behind each recent file -- never appeared anywhere.
+        file_menu.setToolTipsVisible(True)
         self.menu_recent = file_menu.addMenu(t("Open &Recent"))
+        self.menu_recent.setToolTipsVisible(True)
         self._refresh_recent_menu()
+        # Rebuilt as it opens, so a file moved or deleted while the window was up does not
+        # sit in the list and fail to open when picked.
+        self.menu_recent.aboutToShow.connect(self._refresh_recent_menu)
         act_save = file_menu.addAction(t("&Save"))
         act_save.setShortcut(QKeySequence.StandardKey.Save)
         act_save.triggered.connect(self.on_save)
@@ -2475,12 +2510,11 @@ class MainWindow(QMainWindow):
         self.act_cut = draw_menu.addAction(t("&Cut Track"))
         self.act_cut.setCheckable(True)
         self.act_cut.setShortcut(QKeySequence("X"))
-        self.act_cut.setToolTip(
-            t(
-                "Break the strip at a hole. The cut is drilled through the pad, so that hole "
-                "has nothing to solder to afterwards — click a cut again to take it back."
-            )
+        self.CUT_TOOLTIP = t(
+            "Break the strip at a hole. The cut is drilled through the pad, so that hole "
+            "has nothing to solder to afterwards — click a cut again to take it back."
         )
+        self.act_cut.setToolTip(self.CUT_TOOLTIP)
         self.act_cut.triggered.connect(self.on_cut_mode)
         draw_menu.addSeparator()
         # Not "stop drawing" any more, because Escape has to leave whichever mode you are
@@ -2493,6 +2527,7 @@ class MainWindow(QMainWindow):
         act_stop_draw.triggered.connect(self.on_stop_tool)
 
         place_menu = menu.addMenu(t("&Place"))
+        place_menu.setToolTipsVisible(True)
         self.act_autoplace = place_menu.addAction(t("&Auto-place Board"))
         self.act_autoplace.setShortcut(QKeySequence("Ctrl+Shift+A"))
         self.act_autoplace.setToolTip(
@@ -2586,6 +2621,7 @@ class MainWindow(QMainWindow):
             action.setEnabled(False)
 
         route_menu = menu.addMenu(t("&Route"))
+        route_menu.setToolTipsVisible(True)
         self.act_autoroute = route_menu.addAction(t("&Autoroute All Nets"))
         self.act_autoroute.setShortcut(QKeySequence("Ctrl+R"))
         self.act_autoroute.triggered.connect(self.on_autoroute_all)
@@ -2649,6 +2685,7 @@ class MainWindow(QMainWindow):
         self.act_clear_strays.triggered.connect(self.on_clear_strays)
 
         view_menu = menu.addMenu(t("&View"))
+        view_menu.setToolTipsVisible(True)
         act_flip = view_menu.addAction(t("Flip Board (component / solder side)"))
         self.act_flip = act_flip
         act_flip.setShortcut(QKeySequence("Ctrl+F"))
@@ -2657,13 +2694,13 @@ class MainWindow(QMainWindow):
         act_fit: QAction = view_menu.addAction(t("&Fit Board"))
         self.act_fit = act_fit
         act_fit.setShortcut(QKeySequence("Ctrl+0"))
-        act_fit.triggered.connect(self.view.fit_board)
+        act_fit.triggered.connect(self.on_fit)
         act_zoom_in = view_menu.addAction(t("Zoom &In"))
         act_zoom_in.setShortcut(QKeySequence.StandardKey.ZoomIn)
-        act_zoom_in.triggered.connect(lambda: self.view.zoom_by(1.25))
+        act_zoom_in.triggered.connect(lambda: self.on_zoom(1.25))
         act_zoom_out = view_menu.addAction(t("Zoom &Out"))
         act_zoom_out.setShortcut(QKeySequence.StandardKey.ZoomOut)
-        act_zoom_out.triggered.connect(lambda: self.view.zoom_by(1 / 1.25))
+        act_zoom_out.triggered.connect(lambda: self.on_zoom(1 / 1.25))
         view_menu.addSeparator()
 
         self.act_ratsnest = view_menu.addAction(t("Show &Ratsnest"))
@@ -2748,14 +2785,29 @@ class MainWindow(QMainWindow):
             )
         )
         view_menu.addAction(self.act_schematic)
+        # The other three panels. Closing one from its title bar used to leave no route
+        # back but a right-click on the menu bar, which nobody finds.
+        self.act_parts_panel = self.dock_library.toggleViewAction()
+        self.act_parts_panel.setText(t("Show &Parts"))
+        self.act_parts_panel.setShortcut(QKeySequence("Ctrl+1"))
+        view_menu.addAction(self.act_parts_panel)
+        self.act_nets_panel = self.dock_nets.toggleViewAction()
+        self.act_nets_panel.setText(t("Show &Nets"))
+        self.act_nets_panel.setShortcut(QKeySequence("Ctrl+2"))
+        view_menu.addAction(self.act_nets_panel)
+        self.act_drc_panel = self.dock_drc.toggleViewAction()
+        self.act_drc_panel.setText(t("Show DRC / L&VS"))
+        self.act_drc_panel.setShortcut(QKeySequence("Ctrl+6"))
+        view_menu.addAction(self.act_drc_panel)
         self.act_exploded = view_menu.addAction(t("&Exploded View"))
         self.act_exploded.setCheckable(True)
         self.act_exploded.setToolTip(
             t("Lift every part off the board, with a line down to the holes it goes in.")
         )
         self.act_exploded.toggled.connect(self.on_toggle_exploded)
-        act_reset_3d = view_menu.addAction(t("Reset 3D &Camera"))
+        act_reset_3d = view_menu.addAction(t("Reset 3D Ca&mera"))
         act_reset_3d.triggered.connect(self.on_reset_3d_camera)
+        self.act_reset_3d = act_reset_3d
 
         view_menu.addSeparator()
         # The interface could be told to speak Turkish only by an environment variable or
@@ -2775,6 +2827,7 @@ class MainWindow(QMainWindow):
         # rather than a document field -- see ui/boardcolors.py. Offered because someone
         # matching what is on screen to the board in their hand should be able to.
         colour_menu = view_menu.addMenu(t("Board &Colour"))
+        colour_menu.setToolTipsVisible(True)
         self.act_colour: dict[str, QAction] = {}
         follow = colour_menu.addAction(t("Follow the &material"))
         follow.setCheckable(True)
@@ -2795,6 +2848,7 @@ class MainWindow(QMainWindow):
             self.act_colour[scheme.key] = action
 
         help_menu = menu.addMenu(t("&Help"))
+        help_menu.setToolTipsVisible(True)
         # EVERY menu is kept referenced here, and it is not tidiness. QMenuBar.addMenu
         # returns a QMenu that PySide hands to Python to own; with only a local holding it,
         # the garbage collector is free to destroy the C++ menu the moment this method
@@ -3160,7 +3214,15 @@ class MainWindow(QMainWindow):
         Derived from the scene rather than remembered, so the banner cannot disagree with
         what a click will actually do -- the scene is the thing holding the mode.
         """
-        self.view.show_mode(self._mode_text())
+        text = self._mode_text()
+        self.view.show_mode(text)
+        # The cursor says it too. Only placing changed it, so drawing, connecting, cutting
+        # and measuring all left the ordinary arrow over a board where a click no longer
+        # selected anything.
+        if text:
+            self.view.viewport().setCursor(Qt.CursorShape.CrossCursor)
+        else:
+            self.view.viewport().unsetCursor()
         # Somebody mid-mode is plainly not stuck, and two blocks of text over one board is
         # one too many.
         self._refresh_empty_hint()
@@ -3455,21 +3517,33 @@ class MainWindow(QMainWindow):
 
         parts = len(drawing.symbols)
         nets = len(self.bus.document.nets)
-        summary = f"{parts} part(s), {nets} net(s)"
+        if not drawing.symbols:
+            # A blank dark panel and a count of zeros is the screen the board's own empty
+            # hint exists to prevent. Say what the two buttons underneath are for.
+            self.schematic_summary.setText(
+                t(
+                    "Nothing in the design yet. Add Part… describes one, or "
+                    "File ▸ Import KiCad Netlist… brings a whole circuit in."
+                )
+            )
+            return
+        summary = t("{parts} part(s), {nets} net(s)").format(parts=parts, nets=nets)
         # Counted rather than complained about: while a circuit is being drawn every part
         # is unplaced, so this is a progress line and not a warning. It is also the answer
         # to "have I finished", which is the question the Place button exists for.
         waiting = sum(1 for symbol in drawing.symbols if symbol.unplaced)
         if waiting:
-            summary += f"; {waiting} not on the board yet"
+            summary += "; " + t("{count} not on the board yet").format(count=waiting)
         if drawing.rails:
             # Said plainly, because a reader who does not know the convention will look for
             # the ground wires and not find any.
-            summary += f"; power and ground drawn as {len(drawing.rails)} rail symbol(s)"
+            summary += "; " + t("power and ground drawn as {count} rail symbol(s)").format(
+                count=len(drawing.rails)
+            )
         if drawing.notes:
             summary += "\n" + "\n".join(f"• {note}" for note in drawing.notes[:4])
             if len(drawing.notes) > 4:
-                summary += f"\n• …and {len(drawing.notes) - 4} more"
+                summary += "\n• " + t("…and {count} more").format(count=len(drawing.notes) - 4)
         self.schematic_summary.setText(summary)
 
     def _sync_schematic_highlight(self) -> None:
@@ -3491,8 +3565,16 @@ class MainWindow(QMainWindow):
     def _refresh_schematic_actions(self) -> None:
         if not hasattr(self, "act_sch_delete"):
             return
-        self.act_sch_delete.setEnabled(self._schematic_ref is not None)
-        self.act_sch_place.setEnabled(bool(self.bus.document.parts))
+        # Only for a reference something defines. A symbol that exists because a net names
+        # it has nothing here to remove, and a button whose only outcome is an explanation
+        # of why it cannot work is worse than a greyed-out one.
+        ref = self._schematic_ref
+        document = self.bus.document
+        defined = ref is not None and (
+            any(c.ref == ref for c in document.components) or any(p.ref == ref for p in document.parts)
+        )
+        self.act_sch_delete.setEnabled(defined)
+        self.act_sch_place.setEnabled(bool(document.parts))
 
     def _on_schematic_cleared(self) -> None:
         self._schematic_ref = None
@@ -3909,11 +3991,21 @@ class MainWindow(QMainWindow):
         position would offer without a modal event loop -- ``exec`` on a menu in a
         headless run waits for a click that will never come.
         """
-        item = self.scene.component_at(self.view.mapToScene(pos))
+        where = self.view.mapToScene(pos)
+        item = self.scene.component_at(where)
         if item is not None and item.comp.id not in self.scene.selected_component_ids():
             # Right-clicking a part nobody selected selects it first, as it does in every
             # editor -- otherwise the menu offers to rotate something else entirely.
             self.scene.select_components([item.comp.id])
+        elif item is None:
+            # A conductor under the pointer gets the same courtesy: the menu used to offer
+            # the bare-board list over a trace, with no way to delete the trace from it.
+            conductor = next(
+                (i for i in self.scene.items(where) if isinstance(i, ConductorItem)), None
+            )
+            if conductor is not None and not conductor.isSelected():
+                self.scene.clearSelection()
+                conductor.setSelected(True)
 
         menu = QMenu(self)
         menu.setToolTipsVisible(True)
@@ -3931,6 +4023,10 @@ class MainWindow(QMainWindow):
             menu.addSeparator()
             menu.addAction(self.act_route_selected)
             menu.addAction(self.act_reroute_selected)
+        elif self.scene.selected_conductor_ids():
+            menu.addAction(self.act_copy)
+            menu.addAction(self.act_duplicate)
+            menu.addAction(self.act_delete)
         else:
             # Bare board. Paste lands under the pointer, which is the reason this entry is
             # worth having at all: the keyboard version pastes wherever the pointer happens
@@ -3998,6 +4094,9 @@ class MainWindow(QMainWindow):
         """
         bar = QStatusBar()
         self.setStatusBar(bar)
+        #: A condition, not an event: shown while the recovery file cannot be written and
+        #: cleared when it can again. See _on_autosave_tick.
+        self.label_warning = QLabel()
         self.label_selection = QLabel()
         self.label_drc = QLabel()
         self.label_lvs = QLabel()
@@ -4010,6 +4109,7 @@ class MainWindow(QMainWindow):
         # puts a message there. Permanent widgets are laid out left to right in the order
         # they are added, so the selection still comes first.
         for label in (
+            self.label_warning,
             self.label_selection,
             self.label_hole,
             self.label_ratsnest,
@@ -4127,36 +4227,49 @@ class MainWindow(QMainWindow):
         if hasattr(self, "act_cut"):
             strips = is_stripboard(self.bus.document.board)
             self.act_cut.setEnabled(strips)
-            if not strips:
-                self.act_cut.setToolTip(
-                    t("Only stripboard has tracks to cut. File ▸ Board Setup ▸ Type.")
-                )
+            # Both branches, as the ruler toggle above does: a board switched TO stripboard
+            # under an open window kept the "only stripboard" explanation on a tool that
+            # now worked.
+            self.act_cut.setToolTip(
+                self.CUT_TOOLTIP
+                if strips
+                else t("Only stripboard has tracks to cut. File ▸ Board Setup ▸ Type.")
+            )
+
+        # The two 3D-only items do nothing until the panel has been opened, and a menu
+        # item that silently does nothing is worse than one that is visibly unavailable
+        # -- the ruler toggle above is greyed out for exactly this reason.
+        if hasattr(self, "act_reset_3d"):
+            live = self._3d_is_live()
+            self.act_reset_3d.setEnabled(live)
+            self.act_exploded.setEnabled(live)
 
         errors = sum(1 for v in self._last_violations if v.severity == "error")
         warns = sum(1 for v in self._last_violations if v.severity == "warning")
         drc_colour = ERROR if errors else (WARNING if warns else OK)
+        drc_text = t("DRC {errors} err / {warnings} warn").format(errors=errors, warnings=warns)
         self.label_drc.setText(
-            f'<span style="color:{drc_colour}">DRC {errors} err / {warns} warn</span>'
+            f'<span style="color:{drc_colour}">{drc_text}</span>'
             f'  <span style="color:{TEXT_DIM}">{self._last_drc_ms:.1f} ms</span>'
         )
 
         if self._last_lvs is not None:
             s = self._last_lvs.summary
             lvs_colour = OK if s.opens == 0 and s.shorts == 0 else ERROR
-            self.label_lvs.setText(
-                f'<span style="color:{lvs_colour}">LVS {s.matched_nets}/{s.schematic_nets}'
-                f" · {s.opens} open · {s.shorts} short</span>"
+            lvs_text = t("LVS {matched}/{total} · {opens} open · {shorts} short").format(
+                matched=s.matched_nets, total=s.schematic_nets, opens=s.opens, shorts=s.shorts
             )
+            self.label_lvs.setText(f'<span style="color:{lvs_colour}">{lvs_text}</span>')
 
         rn = summarize(self._last_ratsnest)
         if rn.nets:
             colour = OK if rn.links == 0 else TEXT_DIM
-            self.label_ratsnest.setText(
-                f'<span style="color:{colour}">{rn.links} to route'
-                f" · {rn.total_length_mm:.0f} mm</span>"
+            left = t("{count} to route · {length:.0f} mm").format(
+                count=rn.links, length=rn.total_length_mm
             )
+            self.label_ratsnest.setText(f'<span style="color:{colour}">{left}</span>')
         else:
-            self.label_ratsnest.setText(f'<span style="color:{TEXT_DIM}">no netlist</span>')
+            self.label_ratsnest.setText(f'<span style="color:{TEXT_DIM}">{t("no netlist")}</span>')
 
         side = t("component side") if self.side == "top" else f'{t("solder side")} ({t("mirrored")})'
         self.label_side.setText(f'<span style="color:{TEXT_DIM}">{side}</span>')
@@ -4194,7 +4307,9 @@ class MainWindow(QMainWindow):
         needle = self.drc_filter.text().strip().lower() if hasattr(self, "drc_filter") else ""
         tree.clear()
 
-        drc_root = QTreeWidgetItem(["DRC", f"{len(violations)} violation(s)"])
+        drc_root = QTreeWidgetItem(
+            ["DRC", t("{count} violation(s)").format(count=len(violations))]
+        )
         drc_root.setData(0, ROLE_FINDING_KEY, "DRC")
         tree.addTopLevelItem(drc_root)
         by_rule: dict[str, list[DrcViolation]] = {}
@@ -4219,8 +4334,13 @@ class MainWindow(QMainWindow):
         lvs_root = QTreeWidgetItem(
             [
                 "LVS",
-                f"{s.matched_nets}/{s.schematic_nets} matched, {s.opens} open, {s.shorts} short, "
-                f"{s.physical_nets} physical nets",
+                t("{matched}/{total} matched, {opens} open, {shorts} short, {physical} physical nets").format(
+                    matched=s.matched_nets,
+                    total=s.schematic_nets,
+                    opens=s.opens,
+                    shorts=s.shorts,
+                    physical=s.physical_nets,
+                ),
             ]
         )
         lvs_root.setData(0, ROLE_FINDING_KEY, "LVS")
@@ -4358,7 +4478,7 @@ class MainWindow(QMainWindow):
                     entry.net_name,
                     entry.net_class,
                     str(len(entry.pin_holes) + len(entry.unresolved_pins)),
-                    "done" if remaining == 0 else str(remaining),
+                    t("done") if remaining == 0 else str(remaining),
                 ]
             )
             item.setData(0, ROLE_NET_ID, entry.net_id)
@@ -4367,7 +4487,7 @@ class MainWindow(QMainWindow):
             unresolved = {(p.component_ref, p.pin) for p in entry.unresolved_pins}
             if entry.unresolved_pins:
                 pins = ", ".join(f"{p.component_ref}.{p.pin}" for p in entry.unresolved_pins)
-                item.setToolTip(0, f"Not on the board: {pins}")
+                item.setToolTip(0, t("Not on the board: {pins}").format(pins=pins))
             # One child per pin the net claims. This is what makes the panel an editor
             # rather than a readout: a pin has to be visible to be selected, and it has
             # to be selectable to be taken off the net.
@@ -4378,7 +4498,7 @@ class MainWindow(QMainWindow):
                         f"{node.component_ref}.{node.pin}",
                         "",
                         "",
-                        "not on the board" if missing else "",
+                        t("not on the board") if missing else "",
                     ]
                 )
                 pin_row.setData(0, ROLE_NET_ID, entry.net_id)
@@ -4490,16 +4610,25 @@ class MainWindow(QMainWindow):
         # ...except that copper on its own is a block worth copying: a length of rail,
         # or the three traces that make an input stage. Rotate and Mirror mean nothing
         # without a part, so they stay off.
-        copyable = bool(components) or bool(self.scene.selected_conductor_ids())
+        conductors = len(self.scene.selected_conductor_ids())
+        copyable = bool(components) or conductors > 0
         self.act_copy.setEnabled(copyable)
         self.act_duplicate.setEnabled(copyable)
+        # Delete too. A single bad route is the whole reason conductors are selectable,
+        # and the menu item was greyed out for exactly that selection.
+        self.act_delete.setEnabled(copyable)
         # Properties edits ONE part: a reference is unique by definition, so a dialog over
         # three of them could only offer the value, and a field that silently overwrites
         # three values with one is not worth the two it destroys.
         self.act_properties.setEnabled(len(components) == 1)
 
         if not components:
-            self.label_selection.clear()
+            # Copper on its own is still a selection, and the actions above are live for
+            # it -- so the bar has to say so, or Delete appears to act on nothing.
+            if conductors:
+                self.label_selection.setText(f"<b>{conductors}</b> {t('conductor(s) selected')}")
+            else:
+                self.label_selection.clear()
             return
         if len(components) == 1:
             c = components[0]
@@ -4512,14 +4641,14 @@ class MainWindow(QMainWindow):
             if c.rotation:
                 bits.append(f"{c.rotation}°")
             if c.mirrored:
-                bits.append("mirrored")
+                bits.append(t("mirrored"))
             if c.locked:
-                bits.append("locked")
+                bits.append(t("locked"))
             self.label_selection.setText(" · ".join(bits))
             return
         locked = sum(1 for c in components if c.locked)
-        note = f", {locked} locked" if locked else ""
-        self.label_selection.setText(f"<b>{len(components)} parts</b> selected{note}")
+        note = f", {locked} {t('locked')}" if locked else ""
+        self.label_selection.setText(f"<b>{len(components)} {t('parts')}</b> {t('selected')}{note}")
 
     # -- running a planner without freezing the window ----------------------
 
@@ -4566,6 +4695,7 @@ class MainWindow(QMainWindow):
         # period, and in that window a second Ctrl+R would otherwise re-enter this method
         # while a planner is already running against the same document.
         self.setEnabled(False)
+        self._planner_running = True
         try:
             worker.start()
             while not worker.isFinished():
@@ -4590,13 +4720,14 @@ class MainWindow(QMainWindow):
                         nonlocal cancelled
                         cancelled = True
                         dialog.setLabelText(
-                            f"{label}\nStopping, and keeping the best found so far…"
+                            f"{label}\n{t('Stopping, and keeping the best found so far…')}"
                         )
 
                     progress.canceled.connect(on_cancel)
                     progress.show()
             worker.wait()
         finally:
+            self._planner_running = False
             if progress is not None:
                 progress.close()
             self.setEnabled(True)
@@ -4632,7 +4763,7 @@ class MainWindow(QMainWindow):
         options = PlacementOptions(seed=self._place_seed)
         t0 = time.perf_counter()
         plan = self._run_planner(
-            "Trying arrangements, and routing each one to compare them…",
+            t("Trying arrangements, and routing each one to compare them…"),
             lambda should_stop: plan_placement(
                 document, self.lookup, options, should_stop=should_stop
             ),
@@ -4774,7 +4905,7 @@ class MainWindow(QMainWindow):
         document = self.bus.document
         t0 = time.perf_counter()
         plan = self._run_planner(
-            "Ripping up and routing again…",
+            t("Ripping up and routing again…"),
             lambda _should_stop: plan_reroute(
                 document, self.lookup, only_net_ids=only_net_ids,
                 options=self._autoroute_options(),
@@ -4900,7 +5031,7 @@ class MainWindow(QMainWindow):
         t0 = time.perf_counter()
         if sweep:
             best = self._run_planner(
-                "Routing every style…",
+                t("Routing every style…"),
                 lambda _should_stop: plan_best_autoroute(
                     document, self.lookup, options, only_net_ids=only_net_ids
                 ),
@@ -4909,7 +5040,7 @@ class MainWindow(QMainWindow):
         else:
             best = None
             plan = self._run_planner(
-                "Routing…",
+                t("Routing…"),
                 lambda _should_stop: plan_autoroute(
                     document, self.lookup, options, only_net_ids=only_net_ids
                 ),
@@ -4967,7 +5098,7 @@ class MainWindow(QMainWindow):
         document = self.bus.document
         t0 = time.perf_counter()
         plan = self._run_planner(
-            "Planning cuts and links…",
+            t("Planning cuts and links…"),
             lambda _should_stop: plan_stripboard(document, self.lookup, only_net_ids),
         )
         elapsed = (time.perf_counter() - t0) * 1000
@@ -5042,12 +5173,22 @@ class MainWindow(QMainWindow):
         string the status bar showed when it ran, so "Undo Place R4" needs no explaining.
         """
         history = self.bus.history()
+        ahead_of_us = self.bus.redo_history()
         self.act_undo.setEnabled(self.bus.can_undo())
         self.act_redo.setEnabled(self.bus.can_redo())
         last = history[-1] if history and self.bus.can_undo() else ""
+        next_up = ahead_of_us[-1] if ahead_of_us else ""
+        # The menu text as well as the tooltip: the docstring promised "Undo Place R4" and
+        # the menu said "Undo", with the answer one hover away. Ampersands in a command's
+        # description would read as accelerators, so they are doubled.
+        self.act_undo.setText(
+            f"{t('&Undo')} {last.replace('&', '&&')}" if last else t("&Undo")
+        )
+        self.act_redo.setText(
+            f"{t('&Redo')} {next_up.replace('&', '&&')}" if next_up else t("&Redo")
+        )
         self.act_undo.setToolTip(f"{t('Undo')} {last}" if last else t("Nothing to undo"))
-        ahead = t("Redo the command you just took back")
-        self.act_redo.setToolTip(ahead if self.bus.can_redo() else t("Nothing to redo"))
+        self.act_redo.setToolTip(f"{t('Redo')} {next_up}" if next_up else t("Nothing to redo"))
 
     # -- editing the selection ----------------------------------------------
     #
@@ -5062,7 +5203,9 @@ class MainWindow(QMainWindow):
     def _require_selection(self, what: str) -> list[ComponentInstance]:
         components = self._selected_components()
         if not components:
-            self.statusBar().showMessage(f"Select a part on the board first, then {what}.", 6000)
+            self.statusBar().showMessage(
+                t("Select a part on the board first, then {what}.").format(what=what), 6000
+            )
         return components
 
     def _report_refusals(self, results: list[DispatchResult], done: str) -> None:
@@ -5074,14 +5217,21 @@ class MainWindow(QMainWindow):
         refused = [r for r in results if not r.ok]
         if refused:
             reasons = "; ".join(dict.fromkeys(r.message for r in refused))
-            self.statusBar().showMessage(f"{len(refused)} refused: {reasons}", 8000)
+            self.statusBar().showMessage(
+                t("{count} refused: {reasons}").format(count=len(refused), reasons=reasons), 8000
+            )
         elif results:
             self.statusBar().showMessage(done, 5000)
 
     def on_rotate_selection(self, delta: int) -> None:
-        components = self._require_selection("rotate")
+        components = self._require_selection(t("rotate it"))
         if not components:
             return
+        # "Clockwise" is what the person sees. The solder side is the board mirrored, so a
+        # rotation that is clockwise in the document turns the other way on that screen;
+        # the keys are corrected the same way the arrow keys are in view2d.
+        if self.side == "bottom":
+            delta = -delta
         results = [
             self.bus.dispatch(
                 "component.rotate",
@@ -5089,17 +5239,17 @@ class MainWindow(QMainWindow):
             )
             for c in components
         ]
-        self._report_refusals(results, f"Rotated {len(results)} part(s)")
+        self._report_refusals(results, t("Rotated {count} part(s)").format(count=len(results)))
 
     def on_mirror_selection(self) -> None:
-        components = self._require_selection("mirror")
+        components = self._require_selection(t("mirror it"))
         if not components:
             return
         results = [
             self.bus.dispatch("component.mirror", MirrorComponentPayload(id=c.id, mirrored=not c.mirrored))
             for c in components
         ]
-        self._report_refusals(results, f"Mirrored {len(results)} part(s)")
+        self._report_refusals(results, t("Mirrored {count} part(s)").format(count=len(results)))
 
     # -- copy, paste, duplicate ----------------------------------------------
     #
@@ -5285,10 +5435,19 @@ class MainWindow(QMainWindow):
         plain checkable button, so Escape unchecks it directly, and the toggle handler puts
         the sheet back into panning.
         """
-        self.scene.leave_mode()
+        # Only when a mode was actually armed. Escape pressed out of reflex used to wipe
+        # whatever the bar was saying -- the routing summary, posted with no timeout so
+        # it could be read -- when there was nothing to leave: leave_mode() disarms every
+        # mode whether or not it was armed, and each disarm signal clears the bar.
+        left_something = False
+        if self.scene.in_a_mode:
+            self.scene.leave_mode()
+            left_something = True
         if hasattr(self, "act_sch_wire") and self.act_sch_wire.isChecked():
             self.act_sch_wire.setChecked(False)
-        self.statusBar().clearMessage()
+            left_something = True
+        if left_something:
+            self.statusBar().clearMessage()
 
     def on_draw_mode(self, kind: str, checked: bool) -> None:
         """Arm or disarm a drawing tool. Only one may be armed at a time.
@@ -5301,14 +5460,17 @@ class MainWindow(QMainWindow):
             action.setChecked(name == wanted)
         self.scene.arm_drawing(cast(Any, wanted) if wanted else None)
         if wanted:
+            # The banner over the board already says all of this, in the same words. The
+            # status line repeats it because the banner is not where a reader of the bar
+            # is looking -- and it used to repeat it in English under a Turkish banner.
             two_point = wanted in ("bare-wire", "insulated-wire", "top-jumper")
             how = (
-                "Click both ends."
+                t("click both ends, Esc cancels")
                 if two_point
-                else "Click each pad along the run, then Enter or right-click to finish."
+                else t("click each pad, Enter or right-click finishes, Esc cancels")
             )
             self.statusBar().showMessage(
-                f"Drawing {wanted.replace('-', ' ')} — {how}  Esc cancels.", 0
+                f"{t('Drawing')} {wanted.replace('-', ' ')} — {how}", 0
             )
         else:
             self.statusBar().clearMessage()
@@ -5337,11 +5499,10 @@ class MainWindow(QMainWindow):
         ]
         if conductor_ids and not components:
             label = f"Delete {len(conductor_ids)} conductor(s)"
-            if (
-                QMessageBox.question(
-                self,
-                t("Delete conductors"), f"{label}?")
-                != QMessageBox.StandardButton.Yes
+            if not self._confirm(
+                t("Delete conductors"),
+                t("Delete {count} conductor(s)?").format(count=len(conductor_ids)),
+                t("Delete"),
             ):
                 return
             result = self.bus.dispatch(
@@ -5352,28 +5513,65 @@ class MainWindow(QMainWindow):
                 self.statusBar().showMessage(f"[{result.code}] {result.message}", 8000)
             return
 
-        components = self._require_selection("delete it")
+        components = self._require_selection(t("delete it"))
         if not components:
             return
         refs = ", ".join(c.ref for c in components)
-        if (
-            QMessageBox.question(
-                self,
-                t("Delete parts"),
-                f"Delete {refs}?\n\nWires and traces are left in place -- DRC and LVS will "
-                "point at anything left dangling.",
-            )
-            != QMessageBox.StandardButton.Yes
+        # A rubber band that took a part and the two traces on it used to delete the part
+        # and keep the traces without a word. Everything selected goes, and the question
+        # says so.
+        copper_note = (
+            "\n\n" + t("The {count} selected conductor(s) go with them.").format(count=len(conductor_ids))
+            if conductor_ids
+            else ""
+        )
+        if not self._confirm(
+            t("Delete parts"),
+            t("Delete {refs}?").format(refs=refs)
+            + copper_note
+            + "\n\n"
+            + t(
+                "Other wires and traces are left in place -- DRC and LVS will point at "
+                "anything left dangling."
+            ),
+            t("Delete"),
         ):
             return
         results = [
             self.bus.dispatch("component.delete", DeleteComponentPayload(id=c.id))
             for c in components
         ]
-        self._report_refusals(results, f"Deleted {len(results)} part(s)")
+        if conductor_ids:
+            results.append(
+                self.bus.dispatch(
+                    "conductor.deleteMany",
+                    DeleteConductorsPayload(
+                        ids=conductor_ids, label=f"Delete {len(conductor_ids)} conductor(s)"
+                    ),
+                )
+            )
+        self._report_refusals(results, t("Deleted {count} part(s)").format(count=len(components)))
+
+    def _confirm(self, title: str, body: str, verb: str) -> bool:
+        """Ask before something destructive, with the SAFE answer under Enter.
+
+        ``QMessageBox.question`` with no buttons named puts Yes under Enter, so a delete
+        confirmation answered by reflex was a delete. The button carries the verb rather
+        than "Yes", so the dialog can be read from its buttons alone.
+        """
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle(title)
+        box.setText(body)
+        go = box.addButton(verb, QMessageBox.ButtonRole.DestructiveRole)
+        cancel = box.addButton(QMessageBox.StandardButton.Cancel)
+        box.setDefaultButton(cancel)
+        box.setEscapeButton(cancel)
+        box.exec()
+        return box.clickedButton() is go
 
     def on_toggle_lock_selection(self) -> None:
-        components = self._require_selection("lock or unlock it")
+        components = self._require_selection(t("lock or unlock it"))
         if not components:
             return
         # One shared target state, from the first part: toggling each independently would
@@ -5383,7 +5581,8 @@ class MainWindow(QMainWindow):
             self.bus.dispatch("component.update", UpdateComponentPayload(id=c.id, locked=locking))
             for c in components
         ]
-        self._report_refusals(results, f"{'Locked' if locking else 'Unlocked'} {len(results)} part(s)")
+        done = t("Locked {count} part(s)") if locking else t("Unlocked {count} part(s)")
+        self._report_refusals(results, done.format(count=len(results)))
 
     def on_component_properties(self, component_id: str = "") -> None:
         """Open one part's properties, from a double-click or from the selection.
@@ -5397,7 +5596,7 @@ class MainWindow(QMainWindow):
                 (c for c in self.bus.document.components if c.id == component_id), None
             )
         else:
-            selected = self._require_selection("edit its properties")
+            selected = self._require_selection(t("edit its properties"))
             component = selected[0] if len(selected) == 1 else None
             if selected and component is None:
                 self.statusBar().showMessage(
@@ -5432,11 +5631,40 @@ class MainWindow(QMainWindow):
         # part somebody just named is the one they are still working on.
         self.scene.select_components([component.id])
 
+    def on_fit(self) -> None:
+        """Fit whichever view has the keyboard: the sheet if it does, else the board.
+
+        The schematic panel had a Fit button and no key, so Ctrl+0 over a sheet that had
+        been zoomed into one pin fitted the BOARD behind it.
+        """
+        if hasattr(self, "schematic_view") and self.schematic_view.hasFocus():
+            self.schematic_view.fit()
+        else:
+            self.view.fit_board()
+
+    def on_zoom(self, factor: float) -> None:
+        if hasattr(self, "schematic_view") and self.schematic_view.hasFocus():
+            self.schematic_view.zoom_by(factor)
+        else:
+            self.view.zoom_by(factor)
+
     def on_flip_board(self) -> None:
+        # The view stays on the same PART of the board. The scene is mirrored about the
+        # hole span's midpoint, so the point under the middle of the viewport has to be
+        # mirrored with it -- otherwise a flip while zoomed in on the left edge showed the
+        # right edge, and the part somebody was about to solder was off screen.
+        centre = self.view.mapToScene(self.view.viewport().rect().center())
         self.side = "bottom" if self.side == "top" else "top"
         self.scene.set_side(self.side)
+        span_w, _span_h = hole_span_mm(self.bus.document.board)
+        self.view.centerOn(QPointF(span_w - centre.x(), centre.y()))
         # set_side rebuilds the scene, which drops the highlight with everything else.
         self.scene.set_highlighted_nets(self._selected_net_ids())
+        # The 3D view turns over with the board. Flipping is the one gesture that is
+        # allowed to move the camera (see apply_default_camera), and without it Ctrl+F
+        # showed the solder side in 2D and the component side in 3D.
+        if self._3d_is_live():
+            self.on_reset_3d_camera()
         self._refresh_3d()
         self._refresh_status()
 
@@ -5471,12 +5699,15 @@ class MainWindow(QMainWindow):
         self.bus = self._new_bus(document)
         self._subscribe_bus()
         self.scene.bus = self.bus
-        self._nets_from_old_layout.clear()
+        self._forget_the_previous_document()
         self.on_bus_changed(self.bus.document, None)
         self._mark_saved()
         self.view.fit_board()
         self.statusBar().showMessage(
-            f"New {document.board.cols}×{document.board.rows} {document.board.material} board", 8000
+            t("New {cols}×{rows} {material} board").format(
+                cols=document.board.cols, rows=document.board.rows, material=document.board.material
+            ),
+            8000,
         )
 
     def on_board_setup(self) -> None:
@@ -5587,7 +5818,9 @@ class MainWindow(QMainWindow):
         if not self._offer_to_save():
             return
         start_dir = str(self.current_path.parent) if self.current_path else str(Path.cwd())
-        path_str, _ = QFileDialog.getOpenFileName(self, "Open .perf", start_dir, "PerfStudio documents (*.perf)")
+        path_str, _ = QFileDialog.getOpenFileName(
+            self, t("Open a board"), start_dir, t("PerfStudio documents (*.perf)")
+        )
         if not path_str:
             return
         self._load_path(Path(path_str))
@@ -5628,11 +5861,21 @@ class MainWindow(QMainWindow):
         path = self.current_path
         if path is None:
             return
+        if self._planner_running:
+            # Not under a running planner: it captured the document it is planning
+            # against, and swapping the bus now would commit that plan into a different
+            # board. Looked at again once the planner has returned.
+            self._watch_timer.start()
+            return
         self._watch_current_path()
         text, problem = read_document_text(path)
         if text is None:
-            self.statusBar().showMessage(f"{path.name} changed on disk but could not be read: "
-                                         f"{problem}", 8000)
+            self.statusBar().showMessage(
+                t("{name} changed on disk but could not be read: {problem}").format(
+                    name=path.name, problem=problem
+                ),
+                8000,
+            )
             return
         if text == self._disk_text:
             return  # Our own save, or a write that changed nothing.
@@ -5641,12 +5884,21 @@ class MainWindow(QMainWindow):
             # Not reloaded, and not silently ignored either. The file and the window have
             # both moved and only the person in front of it can say which one is right.
             self.statusBar().showMessage(
-                f"{path.name} changed on disk, and this window has unsaved edits. "
-                f"File ▸ Reload from Disk to take the file's version.",
+                t(
+                    "{name} changed on disk, and this window has unsaved edits. "
+                    "File ▸ Reload from Disk to take the file's version."
+                ).format(name=path.name),
                 0,
             )
             return
-        self._load_path(path, reason=f"Reloaded {path.name}: it changed on disk")
+        # The undo history goes with the document, and the manual reload warns about it
+        # in a dialog; the automatic one has to at least say so.
+        self._load_path(
+            path,
+            reason=t("Reloaded {name}: it changed on disk, and the undo history went with it").format(
+                name=path.name
+            ),
+        )
 
     def on_reload(self) -> None:
         """Take the version on disk, discarding whatever is in the window."""
@@ -5655,19 +5907,21 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(t("This board has never been saved, so there is "
                                          "nothing on disk to reload."), 6000)
             return
-        if self.is_modified:
-            answer = QMessageBox.question(
-                self,
-                t("Reload from disk?"),
-                f"Discard the unsaved changes in this window and load {path.name} as it is "
-                f"on disk?\n\nThis cannot be undone: reloading replaces the document, and "
-                f"the undo history with it.",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No,
-            )
-            if answer != QMessageBox.StandardButton.Yes:
-                return
-        self._load_path(path, reason=f"Reloaded {path.name}")
+        if self.is_modified and not self._confirm(
+            t("Reload from disk?"),
+            t(
+                "Discard the unsaved changes in this window and load {name} as it is "
+                "on disk?"
+            ).format(name=path.name)
+            + "\n\n"
+            + t(
+                "This cannot be undone: reloading replaces the document, and the undo "
+                "history with it."
+            ),
+            t("Reload"),
+        ):
+            return
+        self._load_path(path, reason=t("Reloaded {name}").format(name=path.name))
 
     def _load_path(self, path: Path, reason: str = "") -> None:
         # The file dialog only offers files that exist, but it does not guarantee one is
@@ -5691,17 +5945,52 @@ class MainWindow(QMainWindow):
         self.bus = self._new_bus(result.document)
         self._subscribe_bus()
         self.scene.bus = self.bus
+        self._forget_the_previous_document()
         self.on_bus_changed(self.bus.document, None)
         # The viewport is left alone on a reload: somebody watching an agent work is
         # looking at a particular corner of the board, and refitting on every write would
         # snatch it back to the whole board a dozen times a minute.
         if not reason:
             self.view.fit_board()
-        note = f" ({len(result.warnings)} warning(s))" if result.warnings else ""
-        self.statusBar().showMessage(f"{reason or f'Loaded {path.name}'}{note}", 8000)
+        note = (
+            " " + t("({count} warning(s))").format(count=len(result.warnings))
+            if result.warnings
+            else ""
+        )
+        self.statusBar().showMessage(
+            f"{reason or t('Loaded {name}').format(name=path.name)}{note}", 8000
+        )
         self._mark_saved()
         self._remember_path(path)
         self._watch_current_path()
+        if result.warnings:
+            # The warnings themselves, not just their number: each one is something in
+            # the file that was read differently from how it was written -- a diagonal
+            # trace step, a property nothing knows -- and a count in the status bar told
+            # the user only that there was something they could not see.
+            shown = "\n".join(f"  • {w}" for w in result.warnings[:12])
+            if len(result.warnings) > 12:
+                shown += "\n  • " + t("…and {count} more").format(count=len(result.warnings) - 12)
+            QMessageBox.warning(
+                self,
+                t("Opened with warnings"),
+                t("{name} loaded, but not all of it was understood:").format(name=path.name)
+                + "\n\n"
+                + shown,
+            )
+
+    def _forget_the_previous_document(self) -> None:
+        """State the window keeps ABOUT a document, cleared when a different one arrives.
+
+        Net ids are document-local -- every board has a ``net-1`` -- so the record of
+        which nets were routed for a position a part has since left was carrying over
+        from one file to the next, and Ctrl+R on a freshly opened board asked about
+        re-routing nets nobody had touched.
+        """
+        self._nets_from_old_layout.clear()
+        self._schematic_ref = None
+        self._described_here.clear()
+        self._place_seed = 0
 
     # -- nets, entered by hand -----------------------------------------------
     #
@@ -5716,19 +6005,37 @@ class MainWindow(QMainWindow):
         command that fills it would be two decisions where the user made one, and an
         empty net is the one state that does nothing for anybody.
         """
-        dialog = NetDialog(self, title=t("New Net"))
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return
-        name, net_class, current_a, voltage_v = dialog.values()
-        result = self.bus.dispatch(
-            "net.add",
-            AddNetPayload(
-                name=name, net_class=net_class, current_a=current_a, voltage_v=voltage_v
-            ),
-        )
-        if not result.ok:
-            self.statusBar().showMessage(f"[{result.code}] {result.message}", 8000)
-            return
+        typed: tuple[str, NetClass, float | None, float | None] | None = None
+        while True:
+            dialog = (
+                NetDialog(self, title=t("New Net"))
+                if typed is None
+                else NetDialog(
+                    self,
+                    title=t("New Net"),
+                    name=typed[0],
+                    net_class=typed[1],
+                    current_a=typed[2],
+                    voltage_v=typed[3],
+                )
+            )
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return
+            typed = dialog.values()
+            name, net_class, current_a, voltage_v = typed
+            result = self.bus.dispatch(
+                "net.add",
+                AddNetPayload(
+                    name=name, net_class=net_class, current_a=current_a, voltage_v=voltage_v
+                ),
+            )
+            if result.ok:
+                break
+            # A dialog and the same form again, filled in: a duplicate name refused into
+            # the status bar threw away everything typed, at the bottom of the window.
+            QMessageBox.warning(
+                self, t("Cannot create this net"), f"[{result.code}] {result.message}"
+            )
         net = next((n for n in self.bus.document.nets if n.name == name), None)
         if net is None:  # pragma: no cover - the command just made it
             return
@@ -5801,7 +6108,9 @@ class MainWindow(QMainWindow):
             ),
         )
         if not result.ok:
-            self.statusBar().showMessage(f"[{result.code}] {result.message}", 8000)
+            QMessageBox.warning(
+                self, t("Cannot change this net"), f"[{result.code}] {result.message}"
+            )
 
     def on_disconnect_pins(self) -> None:
         """Take the pins selected in the Nets panel off their nets.
@@ -5825,7 +6134,7 @@ class MainWindow(QMainWindow):
             )
             for net_id, nodes in by_net.items()
         ]
-        self._report_refusals(results, f"Disconnected {len(picked)} pin(s)")
+        self._report_refusals(results, t("Disconnected {count} pin(s)").format(count=len(picked)))
 
     def on_delete_net(self) -> None:
         net_id = self._one_selected_net()
@@ -5836,14 +6145,16 @@ class MainWindow(QMainWindow):
         # rather than discovered afterwards.
         freed = sum(1 for c in self.bus.document.conductors if c.net_id == net.id)
         note = (
-            f"\n\n{freed} conductor(s) already laid for it stay on the board, and stop "
-            f"being anything re-route or the stale sweep will touch."
+            "\n\n"
+            + t(
+                "{count} conductor(s) already laid for it stay on the board, and stop "
+                "being anything re-route or the stale sweep will touch."
+            ).format(count=freed)
             if freed
             else ""
         )
-        if (
-            QMessageBox.question(self, t("Delete net"), f"Delete net {net.name}?{note}")
-            != QMessageBox.StandardButton.Yes
+        if not self._confirm(
+            t("Delete net"), t("Delete net {name}?").format(name=net.name) + note, t("Delete")
         ):
             return
         result = self.bus.dispatch("net.delete", DeleteNetPayload(id=net.id))
@@ -5858,7 +6169,7 @@ class MainWindow(QMainWindow):
         if not net_id:
             self.statusBar().clearMessage()
             return
-        self.statusBar().showMessage(f"{self._pin_session_prefix(net_id)} — {self.PIN_HINT}", 0)
+        self.statusBar().showMessage(f"{self._pin_session_prefix(net_id)} — {t(self.PIN_HINT)}", 0)
 
     def _on_net_pins_changed(self, labels: list[Any]) -> None:
         self._refresh_mode_banner()
@@ -5867,7 +6178,7 @@ class MainWindow(QMainWindow):
             return
         picked = ", ".join(str(label) for label in labels) if labels else "no pins yet"
         self.statusBar().showMessage(
-            f"{self._pin_session_prefix(net_id)}: {picked} — {self.PIN_HINT}", 0
+            f"{self._pin_session_prefix(net_id)}: {picked} — {t(self.PIN_HINT)}", 0
         )
 
     def _on_net_pin_rejected(self, reason: str) -> None:
@@ -5876,7 +6187,7 @@ class MainWindow(QMainWindow):
         A timed message would expire back to an empty status bar and take the "Enter
         finishes" line with it, in the middle of a session that is still running.
         """
-        hint = f" — {self.PIN_HINT}" if self.scene.armed_net_id else ""
+        hint = f" — {t(self.PIN_HINT)}" if self.scene.armed_net_id else ""
         self.statusBar().showMessage(f"{reason}{hint}", 0)
 
     def _on_net_pins_committed(self, result: Any) -> None:
@@ -5889,7 +6200,7 @@ class MainWindow(QMainWindow):
 
     #: Said at every stage of a pin session, because the two ways out of a mode are the
     #: thing a person needs and the thing a mode never says.
-    PIN_HINT = "click each pin; Enter or right-click finishes, Esc cancels"
+    PIN_HINT = "Enter or right-click finishes, Esc cancels"
 
     def _pin_session_prefix(self, net_id: str) -> str:
         return f"Adding pins to {self._net_name(net_id)}"
@@ -5926,7 +6237,7 @@ class MainWindow(QMainWindow):
         """
         start_dir = str(self.current_path.parent) if self.current_path else str(Path.cwd())
         path_str, _ = QFileDialog.getOpenFileName(
-            self, "Import KiCad netlist", start_dir, "KiCad netlists (*.net);;All files (*)"
+            self, t("Import KiCad netlist"), start_dir, t("KiCad netlists (*.net);;All files (*)")
         )
         if not path_str:
             return
@@ -6051,19 +6362,24 @@ class MainWindow(QMainWindow):
         """Save, returning whether it happened. The bool is what the close guard needs."""
         if self.current_path is None:
             return self.on_save_as()
-        self._save_to(self.current_path)
-        return True
+        return self._save_to(self.current_path)
 
     def on_save_as(self) -> bool:
         default = str(self.current_path) if self.current_path else str(Path.cwd() / "board.perf")
-        path_str, _ = QFileDialog.getSaveFileName(self, "Save As", default, "PerfStudio documents (*.perf)")
+        path_str, _ = QFileDialog.getSaveFileName(
+            self, t("Save As"), default, t("PerfStudio documents (*.perf)")
+        )
         if not path_str:
             return False
         path = Path(path_str)
         if path.suffix != ".perf":
             path = path.with_suffix(".perf")
+        previous = self.current_path
         self.current_path = path
-        self._save_to(path)
+        if not self._save_to(path):
+            # Not saved there, so not "the file this window is on" either.
+            self.current_path = previous
+            return False
         return True
 
     # -- unsaved work --------------------------------------------------------
@@ -6088,6 +6404,10 @@ class MainWindow(QMainWindow):
 
     def _refresh_title(self) -> None:
         self.setWindowTitle(window_title(self.current_path, modified=self.is_modified))
+        # Save has nothing to do on an unmodified board, and doing it anyway rewrote the
+        # file -- a new modified stamp, a new mtime -- for nothing.
+        if hasattr(self, "act_save"):
+            self.act_save.setEnabled(self.is_modified or self.current_path is None)
 
     def _offer_to_save(self) -> bool:
         """Ask about unsaved work. False means the user cancelled the whole operation.
@@ -6097,12 +6417,12 @@ class MainWindow(QMainWindow):
         """
         if not self.is_modified:
             return True
-        name = self.current_path.name if self.current_path else "this board"
+        name = self.current_path.name if self.current_path else t("this board")
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Icon.Warning)
         box.setWindowTitle(t("Unsaved changes"))
-        box.setText(f"<b>{name} has changes that are not saved.</b>")
-        box.setInformativeText("Saving keeps them; discarding loses them for good.")
+        box.setText(f"<b>{t('{name} has changes that are not saved.').format(name=name)}</b>")
+        box.setInformativeText(t("Saving keeps them; discarding loses them for good."))
         box.setStandardButtons(
             QMessageBox.StandardButton.Save
             | QMessageBox.StandardButton.Discard
@@ -6164,6 +6484,15 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event: Any) -> None:
         """The last thing standing between an hour of layout and the X button."""
+        if self._planner_running:
+            # The planner's thread is still working and its caller will dispatch into
+            # this window when it returns; a window that had already saved its session
+            # and cleared its recovery record is not one to dispatch into.
+            self.statusBar().showMessage(
+                t("Still planning — cancel it or wait for it before closing."), 6000
+            )
+            event.ignore()
+            return
         if self._offer_to_save():
             # AFTER the offer, never before: a close the user backed out of must not
             # record the layout as if they had left.
@@ -6201,11 +6530,20 @@ class MainWindow(QMainWindow):
             return
         text = persist.serialize_document(self.bus.document)
         if self._autosave.write(text, self.current_path):
+            if self._autosave_complained:
+                # Writable again -- the disk was freed, the folder came back. The warning
+                # was about a condition, and the condition is over.
+                self._autosave_complained = False
+                self.label_warning.clear()
             return
         if not self._autosave_complained:
             self._autosave_complained = True
-            self.statusBar().showMessage(
-                t("Could not write the recovery file — save your work yourself."), 0
+            # A permanent field, not a status message: the next command's description
+            # replaced the message within seconds, and the failure went on for the rest
+            # of the session with nothing on screen saying so.
+            self.label_warning.setText(
+                f'<span style="color:{WARNING}">'
+                f"{t('Could not write the recovery file — save your work yourself.')}</span>"
             )
 
     def offer_recovery(self) -> None:
@@ -6254,7 +6592,13 @@ class MainWindow(QMainWindow):
                     # on top of whatever the user does with it now.
                     with contextlib.suppress(OSError):
                         path.unlink(missing_ok=True)
-                return
+                    return
+                # A record that will not parse cannot be offered usefully again, and left
+                # in place it was offered at every start for a fortnight -- and stood in
+                # front of every other record behind it.
+                with contextlib.suppress(OSError):
+                    path.unlink(missing_ok=True)
+                continue
             if box.clickedButton() is discard:
                 with contextlib.suppress(OSError):
                     path.unlink(missing_ok=True)
@@ -6287,6 +6631,7 @@ class MainWindow(QMainWindow):
         self.bus = self._new_bus(result.document)
         self._subscribe_bus()
         self.scene.bus = self.bus
+        self._forget_the_previous_document()
         self.on_bus_changed(self.bus.document, None)
         self.view.fit_board()
         # Marked as unsaved by leaving _saved_document alone: it still points at whatever
@@ -6352,14 +6697,28 @@ class MainWindow(QMainWindow):
             for name, action in self.act_style.items():
                 action.setChecked(name == style)
 
-    def _save_to(self, path: Path) -> None:
+    def _save_to(self, path: Path) -> bool:
         # meta.modified is host-stamped, not part of any command (core has no clock --
         # see persist.py/commands.py) -- so this replaces the document's meta for the
         # SERIALIZED copy only, without pushing that change through the bus.
         doc = self.bus.document
         stamped = dataclasses.replace(doc, meta=dataclasses.replace(doc.meta, modified=_now_iso()))
         text = persist.serialize_document(stamped)
-        path.write_text(text, encoding="utf-8")
+        # The one write that must not fail quietly -- and it was the one write with no
+        # handler at all, so a read-only folder or a full disk was a traceback with the
+        # board still unsaved behind it. Said in a dialog, and reported to the close
+        # guard as "not saved" so it does not let the window go.
+        try:
+            path.write_text(text, encoding="utf-8")
+        except OSError as err:
+            QMessageBox.critical(
+                self,
+                t("Save failed"),
+                t("Could not write {path}: {reason}").format(
+                    path=path, reason=err.strerror or str(err)
+                ),
+            )
+            return False
         # Remembered so the watcher can tell this write from somebody else's: a save
         # changes the file, and a window that reloaded itself after every save would
         # throw away its own undo history for nothing.
@@ -6369,7 +6728,8 @@ class MainWindow(QMainWindow):
         self._watch_current_path()
         # The record exists to say "there was unsaved work". There is not, now.
         self._autosave.clear()
-        self.statusBar().showMessage(f"Saved {path}")
+        self.statusBar().showMessage(t("Saved {path}").format(path=path), 8000)
+        return True
 
     def on_export_pdf(self) -> None:
         base = self.current_path.with_suffix("") if self.current_path else Path.cwd() / "board"
@@ -6379,9 +6739,28 @@ class MainWindow(QMainWindow):
         # across the very sheet someone is using to decide where to put solder.
         top_scene = self._export_scene(doc, "top")
         bottom_scene = self._export_scene(doc, "bottom")
-        p1 = export_pdf(doc.board, top_scene, base.with_name(base.name + "_component_side.pdf"))
-        p2 = export_pdf(doc.board, bottom_scene, base.with_name(base.name + "_solder_side.pdf"), mirrored=True)
-        self.statusBar().showMessage(f"Exported {p1.name} and {p2.name}", 8000)
+        try:
+            p1 = export_pdf(doc.board, top_scene, base.with_name(base.name + "_component_side.pdf"))
+            p2 = export_pdf(doc.board, bottom_scene, base.with_name(base.name + "_solder_side.pdf"), mirrored=True)
+        except OSError as err:
+            QMessageBox.critical(
+                self, t("Export failed"), t("Could not write the PDF: {reason}").format(reason=err)
+            )
+            return
+        # QPdfWriter reports an unwritable target as a warning on stderr and returns as
+        # if it had written, so success is checked on disk rather than believed.
+        missing = [p for p in (p1, p2) if not p.is_file() or p.stat().st_size == 0]
+        if missing:
+            QMessageBox.critical(
+                self,
+                t("Export failed"),
+                t("Could not write {path}. Is the folder writable?").format(path=missing[0]),
+            )
+            return
+        self.statusBar().showMessage(
+            t("Exported {first} and {second}").format(first=p1.name, second=p2.name), 8000
+        )
+        self._offer_to_open([p1, p2], title=t("PDF written"), open_label=t("Open the Sheet"))
 
     def _export_scene(self, doc: PerfDocument, side: BoardSide) -> BoardScene:
         """A scene for print: the board and nothing else."""
@@ -6389,8 +6768,35 @@ class MainWindow(QMainWindow):
 
     def on_export_3d_png(self) -> None:
         out = self.current_path.with_suffix(".png") if self.current_path else Path.cwd() / "board_3d.png"
-        view3d.render_offscreen(self.bus.document, self.lookup, str(out), flipped=(self.side == "bottom"))
-        self.statusBar().showMessage(f"Exported {out}")
+        # The same guard the guide export has, for the same reason: on a machine with no
+        # offscreen GL, VTK does not raise, it ends the process -- with every unsaved
+        # edit in it.
+        if not view3d.offscreen_gl_available():
+            QMessageBox.warning(
+                self,
+                t("Export failed"),
+                t("This machine cannot render 3D off screen, so no PNG was written."),
+            )
+            return
+        try:
+            view3d.render_offscreen(
+                self.bus.document, self.lookup, str(out), flipped=(self.side == "bottom")
+            )
+        except OSError as err:
+            QMessageBox.critical(
+                self, t("Export failed"), t("Could not write {path}: {reason}").format(path=out, reason=err)
+            )
+            return
+        # vtkPNGWriter reports an unwritable target on its own console and returns, so
+        # the file is checked rather than believed -- as the PDF export does.
+        if not out.is_file() or out.stat().st_size == 0:
+            QMessageBox.critical(
+                self,
+                t("Export failed"),
+                t("Could not write {path}. Is the folder writable?").format(path=out),
+            )
+            return
+        self.statusBar().showMessage(t("Exported {path}").format(path=out), 8000)
 
     def on_board_colour(self, key: str | None) -> None:
         """Recolour the board in both views at once.
@@ -6610,6 +7016,12 @@ class MainWindow(QMainWindow):
         constructor: a check is a network request, and a window that makes one while it
         is being built makes one in every test that builds a window.
         """
+        # Not on top of another question. The recovery offer runs a moment earlier on the
+        # same loop and holds a modal open; a second modal over it stacked two dialogs on a
+        # board the user had not seen yet. Asked again once the first is answered.
+        if QApplication.activeModalWidget() is not None:
+            QTimer.singleShot(UPDATE_CHECK_DELAY_MS, self.consider_checking_for_updates)
+            return
         settings = app_settings()
         preference = updater.stored_preference(settings)
         if preference is None:
@@ -6730,6 +7142,15 @@ class MainWindow(QMainWindow):
             updater.remember_skip(app_settings(), self._update_release.version)
         self.update_bar.dismiss()
 
+    def _on_update_closed(self) -> None:
+        """Close the strip and remember nothing.
+
+        The Downloaded and could-not-download strips used to offer only Hide -- which
+        skips the version for good, so closing the strip after a successful download told
+        the application never to mention the release the user had just fetched.
+        """
+        self.update_bar.dismiss()
+
     def _on_automatic_updates_toggled(self, enabled: bool) -> None:
         updater.remember_preference(app_settings(), enabled)
 
@@ -6834,6 +7255,10 @@ def main() -> int:
 
     window = MainWindow(document, path)
     window.show()
+    # After show(), because a fit needs the viewport's real size. Opening a file through
+    # the dialog fits it; opening one from the command line arrived at a fixed six pixels
+    # per millimetre, which is a corner of anything bigger than a 7 × 9 cm board.
+    window.view.fit_board()
     # After the window is up rather than while it is being built, and through the event
     # loop rather than in line: the first thing somebody should see is their board, and
     # the reply to an update check arrives on the loop this call is scheduled on.

@@ -283,7 +283,15 @@ class UpdateChecker(QObject):
         if self._file is None:
             return
         data = bytes(reply.readAll().data())
-        self._file.write(data)
+        try:
+            self._file.write(data)
+        except OSError as err:
+            # A disk that fills part-way through 300 MB. Every other outcome in this
+            # class is a signal; this write was the one place an exception could reach
+            # the event loop, with the .part file left behind because nothing cancelled.
+            self.cancel()
+            self.downloadFailed.emit(f"Could not write the download: {err}")
+            return
         self._hash.update(data)
 
     def _on_downloaded(self, reply: QNetworkReply) -> None:
@@ -407,6 +415,9 @@ class UpdateBar(QFrame):
     notesRequested = Signal()
     dismissed = Signal()
     cancelRequested = Signal()
+    #: Close the strip and remember nothing -- for the states where there is no version
+    #: to skip: the file is already downloaded, or the download failed.
+    closeRequested = Signal()
     revealRequested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -456,12 +467,19 @@ class UpdateBar(QFrame):
             )
         )
         self.act_hide.clicked.connect(self.dismissed)
+        # Hide is a decision about the VERSION ("stop mentioning it"), and it was the only
+        # way to close the strip after a download had landed -- so closing it told the
+        # application never to mention the release the user had just fetched. Close is
+        # a decision about the strip.
+        self.act_close = QPushButton(t("Close"))
+        self.act_close.clicked.connect(self.closeRequested)
         for button in (
             self.act_download,
             self.act_notes,
             self.act_reveal,
             self.act_cancel,
             self.act_hide,
+            self.act_close,
         ):
             row.addWidget(button)
 
@@ -474,6 +492,7 @@ class UpdateBar(QFrame):
             self.act_reveal,
             self.act_cancel,
             self.act_hide,
+            self.act_close,
         ):
             button.setVisible(button in visible)
 
@@ -533,7 +552,7 @@ class UpdateBar(QFrame):
         )
         self.detail.show()
         self.progress.hide()
-        self._show_buttons(self.act_reveal, self.act_hide)
+        self._show_buttons(self.act_reveal, self.act_close)
         self.show()
 
     def show_failure(self, message: str) -> None:
@@ -541,7 +560,7 @@ class UpdateBar(QFrame):
         self.detail.setText(message)
         self.detail.show()
         self.progress.hide()
-        self._show_buttons(self.act_notes, self.act_hide)
+        self._show_buttons(self.act_notes, self.act_close)
         self.show()
 
     def dismiss(self) -> None:

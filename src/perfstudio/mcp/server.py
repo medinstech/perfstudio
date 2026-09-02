@@ -12,7 +12,7 @@ module configures logging to stderr before anything else, and nothing anywhere u
 render tools pull in are the real risk, which is another reason they are imported lazily
 inside the tools rather than at module scope.
 
-THIRTY-NINE TOOLS, against PLAN.md Sec 2's "~25, deliberately narrow", and the overage is
+FIFTY-ONE TOOLS, against PLAN.md Sec 2's "~25, deliberately narrow", and the overage is
 stated rather than hidden. Each tool is a verb an agent cannot compose from the others,
 and the surface was trimmed rather than grown: the history listing folded into
 ``get_status``, and "solder bridge" is not a separate tool from ``add_solder_trace``
@@ -69,17 +69,31 @@ produce a soldering guide.
 Holes are addressed like a spreadsheet: column letters then a 1-based row — A1, C7, AC12.
 Every tool speaks that language; there are no raw coordinates in this API.
 
-A perfboard connection is not one thing, and choosing between them is most of the craft:
-  solder-trace   adjacent pads joined with solder. Cheap, but orthogonal steps only and
-                 it cannot cross anything.
-  bare-wire      tinned wire on the solder side. Cannot cross other copper.
-  insulated-wire may cross anything, at the cost of stripping and preparing it.
-  top-jumper     insulated, over the component side.
-Prefer traces, then bare wire, then insulated wire. `autoroute` already knows this.
+A perfboard connection is not one thing, and choosing between them is most of the craft.
+There are six, and they have different costs, limits and failure modes:
+  lead-bend           a component's own leg folded over to the next hole. No wire at all.
+  solder-trace        adjacent pads joined with solder. Cheap, but orthogonal steps only
+                      and it cannot cross anything.
+  solder-trace-wired  the same run with a wire spine laid along it: roughly a tenth of
+                      the resistance, and far easier to make repeatable.
+  bare-wire           tinned wire on the solder side. Cannot cross other copper.
+  insulated-wire      may cross anything, at the cost of stripping and preparing it.
+  top-jumper          insulated, over the component side. It takes up board space.
+Prefer lead bends and traces, then bare wire, then insulated wire. `autoroute` knows this.
 
-A good working order: get_status → import_netlist or place_component →
-optimize_placement → autoroute → run_drc / run_lvs → generate_guide. Take a snapshot
-before anything drastic; every edit is also undoable one step at a time.
+A good working order, design first — the order every other EDA tool works in:
+  get_status                → where is this board
+  add_part                  → the design: one call per part, no holes chosen yet
+  create_net / connect_pins → wire it; a part need not be on the board
+  place_parts               → the whole design onto the board, one undo step
+  optimize_placement        → apply=False first if you want to look
+  autoroute                 → reports every connection it could NOT make
+  run_drc / run_lvs         → is it right
+  generate_guide            → is it buildable, and what is missing
+With a circuit that already exists, `import_netlist` replaces the first three steps and
+`place_component` puts parts down directly. Use `reroute`, not `autoroute`, after
+anything has moved. Take a snapshot before anything drastic; every edit is also undoable
+one step at a time.
 
 Nothing here writes to disk unless you name a path.
 """
@@ -245,10 +259,11 @@ def set_board(
     single_sided: bool | None = None,
 ) -> dict[str, Any]:
     """Change the board under the design, keeping everything on it. Anything left out is
-    left alone. board_type is "pad-per-hole" (every hole its own island) or "stripboard"
+    left alone. board_type is "pad-per-hole" (every hole its own island), "stripboard"
     (whole rows already joined — you cut the track to separate them, and strip_axis says
-    which way they run). Shrinking a board that still has a part hanging off the new edge
-    is refused, naming the part."""
+    which way they run) or "plain" (bare substrate with no copper at all, so every
+    connection is point-to-point wire). Shrinking a board that still has a part hanging
+    off the new edge is refused, naming the part."""
     return session.set_board(cols, rows, material, board_type, strip_axis, pitch, single_sided)
 
 
@@ -546,8 +561,9 @@ def optimize_placement(seed: int = 0, apply: bool = True) -> dict[str, Any]:
 
     Simulated annealing, deterministic for a given seed, and it judges candidates by
     actually routing them. Use apply=False to see what it would do first. Existing
-    routing is not moved with the parts — remove_stale_conductors then autoroute after
-    accepting one.
+    routing is not moved with the parts, so call `reroute` after accepting one: it is the
+    only safe verb after a move, because `autoroute` only ADDS and the copper laid for a
+    part's old position still joins the right pins.
     """
     return session.optimize_placement(seed=seed, apply=apply)
 
@@ -569,7 +585,10 @@ def run_drc() -> dict[str, Any]:
 def run_lvs() -> dict[str, Any]:
     """Compare what the board connects against what the schematic asked for. Opens,
     shorts and floating copper, named down to the pin. This is the machine answer to
-    "is it actually right"."""
+    "is it actually right".
+
+    The verdict is `matches_schematic`, not `ok`: `ok` means the call ran, as it does
+    everywhere else here."""
     return session.run_lvs()
 
 
@@ -610,7 +629,11 @@ def generate_guide(directory: str | None = None) -> dict[str, Any]:
 @mcp.tool()
 def export_pdf(directory: str | None = None) -> dict[str, Any]:
     """Write the 1:1 printable sheets — component side, and the mirrored solder side —
-    which are meant to be printed at exactly 100% and held against the real board."""
+    which are meant to be printed at exactly 100% and held against the real board.
+
+    `directory` is required: nothing here writes to disk unless you name a path, so
+    without one this is refused rather than writing two files wherever the server
+    happens to have been started."""
     return session.export_pdf(directory)
 
 

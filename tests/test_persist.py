@@ -506,3 +506,99 @@ def test_a_file_written_before_the_height_limit_existed_still_loads() -> None:
 
     assert result.ok is True
     assert result.document.height_limit_mm is None
+
+
+# ---------------------------------------------------------------------------
+# What a hand-edited file may not say
+# ---------------------------------------------------------------------------
+#
+# The loader accepted every board field it could parse, and a file with a zero pitch
+# opened without a word -- and then every repaint divided by it. These are the facts
+# board.set refuses, refused at load for the same reason.
+
+
+def test_a_zero_pitch_is_refused_at_load() -> None:
+    doc = _minimal_document_json()
+    doc["board"]["pitch"] = 0  # type: ignore[index]
+    result = persist.deserialize_document(json.dumps(doc))
+    assert result.ok is False
+    assert result.code == "invalid-board"
+    assert result.path == "board"
+
+
+def test_a_board_with_no_columns_is_refused_at_load() -> None:
+    doc = _minimal_document_json()
+    doc["board"]["cols"] = 0  # type: ignore[index]
+    result = persist.deserialize_document(json.dumps(doc))
+    assert result.ok is False
+    assert result.code == "invalid-board"
+    assert "0 × " in result.message
+
+
+def test_a_drill_that_swallows_the_pad_is_refused_at_load() -> None:
+    doc = _minimal_document_json()
+    doc["board"]["drillDiameter"] = doc["board"]["padDiameter"]  # type: ignore[index]
+    result = persist.deserialize_document(json.dumps(doc))
+    assert result.ok is False
+    assert result.code == "invalid-board"
+
+
+def test_a_format_version_below_one_is_refused() -> None:
+    """No such version has ever existed, so it is a mangled field and not an old file."""
+    doc = _minimal_document_json()
+    doc["formatVersion"] = 0
+    result = persist.deserialize_document(json.dumps(doc))
+    assert result.ok is False
+    assert result.code == "format-invalid"
+    assert result.path == "formatVersion"
+
+
+def _component_json(id_: str, ref: str) -> dict[str, object]:
+    return {
+        "id": id_,
+        "ref": ref,
+        "value": "10k",
+        "footprintId": "r-axial-4",
+        "anchor": {"col": 0, "row": 0},
+        "rotation": 0,
+        "mirrored": False,
+        "locked": False,
+    }
+
+
+def test_two_components_with_one_id_are_refused_at_load() -> None:
+    """Every command looks a component up by id and finds the first, so the second is a
+    part no edit can reach -- and the placer refused the whole board over it."""
+    doc = _minimal_document_json()
+    doc["components"] = [_component_json("cmp-1", "R1"), _component_json("cmp-1", "R2")]
+    result = persist.deserialize_document(json.dumps(doc))
+    assert result.ok is False
+    assert result.code == "duplicate-id"
+    assert result.path == "components[1]"
+
+
+def test_two_components_with_one_reference_load_with_a_warning() -> None:
+    """The board still opens, in the spirit of validate_orthogonal_chain, and the
+    ambiguity in the wiring is said out loud rather than discovered at LVS."""
+    doc = _minimal_document_json()
+    doc["components"] = [_component_json("cmp-1", "R1"), _component_json("cmp-2", "R1")]
+    result = persist.deserialize_document(json.dumps(doc))
+    assert result.ok is True
+    assert any('"R1"' in w for w in result.warnings), result.warnings
+
+
+def test_absurd_nesting_is_an_error_and_not_an_exception() -> None:
+    """json.loads raises RecursionError on a file built to be absurd, and "never raises"
+    has to include that file."""
+    result = persist.deserialize_document("[" * 100_000 + "]" * 100_000)
+    assert result.ok is False
+    assert result.code == "invalid-json"
+
+
+def test_a_missing_field_is_named_by_its_full_path_in_the_message() -> None:
+    doc = _minimal_document_json()
+    del doc["board"]["cols"]  # type: ignore[attr-defined]
+    result = persist.deserialize_document(json.dumps(doc))
+    assert result.ok is False
+    assert result.code == "missing-field"
+    assert '"board.cols"' in result.message

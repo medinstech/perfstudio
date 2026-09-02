@@ -17,7 +17,7 @@ git clone https://github.com/medinstech/perfstudio.git
 cd perfstudio
 pip install -e ".[dev,mcp]"
 
-pytest                 # the whole suite, ~1260 tests in about 40 seconds
+pytest                 # the whole suite, ~2070 tests in under a minute
 perfstudio             # launch the app on a blank board
 ```
 
@@ -43,12 +43,17 @@ over `tests` reports a few hundred errors, nearly all `no-untyped-def` on UI tes
 helpers. CI gates on `src` alone, deliberately — gating on something already broken
 teaches everyone to ignore the red tick.
 
-**Ruff — not a gate, and please do not run `ruff format` casually.** `ruff check src
-tests` currently reports a few hundred findings, overwhelmingly `E501` on message strings
-and `RUF001` on the Turkish catalogue's dotless `ı`. `ruff format` would rewrite 40 of
-the 57 files and point every line of blame in the repository at a reformat. Both are
-worth settling; neither is worth settling as a side effect of an unrelated change. The
-CI `lint` job is `continue-on-error: true` for exactly this reason.
+**`ruff check src tests` — a gate. `ruff format` still must not be run casually.**
+The check is clean and CI fails on a finding. Two rules are switched off in
+`pyproject.toml`, each with its reason written at the switch: `E501`, because its 235
+hits were prose a formatter could not split either, and `RUF001`/`2`/`3`, because 137 of
+its 154 were the Turkish catalogue's dotless `ı` — a rule that flags correct Turkish is a
+rule people learn to ignore. A handful of `# noqa` suppressions in the source are
+load-bearing rather than noise; each says why at the line.
+
+`ruff format` is a different question. It would rewrite 40 of the 57 files and point
+every line of blame in the repository at a reformat, which is its own decision to take
+deliberately and not a side effect of an unrelated change.
 
 **The full suite — a gate**, on Linux for every push and on all three platforms for
 `main`, tags and manual dispatch.

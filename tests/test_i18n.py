@@ -74,8 +74,15 @@ def loop_built_labels() -> set[str]:
     # hand-kept list is the drift this file exists to catch. Material descriptions match
     # this shape too and are deliberately untranslated, which is harmless -- this set only
     # excuses a catalogue key from needing a literal t("..."), it never demands one.
-    pairs = set(re.findall(r'\(\s*"[a-z-]+",\s*"((?:[^"\\]|\\.)+)"\s*\),\s*$',
-                           source, re.MULTILINE))
+    # [A-Za-z0-9-] rather than [a-z-]: the material table is keyed "FR4", "FR2", "FR1",
+    # and it is translated now -- it was the one combo in Board Setup left in English.
+    # Evaluated, as the literal scan is: a label with an escaped quote in it is stored in
+    # the source with the backslash and reaches t() without it.
+    pairs = {
+        ast.literal_eval(f'"{raw}"')
+        for raw in re.findall(r'\(\s*"[A-Za-z0-9-]+",\s*"((?:[^"\\]|\\.)+)"\s*\),\s*$',
+                              source, re.MULTILINE)
+    }
     return {scheme.label for scheme in SCHEMES} | tools | pairs
 
 
@@ -199,6 +206,14 @@ def test_no_two_entries_in_a_menu_claim_the_same_accelerator() -> None:
         "draw": ["&Solder Trace", "Solder Trace with S&pine", "&Bare Wire",
                  "&Insulated Wire", "Top &Jumper", "&Cut Track",
                  "&Stop the Current Tool"],
+        # View is the longest menu and the one the three panel toggles joined; it had a
+        # clash in each language before it was listed here.
+        "view": ["&Fit Board", "Zoom &In", "Zoom &Out", "Show &Ratsnest",
+                 "Show Hole &Addresses", "&Hatch Copper on the Far Side",
+                 "Measure &Distance", "&Go to Part…", "Show &3D View",
+                 "Show &Build Guide", "Show &Schematic", "Show &Parts", "Show &Nets",
+                 "Show DRC / L&VS", "&Exploded View", "Reset 3D Ca&mera", "&Language",
+                 "Board &Colour"],
         "net": ["&Connect Two Pins", "&New Net…", "&Add Pins to Net", "&Finish Adding Pins",
                 "&Edit Net…", "&Disconnect Selected Pins", "De&lete Net"],
         # Route ▸ Preferred Connection. Five items in one submenu, and the one place in the

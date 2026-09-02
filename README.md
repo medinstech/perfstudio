@@ -16,7 +16,7 @@ you can actually build from.
 > an exact 1:1 PDF export and an MCP server. What is missing is the dogfood test —
 > nobody has yet built a real board by following a generated guide, and
 > [PLAN.md](https://github.com/medinstech/perfstudio/blob/main/PLAN.md) §11 says M5 does not close until somebody has. Everything else
-> runs: **v0.4.0** ships an installer for each of the three desktop platforms, none of
+> runs: **v0.9.0** ships an installer for each of the three desktop platforms, none of
 > them code-signed.
 
 ---
@@ -180,10 +180,10 @@ The MCP server drives the identical command bus, so undo works across both:
 
 ```sh
 pip install -e ".[mcp]"
-claude mcp add perfstudio -- python -m perfstudio.mcp
+claude mcp add perfstudio -- uvx --from "perfstudio[mcp]" perfstudio-mcp
 ```
 
-Forty-four tools, every hole addressed the way people talk about perfboard (`A1`, `C7`,
+Fifty-one tools, every hole addressed the way people talk about perfboard (`A1`, `C7`,
 `AC12`) and never as raw coordinates. See [docs/MCP.md](https://github.com/medinstech/perfstudio/blob/main/docs/MCP.md) for the tool list,
 the JSON config other clients want, and the rest of the setup.
 
@@ -220,7 +220,7 @@ src/perfstudio/ui/         Qt application: 2D editor, VTK 3D view, 1:1 PDF expor
                            and headless.py, the no-display run CI checks the output with
 src/perfstudio/mcp/        the MCP server (docs/MCP.md)
 examples/                  a netlist to import
-tests/                     2009 tests; the engine is mypy --strict clean
+tests/                     ~2070 tests; the engine is mypy --strict clean
 packages/                  the original TypeScript engine, kept as the reference the
                            Python port is proved against
 ```

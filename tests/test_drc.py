@@ -259,7 +259,17 @@ def _violation_to_jsonable(v: DrcViolation) -> dict[str, Any]:
 #: silently disagree. The divergence is deliberate, recorded, and pinned by
 #: test_the_python_only_crossing_rule_fires_where_typescript_was_blind below -- never merely
 #: filtered away.
-PYTHON_ONLY_RULES = frozenset({"conductor-crossing", "jumper-under-body"})
+#:
+#: ``conductor-off-board`` and ``unknown-footprint`` join them for the same reason and are
+#: pinned the same way, below. Neither has a TypeScript counterpart, so no .expected.json
+#: records anything for either -- and ``unknown-footprint`` demonstrably FIRES on a
+#: fixture: ``dense`` carries X11 on a footprint id nothing can resolve, which every rule
+#: that needs footprint data has always skipped in silence. That is exactly the finding the
+#: rule exists to make, and exactly why it cannot be compared against a dump that predates
+#: it.
+PYTHON_ONLY_RULES = frozenset(
+    {"conductor-crossing", "jumper-under-body", "conductor-off-board", "unknown-footprint"}
+)
 
 
 def _finding_id(rule: str, holes: object, component_ids: object) -> tuple[str, tuple[str, ...]]:
@@ -742,7 +752,7 @@ def test_current_capacity_flags_inadequate_cross_section() -> None:
     violations = by_rule(run_drc(doc, _FOOTPRINT_LOOKUP), "current-capacity")
     assert len(violations) == 1
     assert violations[0].severity == "warning"
-    assert "mOhm" in violations[0].message
+    assert "mΩ" in violations[0].message
     assert "mV" in violations[0].message
 
 
@@ -774,7 +784,7 @@ def test_current_capacity_wired_spine_reduces_reported_resistance() -> None:
     import re
 
     def extract_m_ohm(msg: str) -> float:
-        m = re.search(r"~([\d.]+) mOhm", msg)
+        m = re.search(r"~([\d.]+) mΩ", msg)
         assert m is not None
         return float(m.group(1))
 
@@ -1117,6 +1127,126 @@ def test_jumper_under_body_agrees_with_the_router_that_refuses_to_lay_one() -> N
     occupancy = build_occupancy(doc, _FOOTPRINT_LOOKUP)
 
     assert occupancy.body_covers(found[0].holes[0]) == "cmp-1"
+
+
+# ---------------------------------------------------------------------------
+# Rules with no TypeScript counterpart at all -- see PYTHON_ONLY_RULES.
+# ---------------------------------------------------------------------------
+
+
+def test_a_conductor_running_off_the_board_is_an_error_naming_where_it_leaves() -> None:
+    """The conductor twin of `component-off-board`, and the same severity for the same
+    reason: copper that is not on the board cannot be soldered, so this is not a matter
+    of taste.
+
+    A command refuses to lay one, so the only way to get here is a hand-edited file --
+    which loads with a warning rather than being refused at the door, exactly as an
+    invalid orthogonal chain does. The message has to say WHERE, because that is the one
+    thing the person editing the file has to correct.
+    """
+    on_board = bare_wire("c-ok", (hole(1, 1), hole(4, 1)))
+    leaving = bare_wire("c-out", (hole(38, 1), hole(41, 1)))  # 40 columns: 41 is outside
+    doc = make_doc(conductors=(on_board, leaving))
+
+    violations = by_rule(run_drc(doc, _FOOTPRINT_LOOKUP), "conductor-off-board")
+    assert len(violations) == 1
+    only = violations[0]
+    assert only.severity == "error"
+    assert only.conductor_ids == ("c-out",)
+    # The hole reported is the one that is outside, not the whole path.
+    assert only.holes == (hole(41, 1),)
+    assert "AM2" in only.message  # column 41 (1-indexed AM), row 2
+    assert "partly" in only.message
+
+    # ...and one entirely outside says so, rather than reporting the same thing twice.
+    gone = make_doc(conductors=(bare_wire("c-gone", (hole(45, 1), hole(48, 1))),))
+    whole = by_rule(run_drc(gone, _FOOTPRINT_LOOKUP), "conductor-off-board")
+    assert len(whole) == 1
+    assert "entirely" in whole[0].message
+
+
+def test_a_footprint_nothing_can_resolve_is_reported_once_rather_than_skipped_everywhere(
+) -> None:
+    """The finding that existed nowhere because everything handled it politely.
+
+    Every rule that needs footprint data does ``if footprint is None: continue`` -- and so
+    do connectivity, occupancy, the router and the guide. Each is right on its own, and
+    together they add up to a part that is in the file, on the board, and invisible to
+    every check there is. ``dense`` has carried one the whole time.
+    """
+    good = make_component("c1", "R1", "r-axial-4", hole(2, 2))
+    bad = make_component("c2", "X9", "not-a-real-footprint", hole(10, 2))
+    doc = make_doc(components=(good, bad))
+
+    violations = by_rule(run_drc(doc, _FOOTPRINT_LOOKUP), "unknown-footprint")
+    assert len(violations) == 1
+    only = violations[0]
+    assert only.severity == "error"
+    assert only.component_ids == ("c2",)
+    assert only.holes == (hole(10, 2),)
+    # The reference and the id, because the id is what has to be corrected.
+    assert "X9" in only.message
+    assert '"not-a-real-footprint"' in only.message
+
+    # And it is silent on a board where every footprint resolves -- including a
+    # GENERATED one, which is not in the registry and must not be reported as missing.
+    generated = make_component("c3", "U9", "box-4x2-p1-r3-15x10x8", hole(20, 20))
+    fine = make_doc(components=(good, generated))
+    assert by_rule(run_drc(fine, _FOOTPRINT_LOOKUP), "unknown-footprint") == []
+
+
+def test_the_unknown_footprint_rule_names_the_fixture_parts_nothing_could_ever_draw() -> None:
+    """Why this rule is in PYTHON_ONLY_RULES rather than in the .expected.json files --
+    and what it found the moment it existed.
+
+    Eight of the fifteen fixtures carry a part on ``c-disc-1``, which is not a footprint
+    in EITHER engine: the Python registry has ``c-disc-p2`` and ``c-disc-p3``, the
+    TypeScript one had the same two, and the generated-id grammar cannot build it. So
+    those parts have never been drawn, routed, connected, checked or built, in either
+    implementation, and no dump from the original records a word about any of them --
+    which is precisely why the rule cannot be compared against those dumps, and why
+    excluding it keeps this a deliberate improvement rather than a hand-edited fixture.
+    """
+    fired: dict[str, tuple[str, ...]] = {}
+    for case_name in GOLDEN_CASE_NAMES:
+        doc, _expected = _load_golden(case_name)
+        refs = tuple(
+            sorted(
+                component.ref
+                for v in run_drc(doc, _FOOTPRINT_LOOKUP)
+                if v.rule == "unknown-footprint"
+                for component in doc.components
+                if component.id in v.component_ids
+            )
+        )
+        if refs:
+            fired[case_name] = refs
+
+    assert fired == {
+        "dense": ("X11",),
+        "random-01": ("X2",),
+        "random-04": ("X6", "X7"),
+        "random-06": ("X7",),
+        "random-07": ("X6", "X7"),
+        "random-09": ("X3",),
+        "random-11": ("X1",),
+        "random-12": ("X4",),
+    }
+    # One id, everywhere: this is one bad value in the fixture generator, not eight.
+    assert {
+        component.footprint_id
+        for case_name in GOLDEN_CASE_NAMES
+        for component in _load_golden(case_name)[0].components
+        if _FOOTPRINT_LOOKUP(component.footprint_id) is None
+    } == {"c-disc-1"}
+    # Nothing in the fifteen has copper hanging off the edge, so the other new rule is
+    # silent on all of them -- which is what makes it safe to exclude from the comparison.
+    assert not [
+        v
+        for case_name in GOLDEN_CASE_NAMES
+        for v in run_drc(_load_golden(case_name)[0], _FOOTPRINT_LOOKUP)
+        if v.rule == "conductor-off-board"
+    ]
 
 
 # ---------------------------------------------------------------------------

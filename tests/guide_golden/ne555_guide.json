@@ -108,7 +108,7 @@
       "cut_mm": 29.360000000000003,
       "strip_mm": 5.0,
       "awg": 24,
-      "color": "black",
+      "colour": "black",
       "insulated": true
     },
     {
@@ -128,7 +128,7 @@
       "cut_mm": 29.678134680678316,
       "strip_mm": 0.0,
       "awg": 24,
-      "color": "black",
+      "colour": "black",
       "insulated": false
     },
     {
@@ -148,7 +148,7 @@
       "cut_mm": 40.145376578137714,
       "strip_mm": 5.0,
       "awg": 24,
-      "color": "black",
+      "colour": "black",
       "insulated": true
     },
     {
@@ -168,7 +168,7 @@
       "cut_mm": 19.36,
       "strip_mm": 0.0,
       "awg": 24,
-      "color": "red",
+      "colour": "red",
       "insulated": false
     },
     {
@@ -188,7 +188,7 @@
       "cut_mm": 50.156269361356635,
       "strip_mm": 0.0,
       "awg": 24,
-      "color": "red",
+      "colour": "red",
       "insulated": false
     },
     {
@@ -208,7 +208,7 @@
       "cut_mm": 17.232185256827684,
       "strip_mm": 0.0,
       "awg": 24,
-      "color": "blue",
+      "colour": "blue",
       "insulated": false
     },
     {
@@ -228,7 +228,7 @@
       "cut_mm": 57.63717471407075,
       "strip_mm": 5.0,
       "awg": 24,
-      "color": "blue",
+      "colour": "blue",
       "insulated": true
     },
     {
@@ -248,7 +248,7 @@
       "cut_mm": 39.67813468067831,
       "strip_mm": 5.0,
       "awg": 24,
-      "color": "white",
+      "colour": "white",
       "insulated": true
     },
     {
@@ -268,7 +268,7 @@
       "cut_mm": 24.010617812907064,
       "strip_mm": 0.0,
       "awg": 24,
-      "color": "orange",
+      "colour": "orange",
       "insulated": false
     },
     {
@@ -288,7 +288,7 @@
       "cut_mm": 42.61764292152394,
       "strip_mm": 5.0,
       "awg": 24,
-      "color": "yellow",
+      "colour": "yellow",
       "insulated": true
     }
   ],
@@ -554,14 +554,14 @@
               }
             ]
           ],
-          "span": "B3–E6, 8 pins with pin 1 at B3",
+          "span": "B3 → E6, 8 pins with pin 1 at B3",
           "bend_template_mm": null,
           "rotation": 0,
           "mirrored": false,
           "height_mm": 5,
           "polarity": "Pin 1 (the notched end, marked with a dot) in B3",
           "notes": [
-            "Fit a socket here if you have one. If you are soldering the IC directly, leave it until phase 8 -- it is the last thing that should meet an iron."
+            "Fit a socket here if you have one — this phase is the sockets. The IC itself does not go in until the closing checks in phase 8, socket or no socket: it is the last thing on the board that should meet an iron."
           ]
         }
       ],
@@ -614,7 +614,7 @@
           "rotation": 0,
           "mirrored": false,
           "height_mm": 7,
-          "polarity": "Positive (long) lead in W3; Negative lead — the side with the printed stripe in Y3",
+          "polarity": "Positive (long) lead in W3; Negative lead (the side with the printed stripe) in Y3",
           "notes": []
         },
         {
@@ -652,7 +652,7 @@
           "rotation": 0,
           "mirrored": false,
           "height_mm": 7,
-          "polarity": "Positive (long) lead in B11; Negative lead — the side with the printed stripe in D11",
+          "polarity": "Positive (long) lead in B11; Negative lead (the side with the printed stripe) in D11",
           "notes": []
         }
       ],
@@ -709,7 +709,7 @@
               }
             ]
           ],
-          "span": "W11–Z11, 4 pins with pin 1 at W11",
+          "span": "W11 → Z11, 4 pins with pin 1 at W11",
           "bend_template_mm": null,
           "rotation": 0,
           "mirrored": false,
@@ -767,7 +767,7 @@
             "cut_mm": 29.678134680678316,
             "strip_mm": 0.0,
             "awg": 24,
-            "color": "black",
+            "colour": "black",
             "insulated": false
           },
           "risks": [],
@@ -906,7 +906,8 @@
           "risks": [],
           "notes": [
             "Lay the 0.6 mm tinned copper along the pads first and solder it at each one. Work in one direction and do not go back over a section that has cooled.",
-            "Tin each pad lightly first, then join them. Flux is not optional on a run this long."
+            "Tin each pad lightly first, then join them.",
+            "Flux is not optional on a run this long."
           ]
         },
         {
@@ -951,7 +952,7 @@
             "cut_mm": 19.36,
             "strip_mm": 0.0,
             "awg": 24,
-            "color": "red",
+            "colour": "red",
             "insulated": false
           },
           "risks": [],
@@ -1001,7 +1002,7 @@
             "cut_mm": 50.156269361356635,
             "strip_mm": 0.0,
             "awg": 24,
-            "color": "red",
+            "colour": "red",
             "insulated": false
           },
           "risks": [],
@@ -1051,7 +1052,7 @@
             "cut_mm": 24.010617812907064,
             "strip_mm": 0.0,
             "awg": 24,
-            "color": "orange",
+            "colour": "orange",
             "insulated": false
           },
           "risks": [],
@@ -1098,7 +1099,8 @@
           "risks": [],
           "notes": [
             "Consider laying a lead offcut along these pads as a spine rather than building the run out of solder alone: it drops the resistance by roughly an order of magnitude and is far easier to make repeatable.",
-            "Tin each pad lightly first, then join them. Flux is not optional on a run this long."
+            "Tin each pad lightly first, then join them.",
+            "Flux is not optional on a run this long."
           ]
         },
         {
@@ -1140,7 +1142,8 @@
           "risks": [],
           "notes": [
             "Consider laying a lead offcut along these pads as a spine rather than building the run out of solder alone: it drops the resistance by roughly an order of magnitude and is far easier to make repeatable.",
-            "Tin each pad lightly first, then join them. Flux is not optional on a run this long."
+            "Tin each pad lightly first, then join them.",
+            "Flux is not optional on a run this long."
           ]
         },
         {
@@ -1182,7 +1185,8 @@
           "risks": [],
           "notes": [
             "Consider laying a lead offcut along these pads as a spine rather than building the run out of solder alone: it drops the resistance by roughly an order of magnitude and is far easier to make repeatable.",
-            "Tin each pad lightly first, then join them. Flux is not optional on a run this long."
+            "Tin each pad lightly first, then join them.",
+            "Flux is not optional on a run this long."
           ]
         },
         {
@@ -1227,7 +1231,7 @@
             "cut_mm": 17.232185256827684,
             "strip_mm": 0.0,
             "awg": 24,
-            "color": "blue",
+            "colour": "blue",
             "insulated": false
           },
           "risks": [],
@@ -1378,7 +1382,7 @@
             "cut_mm": 29.360000000000003,
             "strip_mm": 5.0,
             "awg": 24,
-            "color": "black",
+            "colour": "black",
             "insulated": true
           },
           "risks": [],
@@ -1426,7 +1430,7 @@
             "cut_mm": 40.145376578137714,
             "strip_mm": 5.0,
             "awg": 24,
-            "color": "black",
+            "colour": "black",
             "insulated": true
           },
           "risks": [],
@@ -1474,7 +1478,7 @@
             "cut_mm": 39.67813468067831,
             "strip_mm": 5.0,
             "awg": 24,
-            "color": "white",
+            "colour": "white",
             "insulated": true
           },
           "risks": [],
@@ -1522,7 +1526,7 @@
             "cut_mm": 42.61764292152394,
             "strip_mm": 5.0,
             "awg": 24,
-            "color": "yellow",
+            "colour": "yellow",
             "insulated": true
           },
           "risks": [],
@@ -1570,7 +1574,7 @@
             "cut_mm": 57.63717471407075,
             "strip_mm": 5.0,
             "awg": 24,
-            "color": "blue",
+            "colour": "blue",
             "insulated": true
           },
           "risks": [],
@@ -2156,7 +2160,7 @@
         {
           "kind": "polarity",
           "title": "Fit the ICs, pin 1 as shown",
-          "instruction": "Only now put U1 into their sockets, notch to the end the sheet marks. Straighten the legs on a flat surface first.",
+          "instruction": "Only now put U1 into its socket, or straight into the board if you did not fit one, notch to the end the sheet marks. Straighten the legs on a flat surface first.",
           "expected": "Every notch and dot pointing the same way as the sheet.",
           "holes": [],
           "pins": [],
