@@ -125,26 +125,25 @@ def test_the_two_board_families_differ_in_the_ways_that_matter() -> None:
     assert phenolic.material == "FR2"
 
 
-def test_the_two_families_are_marked_the_way_the_products_are() -> None:
-    """The legend IS one of the ways the families differ, and this went the other way once.
+def test_every_preset_prints_its_own_addresses() -> None:
+    """The legend is NOT one of the ways the families differ, and this has now been argued
+    from photographs twice -- in both directions.
 
-    It was set for both on the reasoning that printing is the cheapest marking a board can
-    carry — true, and not the same as saying every board has it. A photograph of the green
-    double-sided board settles it: the substrate between its pads is bare. The orange
-    pertinax board does carry an A..Z / 01..NN print, and keeps it here.
+    It was taken off the green double-sided board on the strength of a 400-pixel product
+    shot in which no printing could be made out. A photograph of the same product at a
+    usable size shows it plainly: the column letters run along the border under the bottom
+    row, beside the part number and "5X7CM". A thumbnail too small to resolve a print is
+    evidence that the print cannot be SEEN, not that the board has none.
 
-    A board with no legend is not left mute: ``legend_is_readable`` goes false and the
-    editor draws its own ruler outside the board instead. What must not happen is printing
-    addresses onto a board that has none — the 1:1 PDF gets taped to the real thing, and
-    Board Setup's own checkbox is there for anyone whose board does carry them.
+    Getting it wrong is not a cosmetic miss. With no legend the editor falls back to its
+    own ruler, which is drawn OUTSIDE the board in screen pixels; the addresses then
+    exist on the screen and not on the board in your hand, and they are missing from the
+    3D view and the 1:1 printout entirely.
     """
     for preset in STANDARD_PRESETS:
         board = board_from_preset(preset, DEFAULT_BOARD)
-        if preset.single_sided:
-            assert board.labels is not None, f"{preset.name} carries a legend"
-            assert board.labels.row_digits == 2, "these boards print 01, not 1"
-        else:
-            assert board.labels is None, f"{preset.name} ({preset.family}) has a bare border"
+        assert board.labels is not None, f"{preset.name} ({preset.family}) prints nothing"
+        assert board.labels.row_digits == 2, "these boards print 01, not 1"
 
 
 def test_a_preset_does_not_disturb_the_pitch_or_the_pad() -> None:
@@ -342,7 +341,7 @@ def test_a_green_board_arrives_with_its_finger_strips_and_corner_holes() -> None
     assert {c.edge for c in connectors} == set(preset_strip_edges(board))
     assert all(c.inset_mm > 0 for c in connectors), "the legend needs the strip outside them"
     assert len(holes) == 4
-    assert board.labels is None, "the green board's border is bare -- see the family test"
+    assert board.labels is not None
 
 
 def test_an_orange_phenolic_board_arrives_with_what_it_actually_has() -> None:

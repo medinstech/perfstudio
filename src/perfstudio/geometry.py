@@ -646,19 +646,20 @@ def board_from_preset(preset: BoardPreset, base: Board) -> Board:
         single_sided=preset.single_sided,
         border_x_mm=round(border_x, 4),
         border_y_mm=round(border_y, 4),
-        # THE TWO FAMILIES ARE MARKED DIFFERENTLY, and this is the one fact here that came
-        # off a photograph rather than out of a catalogue. The orange pertinax board
-        # carries an A..Z / 01..NN legend; the cheap green double-sided board does not --
-        # its substrate is bare between the pads, which is what somebody holding one
-        # against the screen pointed out. It was drawn with a legend on the reasoning that
-        # printing is the cheapest marking on a board, which is true and is not the same
-        # as saying every board has it.
+        # BOTH families print their addresses on the substrate, and this one has now been
+        # settled by photographs twice -- in both directions.
         #
-        # A board with no legend is not left mute: `legend_is_readable` goes false, so the
-        # editor draws its own ruler outside the board instead. That is the fallback, and
-        # it is the right one -- what it must not do is print addresses onto a board that
-        # does not have them, because the 1:1 PDF gets taped to the real thing.
-        labels=BoardLabels(row_digits=2) if preset.single_sided else None,
+        # It was taken off the green double-sided board on the strength of a 400-pixel
+        # product shot in which no printing could be made out. A photograph of the same
+        # product at a usable size shows the legend plainly: the column letters run along
+        # the border under the bottom row, beside the part number and "5X7CM". A washed-out
+        # thumbnail is evidence that a print cannot be SEEN, not that it is absent, and
+        # this line is the cost of confusing the two.
+        #
+        # Without it the editor falls back to its own ruler, drawn OUTSIDE the board in
+        # screen pixels; the addresses then exist on the screen and not on the board in
+        # your hand, and they are missing from the 3D view and the 1:1 printout entirely.
+        labels=BoardLabels(row_digits=2),
         # The oblong pads on these boards are the EDGE STRIP, never the whole grid --
         # every interior pad is round. They come from `preset_edge_connectors`, not from
         # a board-wide pad shape.

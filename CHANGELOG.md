@@ -35,12 +35,13 @@ closed without a bump.
     is what this application is for. The 2D render signatures were re-blessed after
     reading the diff: ink coverage identical to three decimals, every cell moved about ten
     levels — a colour change and not a geometry one, which is exactly what it should be.
-  - **The green board's border is bare.** The presets printed an A..Z / 01..NN legend on
-    both families, on the reasoning that printing is the cheapest marking a board can
-    carry — which is true and is not the same as saying every board has it. The orange
-    pertinax board keeps its legend; the green one has none, so the editor's own ruler
-    addresses it instead, which is the fallback that already existed. Board Setup's legend
-    checkbox is how anyone whose board does carry one turns it back on.
+  - The legend was taken off the green board in the same pass and **put straight back**:
+    the 400-pixel product shot resolved no printing, a photograph of the same product at a
+    usable size shows the column letters plainly along the border under the bottom row,
+    beside the part number and "5X7CM". A thumbnail too small to resolve a print is
+    evidence that the print cannot be SEEN, not that the board has none — which is now
+    written at `board_from_preset` and in the test, because the same mistake is available
+    to anyone reading the same photograph.
 - **The board in 3D has holes in it.** Which sounds like a statement of the obvious and
   was not true: the substrate was one solid cube and every hole on it was faked by laying
   a dark cylinder over the top. A dark disc on green reads as a mark printed on the board,
