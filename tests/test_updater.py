@@ -27,7 +27,7 @@ import sys
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
-from PySide6.QtCore import QCoreApplication, QElapsedTimer, QEventLoop
+from PySide6.QtCore import QCoreApplication, QElapsedTimer, QEvent, QEventLoop
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from perfstudio.commands import create_starter_document
@@ -396,14 +396,44 @@ def downloads(tmp_path, monkeypatch):
     return directory
 
 
-def run_download(release, downloads):
+def dispose(checker: updater.UpdateChecker) -> None:
+    """Destroy the checker HERE, rather than wherever the garbage collector gets to it.
+
+    A checker with no parent is a reference cycle and not a refcount: it holds its
+    QNetworkAccessManager, the manager holds the replies, and every reply holds a lambda
+    that captures the checker back. So the name going out of scope frees nothing, and the
+    cyclic collector frees it at whatever allocation happens to trip the threshold --
+    which on 3.13 was inside a LATER test's ``processEvents``, pulling a manager and its
+    replies out from under the event dispatcher that was walking them. A segmentation
+    fault on Linux CI, and nothing at all on the other two.
+
+    ``deleteLater`` plus an explicit drain does the same destruction at a point where no
+    event loop is running, which is the whole difference. ``cancel`` first because
+    ``pump`` can leave by raising: an aborted reply is one Qt finishes with, a live one is
+    one the manager takes down mid-transfer.
+    """
+    checker.cancel()
+    checker.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
+def start_download(release):
+    """A checker wired to record its own outcome, with the transfer already running."""
     checker = updater.UpdateChecker()
     outcome: list[tuple] = []
     checker.downloaded.connect(lambda path, verified: outcome.append(("ok", path, verified)))
     checker.downloadFailed.connect(lambda message: outcome.append(("failed", message)))
     checker.download(release, release.assets[0])
-    pump(lambda: bool(outcome))
-    return outcome[0]
+    return checker, outcome
+
+
+def run_download(release, downloads):
+    checker, outcome = start_download(release)
+    try:
+        pump(lambda: bool(outcome))
+        return outcome[0]
+    finally:
+        dispose(checker)
 
 
 def test_a_verified_download_lands_under_its_own_name(tmp_path, downloads) -> None:
@@ -424,6 +454,21 @@ def test_a_release_with_no_checksum_still_downloads_and_says_it_was_not_verified
     outcome = run_download(a_local_release(tmp_path, sums=None), downloads)
     assert outcome[0] == "ok" and outcome[2] is False
     assert (downloads / "PerfStudio_0.8.0_Setup.exe").read_bytes() == PAYLOAD
+
+
+def test_a_finished_transfer_leaves_no_checker_behind(tmp_path, downloads) -> None:
+    """The pin for `dispose`, and the only shape this failure has that a test can hold.
+
+    A checker collected at the collector's convenience took a whole CI run down with a
+    segmentation fault -- no failing test, no summary, nothing to read but the exit code.
+    So what is asserted is not the crash but the thing that cannot produce it: that the
+    C++ object is already gone by the time the test that made it returns.
+    """
+    checker, outcome = start_download(a_local_release(tmp_path, sums=None))
+    pump(lambda: bool(outcome))
+    dispose(checker)
+    with pytest.raises(RuntimeError):
+        checker.objectName()
 
 
 def test_a_download_that_fails_its_checksum_is_deleted(tmp_path, downloads) -> None:
