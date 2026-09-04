@@ -49,6 +49,7 @@ dependencies = [
 [project.urls]
 Homepage = "https://github.com/medinstech/perfstudio"
 Repository = "https://github.com/medinstech/perfstudio"
+Documentation = "https://github.com/medinstech/perfstudio#where-everything-else-is-written-down"
 Changelog = "https://github.com/medinstech/perfstudio/blob/main/CHANGELOG.md"
 Issues = "https://github.com/medinstech/perfstudio/issues"
 

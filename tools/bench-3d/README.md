@@ -1,5 +1,11 @@
 # bench-3d — M0 webview risk-reduction harness
 
+> **Historical. The architecture this measures was not taken.** PerfStudio ships as a
+> PySide6 (Qt 6) desktop application with a VTK viewport, not as Tauri and a webview, so
+> nothing below describes how the application is built today. It is kept because it is
+> the measurement the decision was made on, and it still runs. See `PLAN.md` §11 M0.
+
+
 PerfStudio ships as a Tauri v2 desktop app, which renders through the OS's
 own webview: WebView2 (Chromium) on Windows, WKWebView (WebKit) on macOS, and
 WebKitGTK on Linux. The open question this tool answers is whether

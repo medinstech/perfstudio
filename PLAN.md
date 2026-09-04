@@ -4,9 +4,15 @@
 > çizmeyi ve bundan **çok detaylı bir lehim rehberi** üretmeyi sağlayan açık kaynak
 > masaüstü uygulaması.
 >
-> **Durum:** planlama tamamlandı, geliştirme başlamadı
-> **Sahip:** medinstech · **Lisans:** Apache-2.0
-> **İsim:** geçici (bkz. §12)
+> **Durum:** uçtan uca çalışıyor ve yayında — **v0.10.0**, PyPI'da ve üç masaüstü
+> platformu için kurulum paketi olarak. Açık kalan iki şey var ve ikisi de kod değil:
+> M5'in dogfood testi (§11) ve kod imzalama (§12).
+> **Sahip:** medinstech · **Lisans:** Apache-2.0 · **İsim:** PerfStudio, §12'de karara bağlandı
+>
+> Bu belge **planın kendisidir** ve yazıldığı hâlde duruyor, ki neyin öngörüldüğü ile
+> neyin çıktığı yan yana okunabilsin — M0'ın Tauri/WebGL şeridi örneğin alınmadı,
+> uygulama PySide6 + VTK oldu. Gerçekleşen durum §11'in altındaki notlarda, §13'te ve
+> §14'te tutuluyor. Nasıl inşa edildiğinin anlatısı `CLAUDE.md`'de.
 
 ---
 
@@ -480,7 +486,7 @@ Git-diff'lenebilir. Uygulama dosyayı izler ve hot-reload eder →
 | **M3** Router + yerleştirme | 6 hf | A\*/Lee + rip-up&reroute, **lehim yolu primitifi + ray stratejisi**, SA yerleştirme, maliyet modeli ayarı, interaktif yeniden route | Property test: 100 rastgele netlist, autoroute sonrası %100 LVS geçiyor. Sürükleme < 100 ms. GND/V+ otomatik ray olarak çekiliyor |
 | **M4** 3D tam | 4 hf | Montaj animasyonu, patlatılmış görünüm, yükseklik/çarpışma DRC, headless render | Rehber adımları 3D'de oynatılabiliyor, adım görselleri otomatik üretiliyor |
 | **M5** Lehim rehberi | 4 hf | Sıralama motoru, adım kartları, tel kesim listesi, **doğrulama kontrol noktaları**, HTML+PDF+CSV | Gerçek bir devre bu rehberle sıfırdan lehimlenip çalıştırıldı (dogfood testi) |
-| **M6** MCP + CLI sertleştirme | 2 hf | ~25 tool (gerçekleşen: 50 — §13'e bak), iki taşıma, dosya izleme, snapshot/restore | Claude Code **ve** Antigravity'den uçtan uca bir kart tasarlanıp rehber üretiliyor |
+| **M6** MCP + CLI sertleştirme | 2 hf | ~25 tool (gerçekleşen: 51 — §13'e bak), iki taşıma, dosya izleme, snapshot/restore | Claude Code **ve** Antigravity'den uçtan uca bir kart tasarlanıp rehber üretiliyor |
 | **M7** Lansman | 3 hf | TR/EN i18n, dokümantasyon, örnek projeler, CI, paketleme, imzalama | GitHub'da yayında |
 
 **Takvim:** paralel şeritlerle ~**5-5.5 ay** part-time. Şeritler serileşirse ~7 ay.

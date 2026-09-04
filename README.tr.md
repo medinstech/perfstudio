@@ -1,23 +1,22 @@
-# PerfStudio
+![PerfStudio — delikli plaket üzerinde tıpkı bir PCB'de yaptığınız gibi devre tasarlayın, ve gerçekten uygulayabileceğiniz bir lehimleme rehberi alın](./docs/images/banner.png)
 
 [![CI](https://github.com/medinstech/perfstudio/actions/workflows/ci.yml/badge.svg)](https://github.com/medinstech/perfstudio/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/perfstudio.svg?color=blue)](https://pypi.org/project/perfstudio/)
 [![Lisans: Apache-2.0](https://img.shields.io/badge/lisans-Apache--2.0-blue.svg)](./LICENSE)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
 
 [English](./README.md) · **Türkçe**
-
-Delikli plaket (perfboard) üzerinde devre tasarlayın — tıpkı bir PCB'de yaptığınız gibi —
-ve gerçekten uygulayabileceğiniz bir lehimleme rehberi alın.
-
-![NE555 astable devresi yerleştirilmiş ve route edilmiş hâliyle 2D editör](./docs/images/editor-component-side.png)
 
 > **Durum: pre-alpha, ve uçtan uca çalışıyor.** Netlist giriyor, lehimleme rehberi
 > çıkıyor: 2D editör, 3D görünüm, yerleştirme optimizasyonu, otomatik router, DRC, LVS,
 > montaj rehberi, birebir (1:1) PDF çıktısı ve bir MCP sunucusu. Eksik olan tek şey
 > dogfood testi — henüz kimse üretilen bir rehberi takip ederek gerçek bir kart
 > lehimlemedi ve [PLAN.md](./PLAN.md) §11'e göre bu olmadan M5 kapanmıyor. Gerisi
-> çalışıyor: **v0.9.0** üç masaüstü platformunun her biri için bir kurulum paketi
+> çalışıyor: **v0.10.0** üç masaüstü platformunun her biri için bir kurulum paketi
 > yayınlıyor, hiçbiri kod imzalı değil.
+
+**[Kurulum](#çalıştırmak)** · [Örnek kartlar](#ya-da-hazır-bir-kart-açın) ·
+[Bir ajandan](#bir-ajandan) · [Belgeler](#geri-kalan-her-şeyin-yazılı-olduğu-yer)
 
 ---
 
@@ -26,6 +25,8 @@ ve gerçekten uygulayabileceğiniz bir lehimleme rehberi alın.
 Bir şema netlist'ini alır, delik-başına-pad plaket üzerine yerleştirir, bağlantıları
 router'a çözdürür, sonucun şemayla birebir örtüştüğünü kanıtlar ve ölçüm kontrol
 noktaları içeren adım adım bir montaj rehberi üretir.
+
+![NE555 astable devresi yerleştirilmiş ve route edilmiş hâliyle 2D editör](./docs/images/editor-component-side.png)
 
 **Mevcut araçlardan ayrıldığı üç nokta:**
 
@@ -123,28 +124,45 @@ oynatılarak üretiliyor — yani rehberin gerçekten vermediği bir sırayı g�
 
 ## Çalıştırmak
 
-**Python 3.12+** gerekir. Masaüstü uygulaması PySide6 (Qt 6) ve VTK viewport kullanır.
+Bu bir masaüstü uygulaması, yani onu edinmenin olağan yolu bir kurulum paketi kurmak.
+Python gerekmiyor.
+
+**[⬇ Son sürümü indirin](https://github.com/medinstech/perfstudio/releases/latest)**
+
+| | |
+|---|---|
+| **Windows** | `.exe` kurulum paketi |
+| **macOS** | `.dmg`, Apple silicon |
+| **Linux** | `.AppImage`, x86_64 |
+
+Üçü de kendilerini üreten etiket tarafından derlenip smoke-test ediliyor. **Hiçbiri kod
+imzalı değil**, o yüzden her biri ilk açılışta uyarı veriyor ve release notları uyarının
+nasıl geçileceğini yazıyor — Windows EV sertifikası yılda ~$300, Apple notarization $99,
+ve ikisi de henüz alınmadı. Bkz. [docs/RELEASING.md](./docs/RELEASING.md).
+
+Arayüz **İngilizce ve Türkçe** konuşur (`--lang tr`, ya da sistem diline göre otomatik).
+
+### PyPI'dan
+
+Paketi olmayan iki platform için — Intel Mac, ARM üzerinde Linux — ve imza uyarısını
+geçmek istemeyenler için. **Python 3.12+** gerekir:
 
 ```sh
-pip install perfstudio
+uv tool install perfstudio    # ya da: pipx install perfstudio
 
-perfstudio                   # boş bir kartla başlat
-perfstudio bir/kart.perf     # ...ya da bir doküman aç
+perfstudio                    # boş bir kartla başlat
+perfstudio bir/kart.perf      # ...ya da bir doküman aç
 perfstudio --version
 ```
 
-Qt ve VTK ilk seferde ~400 MB indirmenin çoğunu oluşturur; daha küçük bir sürüm yok, çünkü
-3D görünüm isteğe bağlı bir ek değil, uygulamanın dayandığı bir kontrol aracı. Klondan
-kurmak için `pip install -e .`.
+**Düz `pip install` değil, `uv tool` ya da `pipx`** — çünkü bu bir kütüphane değil,
+uygulama. İkisi de onu kendine ait bir ortama kurar ve `perfstudio`'yu PATH'e koyar;
+`pip install` ise ya 400 MB'lık Qt ve VTK'yı ortak bir `site-packages` içine yığar ya da
+Debian, Ubuntu ve Fedora'da sistem Python'ı tarafından doğrudan reddedilir (PEP 668).
+Klondan kurmak için bir virtualenv içinde `pip install -e .`.
 
-Ya da uygulama olarak kurun: **[releases sayfası](https://github.com/medinstech/perfstudio/releases)**
-Windows kurulum paketini, Linux AppImage'ını ve macOS disk imajını taşıyor; üçü de
-etiketin kendisi tarafından üretilip smoke-test ediliyor. **Hiçbiri kod imzalı değil**,
-o yüzden her biri ilk açılışta uyarı veriyor ve release notları uyarının nasıl geçileceğini
-yazıyor — Windows EV sertifikası yılda ~$300, Apple notarization $99. Kaynaktan
-çalıştırmak bu uyarıyı tamamen atlıyor. Bkz. [docs/RELEASING.md](./docs/RELEASING.md).
-
-Arayüz **İngilizce ve Türkçe** konuşur (`--lang tr`, ya da sistem diline göre otomatik).
+O 400 MB'ın çoğu Qt ve VTK. Daha küçük bir sürüm yok, çünkü 3D görünüm isteğe bağlı bir
+ek değil, uygulamanın dayandığı bir kontrol aracı.
 
 ### Sıfırdan bir kart
 
@@ -181,9 +199,12 @@ MCP sunucusu birebir aynı komut veri yolunu sürer, dolayısıyla geri alma her
 çalışır:
 
 ```sh
-pip install -e ".[mcp]"
 claude mcp add perfstudio -- uvx --from "perfstudio[mcp]" perfstudio-mcp
 ```
+
+Önceden bir şey kurmak gerekmiyor — `uvx` paketi kendi önbelleğine indiriyor. Klondan
+çalışırken `pip install -e ".[mcp]"` ve ardından
+`claude mcp add perfstudio -- perfstudio-mcp`.
 
 Elli bir tool, ve her delik insanların perfboard'dan bahsederken kullandığı adresle
 (`A1`, `C7`, `AC12`) — hiçbir yerde ham koordinat yok. Tool listesi, diğer istemcilerin
@@ -223,7 +244,7 @@ src/perfstudio/ui/         Qt uygulaması: 2D editör, VTK 3D görünüm, 1:1 PD
                            ve headless.py: CI'ın çıktısını denetlediği ekransız koşu
 src/perfstudio/mcp/        MCP sunucusu (docs/MCP.md)
 examples/                  içe aktarılacak bir netlist
-tests/                     ~2070 test; motor mypy --strict temiz
+tests/                     ~2080 test; motor mypy --strict temiz
 packages/                  Python portunun karşısında kanıtlandığı referans olarak
                            saklanan orijinal TypeScript motoru
 ```
@@ -260,6 +281,20 @@ Sırada, [PLAN.md](./PLAN.md) §11'in koyduğu sırayla:
 - **Kod imzalama.** Windows EV sertifikası ~$300/yıl, Apple notarization $99/yıl; o zamana
   kadar kurulum paketleri ilk açılışta uyarı veriyor ve release notları bunun nasıl
   aşılacağını yazıyor.
+
+## Geri kalan her şeyin yazılı olduğu yer
+
+| | |
+|---|---|
+| [docs/MCP.md](./docs/MCP.md) | 51 MCP tool'u, her birinin neden var olduğu gerekçesiyle gruplanmış hâlde, ve Claude Code, Claude Desktop, Cursor ile Antigravity için istemci ayarları (yalnızca İngilizce) |
+| [examples/README.md](./examples/README.md) | dört örnek kartın her birinin neyi göstermek için orada olduğu (yalnızca İngilizce) |
+| [CHANGELOG.md](./CHANGELOG.md) | her sürüm, ve yayınlanmamış bir yapının bir sonrakine doğru ne biriktirdiği (yalnızca İngilizce) |
+| [docs/RELEASING.md](./docs/RELEASING.md) | etiket ritüeli, ve `release.yml`'in ondan üç platformda ne ürettiği (yalnızca İngilizce) |
+| [docs/prior-art.md](./docs/prior-art.md) | bu alanda hâlihazırda var olan araçlar, ve bu projenin onlara karşı koruduğu lisans sınırı (yalnızca İngilizce) |
+| [CONTRIBUTING.md](./CONTRIBUTING.md) | test paketinin çalıştırılması, hangi kontrollerin kapı hangilerinin rapor olduğu (yalnızca İngilizce) |
+| [SECURITY.md](./SECURITY.md) · [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md) | güvenlik açığı bildirimi, ve burada insanlardan beklenen davranış (yalnızca İngilizce) |
+| [PLAN.md](./PLAN.md) | **Türkçe** yazılmış proje planı, yazıldığı hâlde duruyor: neyin öngörüldüğü neyin çıktığının yanında okunabilsin diye |
+| [CLAUDE.md](./CLAUDE.md) | kodun neden bu şekilde olduğu. Repoda çalışan ajanlar için yazıldı, ama bir şeyi değiştirmek üzere olan bir insan için buradaki en faydalı belge (yalnızca İngilizce) |
 
 ## Katkı
 

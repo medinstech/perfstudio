@@ -1,23 +1,22 @@
-# PerfStudio
+![PerfStudio — design circuits on perfboard the way you would on a PCB, then get a soldering guide you can actually build from](https://raw.githubusercontent.com/medinstech/perfstudio/main/docs/images/banner.png)
 
 [![CI](https://github.com/medinstech/perfstudio/actions/workflows/ci.yml/badge.svg)](https://github.com/medinstech/perfstudio/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/perfstudio.svg?color=blue)](https://pypi.org/project/perfstudio/)
 [![Licence: Apache-2.0](https://img.shields.io/badge/licence-Apache--2.0-blue.svg)](https://github.com/medinstech/perfstudio/blob/main/LICENSE)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
 
 **English** · [Türkçe](https://github.com/medinstech/perfstudio/blob/main/README.tr.md)
-
-Design circuits on perfboard the way you would on a PCB — then get a soldering guide
-you can actually build from.
-
-![The 2D editor with an NE555 astable placed and routed](https://raw.githubusercontent.com/medinstech/perfstudio/main/docs/images/editor-component-side.png)
 
 > **Status: pre-alpha, and end to end.** A netlist goes in and a soldering guide comes
 > out: 2D editor, 3D view, placement optimiser, autorouter, DRC, LVS, the build guide,
 > an exact 1:1 PDF export and an MCP server. What is missing is the dogfood test —
 > nobody has yet built a real board by following a generated guide, and
 > [PLAN.md](https://github.com/medinstech/perfstudio/blob/main/PLAN.md) §11 says M5 does not close until somebody has. Everything else
-> runs: **v0.9.0** ships an installer for each of the three desktop platforms, none of
+> runs: **v0.10.0** ships an installer for each of the three desktop platforms, none of
 > them code-signed.
+
+**[Install](#running-it)** · [Example boards](#or-open-one-that-is-already-built) ·
+[From an agent](#from-an-agent) · [Documentation](#where-everything-else-is-written-down)
 
 ---
 
@@ -26,6 +25,8 @@ you can actually build from.
 Take a schematic netlist, lay it out on pad-per-hole perfboard, let the router work out
 the connections, prove the result matches the schematic, and export a step-by-step build
 guide with measurement checkpoints.
+
+![The 2D editor with an NE555 astable placed and routed](https://raw.githubusercontent.com/medinstech/perfstudio/main/docs/images/editor-component-side.png)
 
 **Three things make it different from the tools that already exist:**
 
@@ -121,28 +122,45 @@ actually give you.
 
 ## Running it
 
-Requires **Python 3.12+**. The desktop app is PySide6 (Qt 6) with a VTK viewport.
+It is a desktop application, so the ordinary way to get it is to install one. No Python
+required.
+
+**[⬇ Download the latest release](https://github.com/medinstech/perfstudio/releases/latest)**
+
+| | |
+|---|---|
+| **Windows** | an `.exe` installer |
+| **macOS** | a `.dmg`, Apple silicon |
+| **Linux** | an `.AppImage`, x86_64 |
+
+Each is built and smoke-tested by the tag that produced it. **None
+of them is code-signed**, so each warns on first run and the release notes say how to get
+past it — a Windows EV certificate is ~$300/year and Apple notarization $99/year, and
+neither is bought yet. See [docs/RELEASING.md](https://github.com/medinstech/perfstudio/blob/main/docs/RELEASING.md).
+
+The interface speaks **English and Turkish** (`--lang tr`, or follow the system locale).
+
+### From PyPI
+
+For the two platforms with no build — an Intel Mac, Linux on ARM — and for anyone who
+would rather not click past a signing warning. Needs **Python 3.12+**:
 
 ```sh
-pip install perfstudio
+uv tool install perfstudio    # or: pipx install perfstudio
 
-perfstudio                   # launch on a blank board
-perfstudio some/board.perf   # ...or open a document
+perfstudio                    # launch on a blank board
+perfstudio some/board.perf    # ...or open a document
 perfstudio --version
 ```
 
-Qt and VTK are most of a 400 MB download the first time; there is no smaller build,
-because the 3D view is a checking tool the application depends on rather than an optional
-extra. From a clone, `pip install -e .` instead.
+**`uv tool` or `pipx`, not a bare `pip install`**, because this is an application and not
+a library. Both put it in an environment of its own and `perfstudio` on your PATH, where
+`pip install` would either put 400 MB of Qt and VTK into a shared `site-packages` or, on
+Debian, Ubuntu and Fedora, be refused outright by the system Python (PEP 668). From a
+clone, `pip install -e .` inside a virtualenv.
 
-Or install it as an application: **[the releases page](https://github.com/medinstech/perfstudio/releases)**
-carries a Windows installer, a Linux AppImage and a macOS disk image, each built and
-smoke-tested by the tag itself. **None of them is code-signed**, so each warns on first
-run and the release notes say how to get past it — a Windows EV certificate is ~$300/year
-and Apple notarization $99/year. Running from source avoids the warning entirely. See
-[docs/RELEASING.md](https://github.com/medinstech/perfstudio/blob/main/docs/RELEASING.md).
-
-The interface speaks **English and Turkish** (`--lang tr`, or follow the system locale).
+Qt and VTK are most of that 400 MB. There is no smaller build, because the 3D view is a
+checking tool the application depends on rather than an optional extra.
 
 ### A board from nothing
 
@@ -179,9 +197,11 @@ All four route to completion, match their schematics under LVS and carry no DRC 
 The MCP server drives the identical command bus, so undo works across both:
 
 ```sh
-pip install -e ".[mcp]"
 claude mcp add perfstudio -- uvx --from "perfstudio[mcp]" perfstudio-mcp
 ```
+
+Nothing has to be installed first — `uvx` fetches the package into its own cache. From a
+clone it is `pip install -e ".[mcp]"` and then `claude mcp add perfstudio -- perfstudio-mcp`.
 
 Fifty-one tools, every hole addressed the way people talk about perfboard (`A1`, `C7`,
 `AC12`) and never as raw coordinates. See [docs/MCP.md](https://github.com/medinstech/perfstudio/blob/main/docs/MCP.md) for the tool list,
@@ -220,7 +240,7 @@ src/perfstudio/ui/         Qt application: 2D editor, VTK 3D view, 1:1 PDF expor
                            and headless.py, the no-display run CI checks the output with
 src/perfstudio/mcp/        the MCP server (docs/MCP.md)
 examples/                  a netlist to import
-tests/                     ~2070 tests; the engine is mypy --strict clean
+tests/                     ~2080 tests; the engine is mypy --strict clean
 packages/                  the original TypeScript engine, kept as the reference the
                            Python port is proved against
 ```
@@ -256,6 +276,20 @@ Next, in the order [PLAN.md](https://github.com/medinstech/perfstudio/blob/main/
 - **Code signing.** A Windows EV certificate is ~$300/year and Apple notarization
   $99/year, so until then the installers warn on first run and the release notes say how
   to get past it.
+
+## Where everything else is written down
+
+| | |
+|---|---|
+| [docs/MCP.md](https://github.com/medinstech/perfstudio/blob/main/docs/MCP.md) | the 51 MCP tools, grouped with the reason each one exists, and the client config for Claude Code, Claude Desktop, Cursor and Antigravity |
+| [examples/README.md](https://github.com/medinstech/perfstudio/blob/main/examples/README.md) | what each of the four example boards is there to demonstrate |
+| [CHANGELOG.md](https://github.com/medinstech/perfstudio/blob/main/CHANGELOG.md) | every release, and what an unreleased build is accumulating towards the next one |
+| [docs/RELEASING.md](https://github.com/medinstech/perfstudio/blob/main/docs/RELEASING.md) | the tag ritual, and what `release.yml` builds out of it on three platforms |
+| [docs/prior-art.md](https://github.com/medinstech/perfstudio/blob/main/docs/prior-art.md) | the tools that already exist in this space, and the licence boundary this project keeps from them |
+| [CONTRIBUTING.md](https://github.com/medinstech/perfstudio/blob/main/CONTRIBUTING.md) | running the suite, which checks are gates and which are reports |
+| [SECURITY.md](https://github.com/medinstech/perfstudio/blob/main/SECURITY.md) · [CODE_OF_CONDUCT.md](https://github.com/medinstech/perfstudio/blob/main/CODE_OF_CONDUCT.md) | reporting a vulnerability, and how people are expected to behave here |
+| [PLAN.md](https://github.com/medinstech/perfstudio/blob/main/PLAN.md) | the original project plan, **written in Turkish** and kept as written, so what was predicted can be read beside what came out |
+| [CLAUDE.md](https://github.com/medinstech/perfstudio/blob/main/CLAUDE.md) | why the code is shaped the way it is. Written for agents working in the repository, and the most useful thing here for a person about to change something |
 
 ## Contributing
 

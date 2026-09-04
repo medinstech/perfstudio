@@ -12,3 +12,33 @@
 *.step binary
 *.wrl binary
 *.pdf binary
+
+# GitHub's language bar should describe what somebody installs, and what somebody
+# installs is Python. Three things in this repository are not that, and between them
+# they were reading as 14% of it:
+#
+#   packages/      the retired TypeScript engine, kept only because the Python port's
+#                  acceptance criterion is byte-identical output against it
+#   prototypes/    the Qt spike ui/ came out of
+#   tools/bench-3d the M0 WebGL harness for the Tauri architecture that was not taken
+#
+# linguist-vendored, not linguist-generated: these stay fully visible in a diff. Only
+# the statistics change.
+packages/** linguist-vendored
+prototypes/** linguist-vendored
+tools/bench-3d/** linguist-vendored
+
+# The pnpm workspace at the root belongs to packages/, not to the application.
+package.json linguist-vendored
+pnpm-lock.yaml linguist-vendored
+pnpm-workspace.yaml linguist-vendored
+tsconfig.json linguist-vendored
+tsconfig.base.json linguist-vendored
+vitest.config.ts linguist-vendored
+
+# Golden fixtures are output, not source. Not marked linguist-generated either: the
+# guide and schematic goldens exist so that re-blessing one shows a READABLE diff, and
+# linguist-generated is the attribute that collapses it.
+tests/guide_golden/** linguist-vendored
+tests/schematic_golden/** linguist-vendored
+tools/diffcheck/golden/** linguist-vendored

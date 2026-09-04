@@ -157,6 +157,45 @@ closed without a bump.
   footprint and the 3D solid from the same `BodySpec`, so a mesh would be a third
   description of a part free to disagree with both.
 
+- **The repository page describes the project, and says where everything is.** Three
+  things had drifted apart from what is actually here.
+  - **GitHub's language bar read 14% TypeScript, HTML, NSIS and JavaScript.** All of it
+    came from things nobody installs: `packages/` (the retired reference engine),
+    `prototypes/` (the Qt spike `ui/` came out of), `tools/bench-3d` (the M0 WebGL
+    harness for the Tauri architecture that was not taken) and the golden fixtures. They
+    are `linguist-vendored` in `.gitattributes` now — **not** `linguist-generated`, which
+    would collapse them in a diff, and a readable golden diff is the point of the
+    goldens. Only the statistics change.
+  - **Both READMEs now say where the rest of the documentation is.** They linked
+    `PLAN.md` four times without mentioning it is written in Turkish, and never linked
+    the changelog, the security policy or the code of conduct at all. One table names all
+    nine, with what each is for; a nav line under the status callout links to the install
+    commands, which were 110 lines down the page.
+  - **`prototypes/` and `tools/bench-3d` say what they are.** A visitor clicking into
+    either found a working application built on an architecture this project does not
+    use, with nothing to say it was a spike.
+- **The READMEs open with a banner, and both cards come out of one design.**
+  `tools/make_banners.py` draws `docs/images/banner.png` (1280x400, the page header) and
+  `docs/images/social-preview.png` (1280x640, what GitHub shows wherever the repository
+  is linked, which was the generic auto-generated card) from `ui/theme.py`'s colours and
+  the editor screenshot — so neither can become a picture of an older version of either.
+  One design in two crops, because the header somebody scrolls past and the card somebody
+  sees in a feed are the same object. The banner carries the wordmark and the tagline, so
+  the `# PerfStudio` heading and the sentence under it are gone from both files and the
+  editor screenshot moves down to `What it does`, where the prose has just said what the
+  picture is of. The preview is committed even though GitHub will not take it from a
+  commit: there is no API to set one, and "which image is up there?" should still be
+  answerable from the tree.
+- **The installers come first, and `pip install` is no longer the headline.** It is a
+  desktop application and the three platform builds — none of which had been downloaded
+  once — were a paragraph below a `pip install perfstudio` that does not work for most of
+  the people this is for: an Intel Mac's system Python is 3.9, and Debian, Ubuntu and
+  Fedora refuse a system-wide `pip install` outright under PEP 668. The releases table
+  is the first thing under **Running it** now, and PyPI is a subsection under it, spelled
+  `uv tool install` / `pipx install` — an application in an environment of its own, which
+  is the shape of thing this is. It is still the right answer for the two platforms with
+  no build, an Intel Mac and Linux on ARM, and that is what the section says it is for.
+
 ### Fixed
 
 - **Every lead now goes down its hole and out the other side.** A part in the 3D view
@@ -191,6 +230,17 @@ closed without a bump.
   their own `references` imply. `tools/bench-3d` is deliberately not among them: it is
   `composite: false` and `noEmit`, which a solution build cannot reference. Verified by
   regenerating every fixture and finding the tree unchanged.
+- **The MCP recipe in both READMEs was two unrelated halves.** `pip install -e ".[mcp]"`
+  installs a clone in editable mode; `uvx --from "perfstudio[mcp]"` fetches from PyPI and
+  ignores it entirely. Printed as consecutive lines of one block they read as a two-step
+  setup where either alone is the whole thing — which is what `docs/MCP.md` says, and now
+  what the READMEs say too.
+- **Three stale numbers.** Both READMEs announced **v0.9.0** as the current release with
+  v0.10.0 on PyPI and the releases page, and counted "~2070 tests" against 2084.
+  `PLAN.md`'s front matter still read "planlama tamamlandı, geliştirme başlamadı" and
+  called the name temporary, and its §11 put the MCP tool count at 50 where §13 and
+  `docs/MCP.md` say 51 — `test_mcp.py` reads §13's capitalised spelling, so §11's escaped
+  the check written for exactly this.
 
 ## [0.10.0] - 2026-09-02
 
