@@ -1,45 +1,84 @@
-![PerfStudio — design circuits on perfboard the way you would on a PCB, then get a soldering guide you can actually build from](https://raw.githubusercontent.com/medinstech/perfstudio/main/docs/images/banner.png)
+<p align="center">
+  <a href="https://medinstech.com">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/medinstech/perfstudio/main/docs/images/wordmark-white.png">
+      <img alt="Medinstech" src="https://raw.githubusercontent.com/medinstech/perfstudio/main/docs/images/wordmark-blue.png" height="96">
+    </picture>
+  </a>
+</p>
 
-[![CI](https://github.com/medinstech/perfstudio/actions/workflows/ci.yml/badge.svg)](https://github.com/medinstech/perfstudio/actions/workflows/ci.yml)
-[![PyPI](https://img.shields.io/pypi/v/perfstudio.svg?color=blue)](https://pypi.org/project/perfstudio/)
-[![Licence: Apache-2.0](https://img.shields.io/badge/licence-Apache--2.0-blue.svg)](https://github.com/medinstech/perfstudio/blob/main/LICENSE)
-[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
+<h1 align="center">PerfStudio</h1>
 
-**English** · [Türkçe](https://github.com/medinstech/perfstudio/blob/main/README.tr.md)
+<p align="center"><b>Perfboard circuit design and soldering guides</b></p>
 
-> **Status: pre-alpha, and end to end.** A netlist goes in and a soldering guide comes
-> out: 2D editor, 3D view, placement optimiser, autorouter, DRC, LVS, the build guide,
-> an exact 1:1 PDF export and an MCP server. What is missing is the dogfood test —
-> nobody has yet built a real board by following a generated guide, and
-> [PLAN.md](https://github.com/medinstech/perfstudio/blob/main/PLAN.md) §11 says M5 does not close until somebody has. Everything else
-> runs: **v0.10.0** ships an installer for each of the three desktop platforms, none of
-> them code-signed.
+<p align="center">
+  A desktop app that takes a schematic netlist, lays it out on pad-per-hole<br>
+  perfboard, lets the router work out the connections, proves the board matches<br>
+  the schematic, and writes a step-by-step build guide with measurement<br>
+  checkpoints.
+</p>
 
-**[Install](#running-it)** · [Example boards](#or-open-one-that-is-already-built) ·
-[From an agent](#from-an-agent) · [Documentation](#where-everything-else-is-written-down)
+<p align="center">
+  <a href="https://github.com/medinstech/perfstudio/actions/workflows/ci.yml"><img alt="tests" src="https://img.shields.io/github/actions/workflow/status/medinstech/perfstudio/ci.yml?branch=main&style=flat-square&label=tests"></a>
+  <a href="https://github.com/medinstech/perfstudio/releases/latest"><img alt="latest release" src="https://img.shields.io/github/v/release/medinstech/perfstudio?style=flat-square&color=0d00ff&label=release"></a>
+  <a href="https://github.com/medinstech/perfstudio/blob/main/pyproject.toml"><img alt="Python 3.12+" src="https://img.shields.io/badge/python-3.12%2B-0d00ff?style=flat-square"></a>
+  <a href="https://github.com/medinstech/perfstudio/blob/main/LICENSE"><img alt="Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-0d00ff?style=flat-square"></a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/medinstech/perfstudio/releases/latest"><b>Download</b></a>
+  &nbsp;·&nbsp; <a href="#running-it"><b>uv tool install perfstudio</b></a>
+  &nbsp;·&nbsp; <a href="https://github.com/medinstech/perfstudio/blob/main/docs/MCP.md">MCP server</a>
+  &nbsp;·&nbsp; <a href="#or-open-one-that-is-already-built">Example boards</a>
+  &nbsp;·&nbsp; <a href="https://github.com/medinstech/perfstudio/blob/main/CHANGELOG.md">Changelog</a>
+  &nbsp;·&nbsp; <a href="https://github.com/medinstech/perfstudio/blob/main/README.tr.md">Türkçe</a>
+</p>
+
+![the 2D editor, with an NE555 astable placed and routed](https://raw.githubusercontent.com/medinstech/perfstudio/main/docs/images/editor-component-side.png)
+
+<p align="center">
+  The status bar is the whole claim: fourteen connections across seven nets,<br>
+  three of which needed a wire, DRC clean and LVS agreeing with the schematic.
+</p>
 
 ---
 
-## What it does
+- **A soldering guide with verification steps.** Not just "solder R1 here", but
+  *"block 2 complete → U1 pin 4 to C3(−) must show continuity"* and *"before
+  power-on: GND to V+ must read above 10 kΩ"*. Derived from the netlist, so it is
+  exact rather than generic advice.
+- **Perfboard LVS.** The board's real connectivity is extracted and compared
+  against the schematic. Opens, shorts and floating conductors are reported
+  before you pick up the iron.
+- **Six kinds of connection, not one.** A lead bend, a solder trace, a wired
+  solder trace, bare wire, insulated wire and a top jumper have different costs,
+  limits and failure modes, and the router prices all six — which is what makes
+  a layout that is pleasant to actually solder.
+- **Three rules only the third dimension can see.** A part too tall for the case,
+  a jumper trapped under a body that gets soldered down on top of it, and a
+  heat-sensitive part sitting too close to a hot one. The 3D view is a checking
+  tool, not a picture.
+- **The sheet is derived, never stored.** No symbol positions live in the file,
+  so there is no second copy of the circuit to keep in step with the netlist and
+  nothing to lay out by hand.
+- **Agent-native.** An MCP server, a headless CLI and a git-diffable project
+  file, all driving the same command bus as the GUI — so undo works across a
+  session where a human and a model both edit the board.
 
-Take a schematic netlist, lay it out on pad-per-hole perfboard, let the router work out
-the connections, prove the result matches the schematic, and export a step-by-step build
-guide with measurement checkpoints.
+> **Status: pre-alpha, and end to end.** A netlist goes in and a soldering guide
+> comes out. What is missing is the dogfood test — nobody has yet built a real
+> board by following a generated guide, and [PLAN.md](https://github.com/medinstech/perfstudio/blob/main/PLAN.md) §11
+> says M5 does not close until somebody has. Everything else runs: **v0.10.0**
+> ships an installer for each of the three desktop platforms, none code-signed.
 
-![The 2D editor with an NE555 astable placed and routed](https://raw.githubusercontent.com/medinstech/perfstudio/main/docs/images/editor-component-side.png)
-
-**Three things make it different from the tools that already exist:**
-
-1. **A soldering guide with verification steps.** Not just "solder R1 here", but
-   *"block 2 complete → U1 pin 4 to C3(−) must show continuity"* and
-   *"before power-on: GND to V+ must read above 10 kΩ"*. Derived from the netlist, so it
-   is exact rather than generic advice.
-2. **Perfboard LVS.** The board's real connectivity is extracted and compared against the
-   schematic. Opens, shorts and floating conductors are reported before you pick up the
-   iron.
-3. **Agent-native.** An MCP server, a headless CLI and a git-diffable project file, all
-   driving the same command bus as the GUI — so undo works across a session where a human
-   and a model both edit the board.
+**Jump to** — [Running it](#running-it) ·
+[Connections](#connections-are-not-all-the-same-thing) ·
+[Both faces](#both-faces-and-the-third-dimension) ·
+[The schematic](#draw-the-circuit-first) ·
+[The guide](#the-guide-has-an-order-and-you-can-watch-it) ·
+[From an agent](#from-an-agent) · [How it is built](#how-it-is-built) ·
+[Documentation](#where-everything-else-is-written-down) ·
+[Contributing](#contributing)
 
 ## Connections are not all the same thing
 

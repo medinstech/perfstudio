@@ -1,30 +1,28 @@
-"""Draw the two cards that carry the product's face, from one design.
+"""Draw the card GitHub shows wherever the repository is linked.
 
-    python tools/make_banners.py
+    python tools/make_social_preview.py
 
-Writes both into `docs/images/`:
-
-  `banner.png` (1280x400)          the README's header, on GitHub and on PyPI
-  `social-preview.png` (1280x640)  what GitHub shows wherever the repository is linked,
-                                   at the 2:1 ratio Slack, Discord and X crop towards
+Writes `docs/images/social-preview.png` at 1280x640, which is the size GitHub asks for
+and the 2:1 ratio Slack, Discord, X and every other unfurl crop towards.
 
 WHY THIS IS A SCRIPT. The same argument `tools/make_assets.py` makes for the application
-icon. Both cards take their colours from `ui/theme.py` and their picture from
-`docs/images/`, so a card drawn once by hand starts becoming a picture of an older
-version of the product the first time either changes. And they are ONE design in two
-crops rather than two designs: the header somebody scrolls past and the card somebody
-sees in a feed are the same object, and drawing them separately is how they stop being.
+icon. The card takes its colours from `ui/theme.py` and its picture from `docs/images/`,
+so a card drawn once by hand starts becoming a picture of an older version of the product
+the first time either changes.
 
-GITHUB WILL NOT TAKE THE PREVIEW FROM A COMMIT. The social preview is repository
-metadata, not a file in the tree: there is no REST API for it, so the image is committed
-here and set by hand at Settings -> General -> Social preview. The file being in the
-repository is what makes "which image is up there?" answerable at all. `banner.png` is
-different -- the README references it like any other image.
+GITHUB WILL NOT TAKE IT FROM A COMMIT. The social preview is repository metadata, not a
+file in the tree: there is no REST API for it, so the image is committed here and set by
+hand at Settings -> General -> Social preview. The file being in the repository is what
+makes "which image is up there?" answerable at all.
 
-WHAT IS ON THEM. The name, the sentence the README opens with, and the routed NE555
-bleeding off the right edge. Cropped to the circuit rather than scaled down from the
-whole window, because both cards are rendered small and a whole editor screenshot at
-that size is grey mush. Somebody should be able to see parts and copper on them.
+The README does NOT use this card. Its header is the Medinstech wordmark and a centred
+title, which is the house style `cycloidgen` already had; this is only what a link to the
+repository unfurls into.
+
+WHAT IS ON IT. The name, the sentence the README opens with, one line naming the four
+things this does that the alternatives do not, and the routed NE555 bleeding off the
+right edge. Cropped to the circuit rather than scaled down from the whole window, because
+the card is rendered small and a whole editor screenshot at that size is grey mush.
 """
 
 from __future__ import annotations
@@ -49,12 +47,9 @@ TAGLINE = (
     "then get a soldering guide you can actually build from."
 )
 
-# The screenshot's own coordinates. Each card names its own box, held inside the board's
-# edges on all four sides so the crop bleeds off the card rather than showing the
-# editor's background as a border, and shaped like the panel it fills so the board is
-# never squashed. The short banner takes a band through the circuit at 1:1 rather than
-# the whole board scaled down -- at 520 px the parts have to stay legible.
-BANNER_CROP = (690, 260, 1210, 660)
+# The screenshot's own coordinates: held inside the board's edges on all four sides so
+# the crop bleeds off the card rather than showing the editor's background as a border,
+# and shaped like the panel it fills so the board is never squashed.
 PREVIEW_CROP = (660, 170, 1243, 735)
 
 # Regular, semibold and a mono, in the order each platform is likely to have them.
@@ -158,22 +153,13 @@ def _card(
 
 
 def main() -> None:
-    out = REPO_ROOT / "docs/images"
-    cards = {
-        # The README header: wide and short, so it does not push the first paragraph off
-        # the screen. GitHub renders it at about 830 px across.
-        "banner.png": _card(
-            1280, 400, 520, crop=BANNER_CROP, fade_w=150, margin=64,
-            name_size=68, name_y=104, tagline_size=25, tagline_y=252, footer=False,
-        ),
-        "social-preview.png": _card(
-            1280, 640, 660, crop=PREVIEW_CROP, fade_w=210, margin=78,
-            name_size=84, name_y=150, tagline_size=31, tagline_y=306, footer=True,
-        ),
-    }
-    for name, card in cards.items():
-        card.save(out / name, optimize=True)
-        print(f"wrote docs/images/{name} ({card.width}x{card.height})")
+    card = _card(
+        1280, 640, 660, crop=PREVIEW_CROP, fade_w=210, margin=78,
+        name_size=84, name_y=150, tagline_size=31, tagline_y=306, footer=True,
+    )
+    out = REPO_ROOT / "docs/images/social-preview.png"
+    card.save(out, optimize=True)
+    print(f"wrote {out.relative_to(REPO_ROOT)} ({card.width}x{card.height})")
 
 
 if __name__ == "__main__":

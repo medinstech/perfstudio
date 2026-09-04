@@ -174,18 +174,27 @@ closed without a bump.
   - **`prototypes/` and `tools/bench-3d` say what they are.** A visitor clicking into
     either found a working application built on an architecture this project does not
     use, with nothing to say it was a spike.
-- **The READMEs open with a banner, and both cards come out of one design.**
-  `tools/make_banners.py` draws `docs/images/banner.png` (1280x400, the page header) and
-  `docs/images/social-preview.png` (1280x640, what GitHub shows wherever the repository
-  is linked, which was the generic auto-generated card) from `ui/theme.py`'s colours and
-  the editor screenshot — so neither can become a picture of an older version of either.
-  One design in two crops, because the header somebody scrolls past and the card somebody
-  sees in a feed are the same object. The banner carries the wordmark and the tagline, so
-  the `# PerfStudio` heading and the sentence under it are gone from both files and the
-  editor screenshot moves down to `What it does`, where the prose has just said what the
-  picture is of. The preview is committed even though GitHub will not take it from a
-  commit: there is no API to set one, and "which image is up there?" should still be
-  answerable from the tree.
+- **Both READMEs open the way `cycloidgen`'s does, because they came from one hand.**
+  The other Medinstech desktop application had already settled a house style and this one
+  had never been held next to it: the Medinstech wordmark linking to the site, with a
+  light and a dark variant behind a `<picture>`; a centred title, one-line positioning
+  and a centred description; four `flat-square` shields in the brand's `#0d00ff`, two of
+  them live (the workflow's status, the latest release) rather than hand-written text
+  that goes stale; a centred row of jumps with the two that matter in bold; then the
+  screenshot and a caption saying what to look at in it. The old `## What it does` is
+  gone — its paragraph IS the centred description now and its three numbered points are
+  six bullets, which is the shape the other page states its case in.
+  - A **`Jump to`** line under them, and in the Turkish file one heading needed an
+    explicit ASCII anchor: GitHub lowercases `İ` to `i` plus a COMBINING DOT ABOVE, so
+    the automatic anchor for `İki yüz` holds a character nobody can see and nobody would
+    type correctly.
+- **The card GitHub unfurls a link into is the product.** It was the generic
+  auto-generated one. `tools/make_social_preview.py` draws
+  `docs/images/social-preview.png` from `ui/theme.py`'s colours and the editor
+  screenshot, so it cannot become a picture of an older version of either. It is
+  committed even though GitHub will not take it from a commit — there is no API to set a
+  social preview — because "which image is up there?" should still be answerable from the
+  tree.
 - **The installers come first, and `pip install` is no longer the headline.** It is a
   desktop application and the three platform builds — none of which had been downloaded
   once — were a paragraph below a `pip install perfstudio` that does not work for most of

@@ -1,45 +1,82 @@
-![PerfStudio — delikli plaket üzerinde tıpkı bir PCB'de yaptığınız gibi devre tasarlayın, ve gerçekten uygulayabileceğiniz bir lehimleme rehberi alın](./docs/images/banner.png)
+<p align="center">
+  <a href="https://medinstech.com">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/medinstech/perfstudio/main/docs/images/wordmark-white.png">
+      <img alt="Medinstech" src="https://raw.githubusercontent.com/medinstech/perfstudio/main/docs/images/wordmark-blue.png" height="96">
+    </picture>
+  </a>
+</p>
 
-[![CI](https://github.com/medinstech/perfstudio/actions/workflows/ci.yml/badge.svg)](https://github.com/medinstech/perfstudio/actions/workflows/ci.yml)
-[![PyPI](https://img.shields.io/pypi/v/perfstudio.svg?color=blue)](https://pypi.org/project/perfstudio/)
-[![Lisans: Apache-2.0](https://img.shields.io/badge/lisans-Apache--2.0-blue.svg)](./LICENSE)
-[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
+<h1 align="center">PerfStudio</h1>
 
-[English](./README.md) · **Türkçe**
+<p align="center"><b>Delikli plaket üzerinde devre tasarımı ve lehimleme rehberi</b></p>
 
-> **Durum: pre-alpha, ve uçtan uca çalışıyor.** Netlist giriyor, lehimleme rehberi
-> çıkıyor: 2D editör, 3D görünüm, yerleştirme optimizasyonu, otomatik router, DRC, LVS,
-> montaj rehberi, birebir (1:1) PDF çıktısı ve bir MCP sunucusu. Eksik olan tek şey
-> dogfood testi — henüz kimse üretilen bir rehberi takip ederek gerçek bir kart
-> lehimlemedi ve [PLAN.md](./PLAN.md) §11'e göre bu olmadan M5 kapanmıyor. Gerisi
-> çalışıyor: **v0.10.0** üç masaüstü platformunun her biri için bir kurulum paketi
-> yayınlıyor, hiçbiri kod imzalı değil.
+<p align="center">
+  Bir şema netlist'ini alan, onu delik-başına-pad plaket üzerine yerleştiren,<br>
+  bağlantıları router'a çözdüren, sonucun şemayla birebir örtüştüğünü kanıtlayan<br>
+  ve ölçüm kontrol noktaları içeren adım adım bir montaj rehberi yazan bir<br>
+  masaüstü uygulaması.
+</p>
 
-**[Kurulum](#çalıştırmak)** · [Örnek kartlar](#ya-da-hazır-bir-kart-açın) ·
-[Bir ajandan](#bir-ajandan) · [Belgeler](#geri-kalan-her-şeyin-yazılı-olduğu-yer)
+<p align="center">
+  <a href="https://github.com/medinstech/perfstudio/actions/workflows/ci.yml"><img alt="testler" src="https://img.shields.io/github/actions/workflow/status/medinstech/perfstudio/ci.yml?branch=main&style=flat-square&label=tests"></a>
+  <a href="https://github.com/medinstech/perfstudio/releases/latest"><img alt="son sürüm" src="https://img.shields.io/github/v/release/medinstech/perfstudio?style=flat-square&color=0d00ff&label=release"></a>
+  <a href="./pyproject.toml"><img alt="Python 3.12+" src="https://img.shields.io/badge/python-3.12%2B-0d00ff?style=flat-square"></a>
+  <a href="./LICENSE"><img alt="Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-0d00ff?style=flat-square"></a>
+</p>
 
----
-
-## Ne yapar
-
-Bir şema netlist'ini alır, delik-başına-pad plaket üzerine yerleştirir, bağlantıları
-router'a çözdürür, sonucun şemayla birebir örtüştüğünü kanıtlar ve ölçüm kontrol
-noktaları içeren adım adım bir montaj rehberi üretir.
+<p align="center">
+  <a href="https://github.com/medinstech/perfstudio/releases/latest"><b>İndir</b></a>
+  &nbsp;·&nbsp; <a href="#çalıştırmak"><b>uv tool install perfstudio</b></a>
+  &nbsp;·&nbsp; <a href="./docs/MCP.md">MCP sunucusu</a>
+  &nbsp;·&nbsp; <a href="#ya-da-hazır-bir-kart-açın">Örnek kartlar</a>
+  &nbsp;·&nbsp; <a href="./CHANGELOG.md">Changelog</a>
+  &nbsp;·&nbsp; <a href="./README.md">English</a>
+</p>
 
 ![NE555 astable devresi yerleştirilmiş ve route edilmiş hâliyle 2D editör](./docs/images/editor-component-side.png)
 
-**Mevcut araçlardan ayrıldığı üç nokta:**
+<p align="center">
+  İddianın tamamı durum çubuğunda: yedi net üzerinde on dört bağlantı, üçü tel<br>
+  gerektirmiş, DRC temiz ve LVS şemayla aynı fikirde.
+</p>
 
-1. **Doğrulama adımları olan bir lehimleme rehberi.** Sadece "R1'i buraya lehimle" değil;
-   *"blok 2 bitti → U1 pin 4 ile C3(−) arasında süreklilik olmalı"* ve *"güç vermeden
-   önce: GND ile V+ arası 10 kΩ üzerinde okumalı"*. Netlist'ten türetildiği için genel
-   tavsiye değil, o karta özel.
-2. **Perfboard için LVS.** Kartın gerçek bağlantısallığı çıkarılır ve şemayla
-   karşılaştırılır. Açık devreler, kısa devreler ve boşta kalan iletkenler havyayı elinize
-   almadan önce raporlanır.
-3. **Ajan-dostu.** MCP sunucusu, headless CLI ve git ile diff alınabilen proje dosyası;
-   hepsi GUI ile aynı komut veri yolunu (command bus) kullanır — yani bir insanın ve bir
-   modelin aynı oturumda birlikte çalıştığı bir kartta geri alma (undo) çalışır.
+---
+
+- **Doğrulama adımları olan bir lehimleme rehberi.** Sadece "R1'i buraya lehimle"
+  değil; *"blok 2 bitti → U1 pin 4 ile C3(−) arasında süreklilik olmalı"* ve *"güç
+  vermeden önce: GND ile V+ arası 10 kΩ üzerinde okumalı"*. Netlist'ten
+  türetildiği için genel tavsiye değil, o karta özel.
+- **Perfboard için LVS.** Kartın gerçek bağlantısallığı çıkarılır ve şemayla
+  karşılaştırılır. Açık devreler, kısa devreler ve boşta kalan iletkenler havyayı
+  elinize almadan önce raporlanır.
+- **Tek tip değil, altı tip bağlantı.** Bacak bükme, lehim yolu, telli lehim yolu,
+  çıplak tel, izoleli tel ve üstten jumper — altısının da maliyeti, sınırı ve
+  bozulma biçimi farklı, ve router altısını da fiyatlandırıyor. Gerçekten
+  lehimlenmesi keyifli bir yerleşimi çıkaran şey bu.
+- **Yalnızca üçüncü boyutun görebildiği üç kural.** Kutuya sığmayan bir parça,
+  üstüne parça lehimlenecek bir jumper, ve sıcak bir parçanın fazla yakınında
+  duran ısıya duyarlı bir parça. 3D görünüm bir resim değil, kontrol aracı.
+- **Şema sayfası türetilir, saklanmaz.** Dosyada hiçbir sembol konumu durmaz;
+  yani netlist ile eşzamanlı tutulacak ikinci bir devre kopyası ve elle
+  düzenlenecek bir yerleşim yok.
+- **Ajan-dostu.** MCP sunucusu, headless CLI ve git ile diff alınabilen proje
+  dosyası; hepsi GUI ile aynı komut veri yolunu kullanır — yani bir insanın ve
+  bir modelin aynı oturumda birlikte çalıştığı bir kartta geri alma çalışır.
+
+> **Durum: pre-alpha, ve uçtan uca çalışıyor.** Netlist giriyor, lehimleme
+> rehberi çıkıyor. Eksik olan tek şey dogfood testi — henüz kimse üretilen bir
+> rehberi takip ederek gerçek bir kart lehimlemedi ve [PLAN.md](./PLAN.md) §11'e
+> göre bu olmadan M5 kapanmıyor. Gerisi çalışıyor: **v0.10.0** üç masaüstü
+> platformunun her biri için bir kurulum paketi yayınlıyor, hiçbiri kod imzalı
+> değil.
+
+**Şuraya atla** — [Çalıştırmak](#çalıştırmak) ·
+[Bağlantılar](#her-bağlantı-aynı-şey-değildir) · [İki yüz](#iki-yuz) ·
+[Şema](#önce-devreyi-çizin) ·
+[Rehber](#rehberin-bir-sırası-var-ve-onu-izleyebilirsiniz) ·
+[Bir ajandan](#bir-ajandan) · [Nasıl kurulmuş](#nasıl-kurulmuş) ·
+[Belgeler](#geri-kalan-her-şeyin-yazılı-olduğu-yer) · [Katkı](#katkı)
 
 ## Her bağlantı aynı şey değildir
 
@@ -61,6 +98,8 @@ Komşu pad'e olan 0,6 mm'lik boşluk, lehim yollarını hem bu kadar kullanışl
 kadar kolay yanlış yapılır kılan şeydir. PerfStudio bu riski router'ın maliyet
 fonksiyonuna işler ve işaretlenen her noktayı montaj rehberinde bir ölçüm adımına
 dönüştürür.
+
+<a id="iki-yuz"></a>
 
 ## İki yüz, ve üçüncü boyut
 
