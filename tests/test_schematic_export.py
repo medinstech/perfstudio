@@ -343,7 +343,10 @@ def test_the_svg_is_the_svg_that_was_blessed(stem: str) -> None:
 
     if os.environ.get("PERFSTUDIO_BLESS_SCHEMATIC"):
         EXPECTED_DIR.mkdir(exist_ok=True)
-        expected_path.write_text(produced, encoding="utf-8")
+        # An explicit LF, the way `test_guide_golden` already writes its own. The
+        # repository is LF everywhere, and a bless run on Windows would otherwise put
+        # CRLF into a file every other platform leaves alone.
+        expected_path.write_text(produced, encoding="utf-8", newline="\n")
         pytest.skip(f"blessed {expected_path.name}")
 
     assert expected_path.exists(), (

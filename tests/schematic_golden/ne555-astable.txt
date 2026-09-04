@@ -84,8 +84,8 @@ label [pin/right] 44.45,66.04 8
 label [pin/right] 44.45,71.12 7
 label [pin/right] 44.45,76.20 6
 label [pin/right] 44.45,81.28 5
-label [net/left] 12.70,53.34 OUT
-label [net/left] 88.90,53.34 LED_A
-label [net/left] 17.78,91.44 THRESH
-label [net/left] 53.34,109.22 DISCH
-label [net/left] 58.42,88.90 CTRL
+label [net/left] 13.46,52.45 OUT
+label [net/left] 89.66,52.45 LED_A
+label [net/left] 18.54,90.55 THRESH
+label [net/left] 56.64,108.33 DISCH
+label [net/left] 59.18,88.01 CTRL

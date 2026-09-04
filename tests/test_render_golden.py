@@ -167,8 +167,13 @@ def test_the_board_still_renders_the_way_it_did(name: str, side: str) -> None:
     if os.environ.get("PERFSTUDIO_BLESS_RENDER"):
         stored = _load_signatures()
         stored[key] = signature
+        # An explicit LF, the way `test_guide_golden` already writes its own. The
+        # repository is LF everywhere, and a bless run on Windows would otherwise put
+        # CRLF into a file every other platform leaves alone.
         SIGNATURES.write_text(
-            json.dumps(dict(sorted(stored.items())), indent=2) + "\n", encoding="utf-8"
+            json.dumps(dict(sorted(stored.items())), indent=2) + "\n",
+            encoding="utf-8",
+            newline="\n",
         )
         pytest.skip(f"blessed {key}")
 

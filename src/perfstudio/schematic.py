@@ -57,9 +57,10 @@ Coordinates grow right and down, matching the rest of the application.
 
 from __future__ import annotations
 
+import itertools
 import math
 from collections import defaultdict, deque
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from typing import Literal, TypeAlias
 
@@ -114,6 +115,34 @@ LEAD_MM: Mm = 2 * GRID_MM
 
 #: Pin-to-pin spacing down the side of a multi-pin body.
 PIN_PITCH_MM: Mm = 2 * GRID_MM
+
+#: The height a net name is drawn at, in millimetres of sheet, and the average advance of
+#: one character as a fraction of it.
+#:
+#: ONE FACT, TWO CONSUMERS again. The LAYOUT has to know how much room a net name takes in
+#: order to keep a wire out of it, and only a renderer knows the real size -- so the
+#: exported sheet takes its size from here (``SheetInk.net_mm``) rather than naming its
+#: own, and the panel, which draws text at a fixed PIXEL size on purpose, treats this as
+#: the nominal it was always laid out against. The advance is an average over a
+#: sans-serif's alphabet; it only has to be close, because the search below steps in half
+#: grid squares and a net name is six characters.
+NET_LABEL_MM: Mm = 1.3
+NET_LABEL_ADVANCE: float = 0.55
+
+#: How far a net name sits clear of the run it names, and how far past a branch it starts.
+#:
+#: The sheet used to place a net label AT its trunk, left-anchored: the baseline WAS the
+#: wire's y and the x WAS the leftmost branch, so the line ran through every descender and
+#: the branch ran up through the first letter. All 41 net labels across the fixtures in
+#: this repository landed on a wire, which is 100% of them.
+#:
+#: ``NET_LABEL_CLEARANCE_MM + NET_LABEL_MM`` MUST STAY UNDER ``TRACK_PITCH_MM``, for the
+#: reason ``RAIL_GLYPH_MM`` must: a label that reached into the neighbouring lane would be
+#: sitting on a run the track allocator believed it had separated, and no amount of
+#: searching along the trunk can move it out of a band that is too tall to fit.
+#: ``test_a_net_label_cannot_reach_the_neighbouring_track`` is the measurement.
+NET_LABEL_CLEARANCE_MM: Mm = 0.35 * GRID_MM
+NET_LABEL_INSET_MM: Mm = 0.3 * GRID_MM
 
 
 # ---------------------------------------------------------------------------
@@ -1116,6 +1145,64 @@ def _tidy(points: Sequence[Point2]) -> tuple[Point2, ...]:
     return tuple(cleaned)
 
 
+def _segments_of(path: tuple[Point2, ...]) -> Iterator[tuple[Point2, Point2]]:
+    yield from itertools.pairwise(path)
+
+
+def _label_box(text: str, x: Mm, baseline: Mm) -> tuple[Mm, Mm, Mm, Mm]:
+    """The rectangle a net name occupies, given where its baseline goes.
+
+    ``Label.at`` IS the baseline for a net name -- both renderers already read it that way
+    -- so the clearance above the wire is baked into the point rather than applied twice,
+    once here and once by whoever draws it.
+    """
+    width = len(text) * NET_LABEL_MM * NET_LABEL_ADVANCE
+    return x, baseline - NET_LABEL_MM, x + width, baseline
+
+
+def _box_is_clear(
+    box: tuple[Mm, Mm, Mm, Mm], obstacles: Sequence[tuple[Point2, Point2]]
+) -> bool:
+    x0, y0, x1, y1 = box
+    for start, end in obstacles:
+        if max(start.x, end.x) < x0 or min(start.x, end.x) > x1:
+            continue
+        if max(start.y, end.y) < y0 or min(start.y, end.y) > y1:
+            continue
+        return False
+    return True
+
+
+def _net_label_at(
+    text: str, span: tuple[Mm, Mm], wire_y: Mm, obstacles: Sequence[tuple[Point2, Point2]]
+) -> Point2:
+    """Where along its own run a net name can sit without a wire through it.
+
+    A net name belongs at the left-hand end of the run it names, so that is the first
+    thing tried and, on the fixtures here, where 29 of 41 of them stay. The rest slide
+    RIGHT ALONG THE SAME RUN in half-grid steps until the band above the wire is clear --
+    never to another wire, never off the run, so the name is still unambiguously attached
+    to the thing it names. Failing that it goes back to the left end: a label that has to
+    overlap something should overlap where a reader looks for it.
+
+    Deterministic by construction. The candidates are generated left to right and the
+    first clear one wins, so the same document gives the same sheet -- which is what the
+    golden dumps need and what stops the sheet rearranging itself between runs.
+    """
+    left, right = span
+    baseline = wire_y - NET_LABEL_CLEARANCE_MM
+    start = left + NET_LABEL_INSET_MM
+    width = len(text) * NET_LABEL_MM * NET_LABEL_ADVANCE
+    step = GRID_MM / 2
+    x = start
+    while True:
+        if _box_is_clear(_label_box(text, x, baseline), obstacles):
+            return Point2(x=x, y=baseline)
+        x += step
+        if x + width > right:
+            return Point2(x=start, y=baseline)
+
+
 def build_schematic(
     doc: PerfDocument,
     lookup: FootprintLookup,
@@ -1317,6 +1404,9 @@ def build_schematic(
     rails: list[Rail] = []
     junctions: list[Junction] = []
     net_labels: list[Label] = []
+    # (name, the run's x span, the run's y). Placing a net name needs every OTHER run on
+    # the sheet to already exist, and half of them are emitted after this one.
+    pending_labels: list[tuple[str, tuple[Mm, Mm], Mm]] = []
 
     for item in resolved:
         net = item.net
@@ -1348,8 +1438,8 @@ def build_schematic(
                         net_id=net.id, net_name=net.name, net_class=net.net_class, path=path
                     )
                 )
-            net_labels.append(
-                Label(text=net.name, at=Point2(x=x, y=anchor.y), kind="net", anchor="left")
+            pending_labels.append(
+                (net.name, (min(anchor.x, x), max(anchor.x, x)), anchor.y)
             )
             continue
 
@@ -1378,9 +1468,17 @@ def build_schematic(
         for x in branch_x:
             if left < x < right:
                 junctions.append(Junction(net_id=net.id, at=Point2(x=x, y=y)))
-        net_labels.append(
-            Label(text=net.name, at=Point2(x=left, y=y), kind="net", anchor="left")
-        )
+        pending_labels.append((net.name, (left, right), y))
+
+    obstacles: list[tuple[Point2, Point2]] = []
+    for wire in wires:
+        obstacles.extend(_segments_of(wire.path))
+    for rail in rails:
+        obstacles.extend(_segments_of(rail.path))
+        obstacles.extend(rail_glyph_bars(rail))
+    for name, span, y in pending_labels:
+        at = _net_label_at(name, span, y, obstacles)
+        net_labels.append(Label(text=name, at=at, kind="net", anchor="left"))
 
     ordered = sorted(symbols.values(), key=lambda placed: _ref_sort_key(placed.ref))
     part_labels: list[Label] = []

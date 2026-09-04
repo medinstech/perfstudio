@@ -251,6 +251,41 @@ closed without a bump.
   `docs/MCP.md` say 51 — `test_mcp.py` reads §13's capitalised spelling, so §11's escaped
   the check written for exactly this.
 
+- **A net name is no longer drawn on the wire it names.** `Label.at` for a net was the
+  trunk's y and the trunk's left end, so the baseline WAS the wire: the line ran through
+  every descender and the branch dropping into that end ran up through the first letter.
+  Measured across every board in the repository, **41 of 41 net names were drawn on a
+  wire** — VIN, VOUT and ADJ on the LM317 sheet, OUT, THRESH, DISCH and CTRL on the NE555
+  one. References, values and pin numbers were already clear; this was the whole defect
+  and it was in every sheet the tool has ever produced.
+  - The name now sits in a band above the run, and it is the BAND that carries the
+    guarantee rather than any search: `NET_LABEL_CLEARANCE_MM + NET_LABEL_MM` is shorter
+    than `TRACK_PITCH_MM`, so it cannot reach the lane above, and its own trunk is below
+    it. No horizontal run can be in it — which is the reading that matters, since text and
+    a horizontal wire lie ALONG each other rather than crossing, and a line drawn through
+    a word is the one overlap that makes it unreadable. Same shape of rule as
+    `RAIL_GLYPH_MM`'s, and cheap for the same reason.
+  - What is left is vertical branches, and `_net_label_at` searches for those: it starts
+    at the left-hand end of the run, where a reader looks for the name, and only slides
+    RIGHT ALONG THE SAME RUN in half grid squares when the band there is occupied — never
+    to another wire, never off the run. Twenty-nine of the 41 do not move at all. Three
+    end up crossed by another net, and two by a branch of the net they name, which is not
+    ambiguous about anything and is left alone.
+  - **The size is one fact with two consumers.** The layout has to know how much room a
+    name takes in order to keep a wire out of it, and only a renderer knows the real size,
+    so `SheetInk.net_mm` reads `schematic.NET_LABEL_MM` rather than naming its own — a
+    sheet that drew the name at some other size would be filling a gap that was measured
+    for a different piece of text. The panel draws text at a fixed PIXEL size on purpose
+    and treats this as the nominal it was always laid out against.
+  - The two schematic goldens were re-blessed after reading the diff, and the diff is the
+    argument: every net name moved up 0.89 mm and right 0.76 mm, two of them further along
+    their own trunk, and **not one symbol, wire, rail or junction moved at all.**
+- **A bless run on Windows no longer writes CRLF into the goldens.** `test_guide_golden`
+  passed `newline="\n"` and the other three golden writers did not, so re-blessing a
+  schematic, an exported sheet or a render signature from this platform rewrote the line
+  endings of a file every other platform leaves alone. `.gitattributes` normalises it away
+  at commit, which is exactly why it went unnoticed.
+
 ## [0.10.0] - 2026-09-02
 
 A polish release: nothing new to learn, and a long list of things that were almost right.

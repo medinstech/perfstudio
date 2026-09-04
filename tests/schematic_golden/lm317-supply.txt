@@ -100,7 +100,7 @@ label [value/centre] 30.48,122.94 LM317
 label [pin/left] 26.67,106.68 1
 label [pin/left] 26.67,111.76 2
 label [pin/left] 26.67,116.84 3
-label [net/left] 12.70,93.98 VIN
-label [net/left] 17.78,124.46 VOUT
-label [net/left] 15.24,175.26 ADJ
-label [net/left] 81.28,76.20 LED_A
+label [net/left] 13.46,93.09 VIN
+label [net/left] 18.54,123.57 VOUT
+label [net/left] 16.00,174.37 ADJ
+label [net/left] 85.85,75.31 LED_A

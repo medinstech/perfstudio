@@ -45,6 +45,7 @@ from html import escape
 from .model import Mm, Point2
 from .schematic import (
     MARGIN_MM,
+    NET_LABEL_MM,
     Label,
     Rail,
     SchematicDrawing,
@@ -90,7 +91,11 @@ class SheetInk:
 
     ref_mm: Mm = 1.7
     value_mm: Mm = 1.4
-    net_mm: Mm = 1.3
+    #: NOT a number of its own. `schematic.py` reserves a box of exactly this height above
+    #: each run so that no wire is drawn through the net's name, and a sheet that then drew
+    #: the name at some other size would be filling a gap that was measured for a different
+    #: piece of text.
+    net_mm: Mm = NET_LABEL_MM
     pin_mm: Mm = 1.0
     title_mm: Mm = 3.2
     note_mm: Mm = 1.6

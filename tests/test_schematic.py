@@ -35,7 +35,7 @@ from typing import get_args
 
 import pytest
 
-from perfstudio import persist
+from perfstudio import persist, schematic_export
 from perfstudio.footprints import footprint_lookup, standard_footprints
 from perfstudio.model import (
     Board,
@@ -55,9 +55,13 @@ from perfstudio.model import (
 from perfstudio.schematic import (
     _KIND_BY_ARCHETYPE,
     _SYMBOL_BUILDERS,
+    NET_LABEL_ADVANCE,
+    NET_LABEL_CLEARANCE_MM,
+    NET_LABEL_MM,
     RAIL_GLYPH_DEPTH_MM,
     RAIL_GLYPH_MM,
     TRACK_PITCH_MM,
+    Label,
     SchematicDrawing,
     SchematicOptions,
     Symbol,
@@ -150,6 +154,114 @@ def test_no_two_symbols_share_space(path: Path) -> None:
                 a[0] < b[2] - 1e-9 and b[0] < a[2] - 1e-9 and a[1] < b[3] - 1e-9 and b[1] < a[3] - 1e-9
             )
             assert not overlapping, f"{a[4]} and {b[4]} overlap"
+
+
+def net_label_box(label: Label) -> tuple[float, float, float, float]:
+    """The rectangle a net name occupies. ``Label.at`` IS its baseline, and it sits above.
+
+    The same arithmetic ``schematic._label_box`` uses, written out again rather than
+    imported: a test that asks the code under test where it put something can only ever
+    agree with it.
+    """
+    width = len(label.text) * NET_LABEL_MM * NET_LABEL_ADVANCE
+    return label.at.x, label.at.y - NET_LABEL_MM, label.at.x + width, label.at.y
+
+
+def box_meets_segment(
+    box: tuple[float, float, float, float], start: Point2, end: Point2
+) -> bool:
+    x0, y0, x1, y1 = box
+    if max(start.x, end.x) < x0 or min(start.x, end.x) > x1:
+        return False
+    return not (max(start.y, end.y) < y0 or min(start.y, end.y) > y1)
+
+
+@pytest.mark.parametrize("path", ALL_BOARDS, ids=lambda path: path.stem)
+def test_a_net_name_is_never_drawn_along_a_horizontal_run(path: Path) -> None:
+    """THE property, and it holds by construction rather than by search.
+
+    A net name used to be placed AT its own trunk -- ``Label.at`` was the wire's y and the
+    wire's left end -- so the line ran through every descender and the branch dropping into
+    that end ran up through the first letter. All 41 net names across the boards in this
+    repository were drawn on a wire.
+
+    The name now sits in a band above the run, and the band is what cannot overlap. It is
+    shorter than ``TRACK_PITCH_MM``, so it cannot reach the lane above; its own trunk is
+    below it by ``NET_LABEL_CLEARANCE_MM``. Between them those two facts mean NO horizontal
+    run can be in it -- which is the reading that matters, because text and a horizontal
+    wire lie along each other rather than crossing, and a line along a word is the one
+    overlap that makes it unreadable. What is left is vertical branches, and the search in
+    ``_net_label_at`` is about those.
+    """
+    drawing = drawing_for(path)
+    for label in drawing.labels:
+        if label.kind != "net":
+            continue
+        box = net_label_box(label)
+        for start, end, what in segments(drawing):
+            if abs(start.y - end.y) > 1e-9:
+                continue
+            assert not box_meets_segment(box, start, end), (
+                f"{path.stem}: the name {label.text} is drawn along {what}"
+            )
+
+
+def test_a_net_name_is_almost_never_crossed_by_another_net() -> None:
+    """Sliding along the trunk clears the vertical branches too, and the number is the point.
+
+    ``_net_label_at`` starts at the left-hand end of the run -- where a reader looks for the
+    name -- and only moves right, in half grid squares, if the band there is occupied.
+    Across every board in the repository that takes 41 of 41 names off a wire down to
+    three, and 29 of them do not move at all.
+
+    Counted against OTHER nets only. A name crossed by a branch of the net it names is not
+    ambiguous about anything: it is the same wire, and the reader loses nothing. Two of the
+    41 are that, and chasing them would move names away from the end a reader looks at.
+
+    A bound rather than zero, deliberately. The remaining three have branches crossing the
+    band at every step along the whole trunk, and every alternative is worse: moving the
+    name off its own run makes it ambiguous, and widening the channel rearranges a sheet
+    that is otherwise fine. What the bound protects is the regression -- a change that puts
+    the names back on the wires fails here loudly.
+    """
+    crossed = 0
+    total = 0
+    for path in ALL_BOARDS:
+        drawing = drawing_for(path)
+        for label in drawing.labels:
+            if label.kind != "net":
+                continue
+            total += 1
+            box = net_label_box(label)
+            if any(
+                box_meets_segment(box, start, end)
+                for start, end, what in segments(drawing)
+                if not what.endswith(f" {label.text}")
+            ):
+                crossed += 1
+    assert total >= 40, "the boards stopped producing net names; the measurement is empty"
+    assert crossed <= total * 0.1, (
+        f"{crossed} of {total} net names are crossed by another net, over the 10% bound"
+    )
+
+
+def test_a_net_name_cannot_reach_the_neighbouring_track() -> None:
+    """The band a name occupies has to fit between two runs the allocator separated.
+
+    Same rule as ``RAIL_GLYPH_MM``'s, and cheap for the same reason: two runs given
+    different tracks are a whole ``TRACK_PITCH_MM`` apart, so anything shorter than a pitch
+    cannot reach out of its own lane. This is what makes the test above a property and not
+    a coincidence: a taller band would put names on horizontal wires that no amount of
+    searching along the trunk could ever move them off.
+    """
+    assert NET_LABEL_CLEARANCE_MM + NET_LABEL_MM < TRACK_PITCH_MM
+
+
+def test_the_exported_sheet_draws_a_net_name_at_the_size_the_layout_reserved() -> None:
+    """One fact, two consumers. The layout keeps a box of ``NET_LABEL_MM`` clear above each
+    run; a sheet that drew the name at some other size would be filling a gap that was
+    measured for a different piece of text."""
+    assert schematic_export.PAPER.net_mm == NET_LABEL_MM
 
 
 @pytest.mark.parametrize("path", ALL_BOARDS, ids=lambda path: path.stem)
@@ -750,7 +862,10 @@ def test_the_sheet_is_the_sheet_that_was_blessed(stem: str) -> None:
 
     if os.environ.get("PERFSTUDIO_BLESS_SCHEMATIC"):
         EXPECTED_DIR.mkdir(exist_ok=True)
-        expected_path.write_text(produced, encoding="utf-8")
+        # An explicit LF, the way `test_guide_golden` already writes its own. The
+        # repository is LF everywhere, and a bless run on Windows would otherwise put
+        # CRLF into a file every other platform leaves alone.
+        expected_path.write_text(produced, encoding="utf-8", newline="\n")
         pytest.skip(f"blessed {expected_path.name}")
 
     assert expected_path.exists(), (
