@@ -183,6 +183,15 @@ closed without a bump.
   - `pad_z` and the new `bore_span_z` are pure and asserted directly, as the pad plane
     already was: what a photograph shows and no test could see is exactly what needs one.
 
+- **`pnpm build` works from a clean clone.** The root `tsconfig.json` that `tsc -b` looks
+  for was never committed, so the command failed with `TS6053: File 'tsconfig.json' not
+  found` — and `pnpm build && node tools/diffcheck/generate.mjs` is the documented way to
+  regenerate the golden fixtures this Python engine is proved byte-for-byte against. The
+  solution file compiles nothing itself; it names the four packages, in whatever order
+  their own `references` imply. `tools/bench-3d` is deliberately not among them: it is
+  `composite: false` and `noEmit`, which a solution build cannot reference. Verified by
+  regenerating every fixture and finding the tree unchanged.
+
 ## [0.10.0] - 2026-09-02
 
 A polish release: nothing new to learn, and a long list of things that were almost right.

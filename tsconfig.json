@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+
+  // The solution file `tsc -b` looks for. It compiles nothing itself -- "files": []
+  // says so -- and exists only to name the projects the root `pnpm build` builds, in
+  // whatever order their own `references` imply.
+  //
+  // Without it `pnpm build` fails with TS6053 "File 'tsconfig.json' not found", which
+  // is what it did: `pnpm build && node tools/diffcheck/generate.mjs` is the documented
+  // way to regenerate the golden fixtures the Python port is proved against, and it
+  // could not be run from a clean clone.
+  //
+  // `tools/bench-3d` is deliberately absent. It is a historical Vite page with
+  // "composite": false and "noEmit": true, which a solution build cannot reference.
+  "files": [],
+  "references": [
+    { "path": "packages/core" },
+    { "path": "packages/parsers" },
+    { "path": "packages/render2d" },
+    { "path": "packages/mcp" }
+  ]
+}
