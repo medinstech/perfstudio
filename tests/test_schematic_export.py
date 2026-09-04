@@ -36,6 +36,7 @@ from perfstudio.model import Board, DocumentMeta, Net, NetNode, PerfDocument
 from perfstudio.schematic import (
     SchematicDrawing,
     build_schematic,
+    no_connect_arms,
     rail_glyph_bars,
 )
 from perfstudio.schematic_export import PAPER, SheetInk, drawing_to_svg
@@ -175,12 +176,23 @@ def test_the_rail_glyphs_are_the_ones_the_layout_made_room_for() -> None:
         )
         for line in root.iter(f"{SVG_NS}line")
     }
-    expected = {
+    bars = {
         (round(a.x, 3), round(a.y, 3), round(b.x, 3), round(b.y, 3))
         for rail in drawing.rails
         for a, b in rail_glyph_bars(rail)
     }
-    assert drawn == expected
+    crosses = {
+        (round(a.x, 3), round(a.y, 3), round(b.x, 3), round(b.y, 3))
+        for mark in drawing.no_connects
+        for a, b in no_connect_arms(mark)
+    }
+    # Both directions, which is what makes this more than a subset check: every bar the
+    # layout cleared room for is in the file, and every straight line in the file is one
+    # the layout owns the coordinates of. `<line>` is shared with the no-connect cross,
+    # which is the other shape `schematic.py` hands out rather than letting a renderer
+    # invent -- so it is named here instead of loosening the assertion to a subset.
+    assert bars <= drawn, "a rail bar the layout made room for is missing from the file"
+    assert drawn == bars | crosses, "the file draws a line the layout did not place"
 
 
 def test_the_notes_are_printed_with_the_sheet() -> None:
@@ -440,10 +452,17 @@ def test_the_pdf_is_a_pdf_and_takes_its_orientation_from_the_sheet(
     qapp: QApplication, tmp_path: Path
 ) -> None:
     """A tall circuit on a landscape page wastes half the paper and halves the text. Which
-    way round a schematic runs is decided by the layout, not by a convention."""
-    tall = drawing_for(EXAMPLES_DIR / "lm317-supply.perf")
-    wide = drawing_for(EXAMPLES_DIR / "ne555-astable.perf")
-    assert tall.height > tall.width and wide.width > wide.height, "the fixtures still differ"
+    way round a schematic runs is decided by the layout, not by a convention.
+
+    The two sheets are BUILT here rather than loaded. This test used to take its tall one
+    from `lm317-supply`, whose eleven parts all hung off U1 and were drawn in a single
+    ten-row column; capping the height of a layer made that sheet landscape like every
+    other real circuit, and the fixture guard fired -- correctly, and it is why the guard
+    was there. What is under test is `svg_to_pdf` reading a shape and picking a page, so
+    the shape is the input, and no layout change can take the tall case away again.
+    """
+    tall = SchematicDrawing(width=100.0, height=200.0)
+    wide = SchematicDrawing(width=200.0, height=100.0)
 
     tall_pdf = svg_to_pdf(drawing_to_svg(tall), tmp_path / "tall.pdf")
     wide_pdf = svg_to_pdf(drawing_to_svg(wide), tmp_path / "wide.pdf")

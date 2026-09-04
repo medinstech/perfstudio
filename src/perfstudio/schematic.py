@@ -144,6 +144,11 @@ NET_LABEL_ADVANCE: float = 0.55
 NET_LABEL_CLEARANCE_MM: Mm = 0.35 * GRID_MM
 NET_LABEL_INSET_MM: Mm = 0.3 * GRID_MM
 
+#: Half the diagonal of the cross drawn on a pin no net reaches. Small enough that a row
+#: of them down an unused header reads as a row of marks rather than as hatching, and it
+#: stays inside the lead so it cannot touch the body or a neighbouring pin.
+NO_CONNECT_MM: Mm = 0.3 * GRID_MM
+
 
 # ---------------------------------------------------------------------------
 # Public types
@@ -274,6 +279,27 @@ class Rail:
 
 
 @dataclass(frozen=True, slots=True)
+class NoConnect:
+    """A cross on a pin that no net in the document reaches.
+
+    A STATEMENT OF FACT, NOT OF INTENT, and that is the difference from KiCad's marker of
+    the same shape. There, somebody places one to say "I meant to leave this open"; here
+    nothing is placed by hand, so what this can honestly say is only that the netlist does
+    not mention the pin. That is worth saying: without it an unwired pin is drawn as a
+    plain lead ending in space, which is also what a pin whose wire the sheet failed to
+    draw would look like, and a reader cannot tell those apart.
+
+    It is not a defect and produces no note. Unused pins on a header are the ordinary case
+    -- ten of the eleven parts on `arduino-io-shield` have one -- and LVS is where a
+    connection that was supposed to exist gets reported.
+    """
+
+    ref: str
+    pin: str
+    at: Point2
+
+
+@dataclass(frozen=True, slots=True)
 class Label:
     """A piece of text with a place and a job.
 
@@ -322,6 +348,7 @@ class SchematicDrawing:
     wires: tuple[Wire, ...] = ()
     rails: tuple[Rail, ...] = ()
     junctions: tuple[Junction, ...] = ()
+    no_connects: tuple[NoConnect, ...] = ()
     labels: tuple[Label, ...] = ()
     width: Mm = 0.0
     height: Mm = 0.0
@@ -337,6 +364,25 @@ class SchematicDrawing:
 #: is the convention, and the shrinking is what makes the glyph read as a ground rather than
 #: as three wires that happen to be stacked.
 _GROUND_BARS: tuple[tuple[float, float], ...] = ((1.0, 0.0), (0.6, 0.35), (0.25, 0.70))
+
+
+def no_connect_arms(mark: NoConnect) -> tuple[tuple[Point2, Point2], tuple[Point2, Point2]]:
+    """The two strokes of the cross, so the panel and the exported sheet cannot disagree.
+
+    The same arrangement as ``rail_glyph_bars``: the shape lives here, beside the layout
+    that made room for it, and a renderer asks rather than deciding.
+    """
+    reach = NO_CONNECT_MM
+    return (
+        (
+            Point2(x=mark.at.x - reach, y=mark.at.y - reach),
+            Point2(x=mark.at.x + reach, y=mark.at.y + reach),
+        ),
+        (
+            Point2(x=mark.at.x - reach, y=mark.at.y + reach),
+            Point2(x=mark.at.x + reach, y=mark.at.y - reach),
+        ),
+    )
 
 
 def rail_glyph_bars(rail: Rail) -> tuple[tuple[Point2, Point2], ...]:
@@ -1021,6 +1067,32 @@ def _collect_symbols(
     return symbols
 
 
+def _split_tall_layers(layers: list[list[str]], group_size: int) -> list[list[str]]:
+    """Break a layer that is too tall to read into consecutive columns of its own.
+
+    BFS DEPTH IS NOT A CONSTRAINT, IT IS A HINT. A layering that puts everything one hop
+    from the root in one column is right about the distance and wrong about the shape: on
+    the LM317 example ten of the eleven parts hang directly off U1, which drew a sheet
+    three columns wide and ten rows tall -- 129 x 239 mm, nearly twice as tall as it was
+    wide, on a circuit that fits comfortably across a page. Nothing was violated by that;
+    a schematic has no precedence to respect, so a part moved one column further out only
+    makes its own wire span one more channel.
+
+    The cap is the side of a square: a group of n parts wants about sqrt(n) of them in a
+    column, which is the same arithmetic the loose-parts block below already uses, and
+    never fewer than three, so a small circuit is not spread into a strip. Chunks are
+    consecutive in the reference order the layer already carries, which keeps R1 beside R2
+    rather than scattering a group of equals, and is deterministic for the reason
+    everything here is.
+    """
+    cap = max(3, math.ceil(math.sqrt(group_size)))
+    out: list[list[str]] = []
+    for layer in layers:
+        for start in range(0, len(layer), cap):
+            out.append(layer[start : start + cap])
+    return out
+
+
 def _assign_cells(
     symbols: dict[str, _Placed], adjacency: dict[str, set[str]]
 ) -> tuple[int, int]:
@@ -1072,7 +1144,7 @@ def _assign_cells(
         local: list[list[str]] = [[] for _ in range(max(depth.values()) + 1)]
         for ref in sorted(group, key=_ref_sort_key):
             local[depth[ref]].append(ref)
-        columns.extend(local)
+        columns.extend(_split_tall_layers(local, len(group)))
 
     _barycentre_sweeps(columns, adjacency)
 
@@ -1470,6 +1542,19 @@ def build_schematic(
                 junctions.append(Junction(net_id=net.id, at=Point2(x=x, y=y)))
         pending_labels.append((net.name, (left, right), y))
 
+    # Every pin the netlist reaches, so the rest can be marked. Read off `resolved` rather
+    # than off `doc.nets`, because a node naming a pin the footprint does not have was
+    # already dropped with a note and must not count as a connection.
+    wired_pins = {(ref, pin.number) for item in resolved for ref, pin in item.pins}
+    no_connects: list[NoConnect] = []
+    for ref in sorted(symbols, key=_ref_sort_key):
+        placed = symbols[ref]
+        for pin in placed.body.pins:
+            if (ref, pin.number) not in wired_pins:
+                no_connects.append(
+                    NoConnect(ref=ref, pin=pin.number, at=placed.anchor_of(pin))
+                )
+
     obstacles: list[tuple[Point2, Point2]] = []
     for wire in wires:
         obstacles.extend(_segments_of(wire.path))
@@ -1540,6 +1625,7 @@ def build_schematic(
         wires=tuple(wires),
         rails=tuple(rails),
         junctions=tuple(junctions),
+        no_connects=tuple(no_connects),
         labels=(*part_labels, *net_labels),
         width=width,
         height=height,

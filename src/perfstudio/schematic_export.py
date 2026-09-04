@@ -47,10 +47,12 @@ from .schematic import (
     MARGIN_MM,
     NET_LABEL_MM,
     Label,
+    NoConnect,
     Rail,
     SchematicDrawing,
     Symbol,
     Wire,
+    no_connect_arms,
     rail_glyph_bars,
 )
 from .version import __version__
@@ -220,6 +222,17 @@ def _glyph(rail: Rail, ink: SheetInk) -> str:
     )
 
 
+def _no_connect(mark: NoConnect, ink: SheetInk) -> str:
+    """A cross on a pin the netlist does not reach. Drawn in the dim ink, not the warning
+    one: an unused header pin is the ordinary case, and a sheet that shouted about ten of
+    them would be crying wolf on the sheet where it matters."""
+    return "".join(
+        f'<line x1="{_n(start.x)}" y1="{_n(start.y)}" x2="{_n(end.x)}" y2="{_n(end.y)}" '
+        f'stroke="{ink.dim}" stroke-width="{_n(ink.wire_mm)}"/>'
+        for start, end in no_connect_arms(mark)
+    )
+
+
 def _symbol(symbol: Symbol, ink: SheetInk) -> str:
     """One symbol, drawn in its own coordinates inside a translate.
 
@@ -336,6 +349,8 @@ def drawing_to_svg(
             f'<circle cx="{_n(junction.at.x)}" cy="{_n(junction.at.y)}" '
             f'r="{_n(ink.dot_mm)}" fill="{ink.signal}"/>'
         )
+    for mark in drawing.no_connects:
+        out.append(_no_connect(mark, ink))
     for symbol in drawing.symbols:
         out.append(_symbol(symbol, ink))
     out.append("</g>")

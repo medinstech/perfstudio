@@ -51,10 +51,12 @@ from PySide6.QtWidgets import (
 
 from perfstudio.model import Point2
 from perfstudio.schematic import (
+    NoConnect,
     Rail,
     SchematicDrawing,
     Symbol,
     Wire,
+    no_connect_arms,
     rail_glyph_bars,
 )
 
@@ -192,6 +194,9 @@ class SheetItem(QGraphicsItem):
             painter.drawEllipse(_point(junction.at), DOT_MM, DOT_MM)
         painter.setBrush(Qt.BrushStyle.NoBrush)
 
+        for mark in drawing.no_connects:
+            self._no_connect(painter, mark)
+
         for symbol in drawing.symbols:
             self._symbol(painter, symbol)
 
@@ -236,6 +241,22 @@ class SheetItem(QGraphicsItem):
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         painter.setPen(pen)
         for start, end in rail_glyph_bars(rail):
+            painter.drawLine(_point(start), _point(end))
+
+    def _no_connect(self, painter: QPainter, mark: NoConnect) -> None:
+        """A cross on a pin no net in the document reaches.
+
+        Drawn in the dim ink for the reason the exported sheet uses its own: an unused pin
+        on a header is the ordinary case rather than a fault, and a mark that shouted would
+        be shouting on nearly every connector. WHERE the strokes go is not this file's to
+        decide, the same as the rail glyph -- ``schematic.no_connect_arms`` answers it for
+        paper too.
+        """
+        pen = QPen(QColor(INK_DIM))
+        pen.setWidthF(WIRE_MM)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        for start, end in no_connect_arms(mark):
             painter.drawLine(_point(start), _point(end))
 
     def _symbol(self, painter: QPainter, symbol: Symbol) -> None:

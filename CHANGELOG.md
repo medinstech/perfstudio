@@ -286,6 +286,47 @@ closed without a bump.
   endings of a file every other platform leaves alone. `.gitattributes` normalises it away
   at commit, which is exactly why it went unnoticed.
 
+- **A BFS layer is a hint about distance, and the sheet was treating it as a constraint.**
+  Everything one hop from the root went into one column. On `lm317-supply` ten of the
+  eleven parts hang directly off U1, so the sheet came out **129 x 239 mm** — nearly twice
+  as tall as it was wide, on a circuit that fits across a page with room to spare. Nothing
+  was being respected by that arrangement: a schematic has no precedence order, so a part
+  moved one column further out only makes its own wire span one more channel.
+  - `_split_tall_layers` caps a layer at about the side of a square —
+    `max(3, ceil(sqrt(n)))`, the same arithmetic the loose-parts block already used — and
+    chunks the overflow into columns of its own, consecutively in the reference order the
+    layer already carries, so R1 stays beside R2.
+  - It fires only where a layer was genuinely over-full. **The fourteen random fixtures are
+    untouched**; the five real circuits went from a worst aspect of 1.84 to 0.92. LM317 is
+    now 185 x 132 mm and the NE555 went from 4 columns by 7 rows to 5 by 4, which reads
+    left to right the way a schematic should.
+  - The goldens were re-blessed after checking that **every element count is identical** —
+    same symbols, wires, rails, junctions and labels, only positions moved.
+  - `test_the_pdf_is_a_pdf_and_takes_its_orientation_from_the_sheet` built its tall case
+    from `lm317-supply` and its guard fired, correctly, which is why the guard was there.
+    It builds both sheets from `SchematicDrawing(width=..., height=...)` now: what is under
+    test is `svg_to_pdf` reading a shape and picking a page, so the shape is the input and
+    no future layout change can take the tall case away again.
+- **A pin no net reaches is marked, so "not connected" reads differently from "not drawn".**
+  An unwired pin was a plain lead stopping in mid-air — which is also exactly what a pin
+  whose wire the sheet failed to draw would look like, and a reader could not tell them
+  apart. Ten of the eleven parts on `arduino-io-shield` have one; the NE555's is U1 pin 4.
+  - A **statement of fact, not of intent**, and that is the difference from KiCad's marker
+    of the same shape. There somebody places one to say "I meant to leave this open"; here
+    nothing is placed by hand, so what this can honestly say is that the netlist does not
+    mention the pin.
+  - **Not a defect and no note.** Unused pins on a header are the ordinary case, and a
+    sheet that added ten notes for one connector would bury the note that matters. LVS is
+    where a connection that was supposed to exist gets reported. Drawn in the dim ink for
+    the same reason.
+  - `schematic.no_connect_arms` owns the two strokes, the same shape as `rail_glyph_bars`:
+    the panel and the exported sheet ask rather than each deciding. `NO_CONNECT_MM` is
+    small enough that the cross cannot reach the body or the pin next door, which is
+    asserted rather than eyeballed.
+  - The golden text dump gained a `no-connect` line. A thing that is generated and not
+    dumped is a thing that can quietly stop being generated, which is what the goldens are
+    for; the NE555 diff was exactly one line.
+
 ## [0.10.0] - 2026-09-02
 
 A polish release: nothing new to learn, and a long list of things that were almost right.

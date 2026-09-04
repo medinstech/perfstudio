@@ -55,9 +55,12 @@ from perfstudio.model import (
 from perfstudio.schematic import (
     _KIND_BY_ARCHETYPE,
     _SYMBOL_BUILDERS,
+    LEAD_MM,
     NET_LABEL_ADVANCE,
     NET_LABEL_CLEARANCE_MM,
     NET_LABEL_MM,
+    NO_CONNECT_MM,
+    PIN_PITCH_MM,
     RAIL_GLYPH_DEPTH_MM,
     RAIL_GLYPH_MM,
     TRACK_PITCH_MM,
@@ -66,6 +69,7 @@ from perfstudio.schematic import (
     SchematicOptions,
     Symbol,
     SymbolKind,
+    _split_tall_layers,
     build_schematic,
     symbol_kind_for,
 )
@@ -243,6 +247,122 @@ def test_a_net_name_is_almost_never_crossed_by_another_net() -> None:
     assert crossed <= total * 0.1, (
         f"{crossed} of {total} net names are crossed by another net, over the 10% bound"
     )
+
+
+@pytest.mark.parametrize("path", ALL_BOARDS, ids=lambda path: path.stem)
+def test_no_sheet_comes_out_taller_than_it_is_wide(path: Path) -> None:
+    """A layer is a hint about distance, not a constraint, and it used to be treated as one.
+
+    Everything one hop from the root went in one column. On `lm317-supply` ten of the
+    eleven parts hang directly off U1, so the sheet came out 129 x 239 mm -- nearly twice
+    as tall as it was wide, on a circuit that fits across a page with room to spare. There
+    was nothing to respect in that arrangement: a schematic has no precedence order, so a
+    part moved one column further out only makes its own wire span one more channel.
+
+    `_split_tall_layers` caps a layer at about the side of a square and chunks the rest
+    into columns of their own. It fires only where a layer was genuinely over-full: the
+    fourteen random fixtures are untouched, and the five real circuits went from a worst
+    aspect of 1.84 to 0.92 -- lm317 to 185 x 132, and the NE555 from 4 columns by 7 rows to
+    5 by 4, which reads left to right the way a schematic should.
+
+    The bound has headroom on purpose. What it is here to catch is the 1.84, and a sheet
+    that is a little taller than square is a fair drawing of a circuit that is genuinely
+    deep rather than wide.
+    """
+    drawing = drawing_for(path)
+    if not drawing.symbols:
+        return
+    aspect = drawing.height / drawing.width
+    assert aspect <= 1.1, (
+        f"{path.stem} is {drawing.width:.0f} x {drawing.height:.0f} mm, "
+        f"{aspect:.2f} times taller than wide"
+    )
+
+
+def test_a_layer_is_split_rather_than_drawn_as_one_tall_column() -> None:
+    """The cap is what the test above rests on, measured directly rather than through a
+    sheet's millimetres.
+
+    A root with nine parts hanging off it is one BFS layer of nine. Nine in a column is the
+    shape that made the LM317 sheet unreadable; `max(3, ceil(sqrt(10)))` is 4, so it comes
+    out as three columns of at most four instead.
+    """
+    layers = [["U1"], [f"R{n}" for n in range(1, 10)]]
+    split = _split_tall_layers(layers, 10)
+    assert [len(column) for column in split] == [1, 4, 4, 1]
+    assert [ref for column in split for ref in column] == layers[0] + layers[1], (
+        "the reference order inside a layer is kept, so R1 stays beside R2"
+    )
+
+
+def test_a_layer_small_enough_to_read_is_left_alone() -> None:
+    """The cap never fires below three, so a small circuit is not spread into a strip."""
+    layers = [["U1"], ["R1", "R2", "R3"]]
+    assert _split_tall_layers(layers, 4) == layers
+
+
+@pytest.mark.parametrize("path", ALL_BOARDS, ids=lambda path: path.stem)
+def test_a_pin_is_marked_unconnected_exactly_when_no_net_reaches_it(path: Path) -> None:
+    """A lead ending in space is ambiguous, and the cross is what resolves it.
+
+    Without a marker an unwired pin is drawn as a plain lead stopping in mid-air -- which
+    is also exactly what a pin whose wire the sheet failed to draw would look like, and a
+    reader cannot tell those two apart. Ten of the eleven parts on `arduino-io-shield` have
+    one; the LM317 and the booster have none, because every pin on those is in the netlist.
+
+    Both directions here. A pin a net reaches must NEVER be crossed -- that would be the
+    sheet contradicting its own wire -- and a pin no net reaches must always be, or the
+    marker is decoration rather than a statement.
+    """
+    drawing = drawing_for(path)
+    marked = {(mark.ref, mark.pin) for mark in drawing.no_connects}
+    document = load(path)
+    reachable = {(node.component_ref, node.pin) for net in document.nets for node in net.nodes}
+    for symbol in drawing.symbols:
+        for pin in symbol.pins:
+            key = (symbol.ref, pin.number)
+            if key in reachable:
+                assert key not in marked, f"{key} is in a net and still crossed"
+            else:
+                assert key in marked, f"{key} is in no net and not crossed"
+
+
+def test_the_cross_sits_on_the_pin_it_marks() -> None:
+    """``NoConnect.at`` is the point a WIRE would attach to, not the body edge, so the mark
+    lands where the connection is missing rather than beside it."""
+    drawing = drawing_for(EXAMPLES_DIR / "arduino-io-shield.perf")
+    assert drawing.no_connects, "this fixture is chosen for having unconnected pins"
+    anchors = {
+        (symbol.ref, pin.number): (symbol.at.x + pin.at.x, symbol.at.y + pin.at.y)
+        for symbol in drawing.symbols
+        for pin in symbol.pins
+    }
+    for mark in drawing.no_connects:
+        assert (mark.at.x, mark.at.y) == anchors[(mark.ref, mark.pin)]
+
+
+def test_an_unconnected_pin_is_not_reported_as_a_defect() -> None:
+    """Unused pins on a header are the ordinary case, not a hole in the design.
+
+    ``notes`` is for things that are wrong -- a pin the netlist names and the footprint
+    does not have, a part nothing defines, a net with one node. A sheet that added ten
+    notes for the ten open pins of a connector would bury the one note that matters, and
+    LVS is where a connection that was SUPPOSED to exist gets reported.
+    """
+    drawing = drawing_for(EXAMPLES_DIR / "arduino-io-shield.perf")
+    assert drawing.no_connects
+    assert drawing.notes == ()
+
+
+def test_the_cross_stays_inside_the_lead_it_marks() -> None:
+    """Small enough not to touch the body or the pin next door.
+
+    Pins down a DIP are ``PIN_PITCH_MM`` apart and the lead is ``LEAD_MM`` long, so a mark
+    reaching half a pitch would meet its neighbour and one reaching the lead's length would
+    meet the body. Both would read as part of the symbol rather than as a note about it.
+    """
+    assert 2 * NO_CONNECT_MM < PIN_PITCH_MM
+    assert 2 * NO_CONNECT_MM < LEAD_MM
 
 
 def test_a_net_name_cannot_reach_the_neighbouring_track() -> None:
@@ -846,6 +966,8 @@ def dump(drawing: SchematicDrawing) -> str:
         lines.append(f"rail {rail.net_name} [{rail.net_class}] {rail.direction} {path}")
     for junction in drawing.junctions:
         lines.append(f"junction {junction.net_id} {junction.at.x:.2f},{junction.at.y:.2f}")
+    for mark in drawing.no_connects:
+        lines.append(f"no-connect {mark.ref}.{mark.pin} {mark.at.x:.2f},{mark.at.y:.2f}")
     for label in drawing.labels:
         lines.append(
             f"label [{label.kind}/{label.anchor}] {label.at.x:.2f},{label.at.y:.2f} {label.text}"
